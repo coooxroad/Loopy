@@ -82,9 +82,9 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
     val reader = remember { GeteventReader() }
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
-    var device by remember { mutableStateOf<TouchDevice?>(null) }
     var streaming by remember { mutableStateOf(false) }
     var last by remember { mutableStateOf<TouchPoint?>(null) }
+    var lastDev by remember { mutableStateOf<TouchDevice?>(null) }
     val log = remember { mutableStateListOf<String>() }
 
     // Shizuku 바인더 상태 변화 시 화면 갱신
@@ -131,21 +131,25 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
                         if (!streaming) {
                             LoopyButton("터치 감지 시작") {
                                 scope.launch {
-                                    val dev = reader.probe()
-                                    device = dev
-                                    if (dev == null) {
+                                    val devs = reader.probe()
+                                    if (devs.isEmpty()) {
                                         log.add(0, "터치 디바이스를 못 찾음 (getevent -pl 실패?)")
                                     } else {
-                                        log.add(0, "디바이스: ${dev.name} ${dev.path}  max ${dev.maxX}×${dev.maxY}")
+                                        log.add(0, "── 발견한 디바이스 ${devs.size}개 (화면을 만져서 진짜를 찾자) ──")
+                                        devs.forEach {
+                                            log.add(0, "· ${it.name}  ${it.path}  max ${it.maxX}×${it.maxY}")
+                                        }
                                         streaming = true
-                                        reader.stream(scope, dev) { p ->
+                                        reader.stream(scope, devs) { dev, p ->
                                             last = p
+                                            lastDev = dev
                                             if (p.down) {
                                                 log.add(
                                                     0,
-                                                    "%.3f, %.3f   (raw %d, %d)".format(p.nx, p.ny, p.rawX, p.rawY)
+                                                    "%s  %.3f, %.3f  (raw %d, %d)"
+                                                        .format(dev.name, p.nx, p.ny, p.rawX, p.rawY)
                                                 )
-                                                if (log.size > 40) log.removeAt(log.size - 1)
+                                                if (log.size > 60) log.removeAt(log.size - 1)
                                             }
                                         }
                                     }
@@ -169,12 +173,16 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
                 Text("실시간 좌표", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 val l = last
+                val d = lastDev
                 Text(
                     if (l != null && l.down) "● %.3f, %.3f".format(l.nx, l.ny) else "○ 대기 중",
                     color = if (l != null && l.down) LoopyViolet else TextLo,
                     fontSize = 22.sp,
                     fontFamily = FontFamily.Monospace,
                 )
+                if (d != null && l != null && l.down) {
+                    Text(d.name, color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                }
                 Spacer(Modifier.height(10.dp))
                 Column(
                     Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())
