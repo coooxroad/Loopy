@@ -17,7 +17,7 @@ data class TouchPoint(
     val down: Boolean,      // 손가락이 닿아있는 프레임인지
 )
 
-/** getevent -pl 로 찾아낸 터치스크린 정보. */
+/** getevent -pl 로 찾아낸 터치 가능 디바이스 정보. */
 data class TouchDevice(
     val path: String,       // /dev/input/eventX
     val name: String,
@@ -28,18 +28,17 @@ data class TouchDevice(
 /**
  * M0의 핵심. Shizuku 셸로 getevent 를 돌려 물리 터치를 실시간 파싱한다.
  *
- * 두 단계:
- *  1) probe(): `getevent -pl` 을 한 번 실행해 ABS_MT_POSITION_X/Y 를 가진 디바이스와
- *     그 max 값을 찾는다. 이 max 로 raw 좌표를 0~1 로 정규화한다(해상도 독립성의 핵심).
- *  2) stream(): 찾은 디바이스 하나만 `getevent -lt <path>` 로 스트리밍 파싱한다.
+ * 기기마다 터치스크린 노드(eventX)와 이름이 달라서 하나만 찍어 고르면 틀리기 쉽다.
+ * (예: sec_touchpad vs sec_touchscreen) 그래서 M0에서는 ABS_MT 를 가진 디바이스를
+ * "전부" 동시에 스트리밍하고, 각 좌표에 디바이스를 태그해 보여준다 → 화면을 만지면
+ * 어느 노드가 진짜 터치스크린인지 즉시 드러난다.
  *
  * 재생 쪽(injectInputEvent)과 달리 getevent 는 /dev/input 하드웨어 레이어를 직접 읽으므로,
- * 우리가 주입한 이벤트는 여기 안 잡히고 물리 터치만 잡힌다 → 화면 끄기 모드에서
- * "물리 터치 감지"와 "매크로 주입"을 깨끗하게 분리할 수 있는 근거.
+ * 우리가 주입한 이벤트는 여기 안 잡히고 물리 터치만 잡힌다.
  */
 class GeteventReader {
 
-    private var job: Job? = null
+    private val jobs = mutableListOf<Job>()
 
     // Shizuku.newProcess 는 이 API 버전에서 private 이라 리플렉션으로 호출한다.
     // (rikka.shizuku.* 는 프레임워크 클래스가 아니라 hidden-API 제약이 없고,
@@ -57,20 +56,23 @@ class GeteventReader {
     private fun newShizukuProcess(cmd: Array<String>): Process =
         newProcessMethod.invoke(null, cmd, null, null) as Process
 
-    /** getevent -pl 결과에서 터치스크린 디바이스를 찾는다. 없으면 null. */
-    fun probe(): TouchDevice? {
-        val out = runBlockingShell("getevent -pl") ?: return null
+    /**
+     * getevent -pl 결과에서 ABS_MT_POSITION_X/Y 를 가진 디바이스를 전부 찾는다.
+     * 이름에 "touchscreen" 이 들어간 걸 앞으로 정렬(참고용)하되, 실제 판별은 스트리밍으로.
+     */
+    fun probe(): List<TouchDevice> {
+        val out = runBlockingShell("getevent -pl") ?: return emptyList()
 
         var curPath: String? = null
         var curName = ""
         var maxX = -1
         var maxY = -1
-        val candidates = mutableListOf<TouchDevice>()
+        val found = mutableListOf<TouchDevice>()
 
         fun flush() {
             val p = curPath
             if (p != null && maxX > 0 && maxY > 0) {
-                candidates += TouchDevice(p, curName, maxX, maxY)
+                found += TouchDevice(p, curName, maxX, maxY)
             }
         }
 
@@ -95,8 +97,7 @@ class GeteventReader {
         }
         flush()
 
-        // max 범위가 가장 큰 놈을 실제 터치스크린으로 채택 (버튼/근접센서 등 노이즈 배제)
-        return candidates.maxByOrNull { it.maxX.toLong() * it.maxY.toLong() }
+        return found.sortedByDescending { it.name.contains("touchscreen", ignoreCase = true) }
     }
 
     /** "... max 4095, ..." 형태에서 max 뒤 숫자를 뽑는다. */
@@ -110,63 +111,67 @@ class GeteventReader {
     }
 
     /**
-     * 디바이스 하나를 스트리밍 파싱. onPoint 는 SYN_REPORT 마다(=한 프레임) 호출된다.
-     * scope 가 취소되거나 stop() 하면 프로세스를 죽인다.
+     * 넘어온 디바이스들을 "전부 동시에" 스트리밍. onPoint 는 어느 디바이스에서 왔는지와 함께
+     * SYN_REPORT 마다(=한 프레임) 호출된다. stop() 하면 전부 죽인다.
      */
     fun stream(
         scope: CoroutineScope,
-        dev: TouchDevice,
-        onPoint: (TouchPoint) -> Unit,
+        devices: List<TouchDevice>,
+        onPoint: (TouchDevice, TouchPoint) -> Unit,
     ) {
         stop()
-        job = scope.launch(Dispatchers.IO) {
-            val proc = try {
-                newShizukuProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
-            } catch (t: Throwable) {
-                return@launch
-            }
-            var curX = -1
-            var curY = -1
-            var down = false
-            try {
-                BufferedReader(InputStreamReader(proc.inputStream)).use { br ->
-                    while (true) {
-                        val line = br.readLine() ?: break
-                        parseLine(line)?.let { ev ->
-                            when (ev.code) {
-                                "ABS_MT_POSITION_X" -> curX = ev.value
-                                "ABS_MT_POSITION_Y" -> curY = ev.value
-                                "ABS_MT_TRACKING_ID" ->
-                                    down = ev.value != 0xffffffff.toInt() && ev.value != -1
-                                "BTN_TOUCH" -> down = ev.value == 1
-                                "SYN_REPORT" -> {
-                                    if (curX in 0..dev.maxX && curY in 0..dev.maxY) {
-                                        onPoint(
-                                            TouchPoint(
-                                                nx = curX.toFloat() / dev.maxX,
-                                                ny = curY.toFloat() / dev.maxY,
-                                                rawX = curX,
-                                                rawY = curY,
-                                                down = down,
-                                            )
-                                        )
-                                    }
-                                }
+        for (dev in devices) {
+            jobs += scope.launch(Dispatchers.IO) { streamOne(dev, onPoint) }
+        }
+    }
+
+    private fun streamOne(dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
+        val proc = try {
+            newShizukuProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
+        } catch (t: Throwable) {
+            return
+        }
+        var curX = -1
+        var curY = -1
+        var down = false
+        try {
+            BufferedReader(InputStreamReader(proc.inputStream)).use { br ->
+                while (true) {
+                    val line = br.readLine() ?: break
+                    val ev = parseLine(line) ?: continue
+                    when (ev.code) {
+                        "ABS_MT_POSITION_X" -> curX = ev.value
+                        "ABS_MT_POSITION_Y" -> curY = ev.value
+                        "ABS_MT_TRACKING_ID" ->
+                            down = ev.value != 0xffffffff.toInt() && ev.value != -1
+                        "BTN_TOUCH" -> down = ev.value == 1
+                        "SYN_REPORT" -> {
+                            if (curX in 0..dev.maxX && curY in 0..dev.maxY) {
+                                onPoint(
+                                    dev,
+                                    TouchPoint(
+                                        nx = curX.toFloat() / dev.maxX,
+                                        ny = curY.toFloat() / dev.maxY,
+                                        rawX = curX,
+                                        rawY = curY,
+                                        down = down,
+                                    ),
+                                )
                             }
                         }
                     }
                 }
-            } catch (_: Throwable) {
-                // 스트림 종료/취소 시 조용히 빠져나옴
-            } finally {
-                runCatching { proc.destroy() }
             }
+        } catch (_: Throwable) {
+            // 스트림 종료/취소 시 조용히 빠져나옴
+        } finally {
+            runCatching { proc.destroy() }
         }
     }
 
     fun stop() {
-        job?.cancel()
-        job = null
+        jobs.forEach { it.cancel() }
+        jobs.clear()
     }
 
     private data class Ev(val type: String, val code: String, val value: Int)
@@ -176,7 +181,6 @@ class GeteventReader {
      * 형태를 파싱. 값은 16진수. 디바이스 경로를 인자로 준 스트림이라 앞 접두어는 없다.
      */
     private fun parseLine(line: String): Ev? {
-        // '[' 타임스탬프 블록 제거
         val body = if (line.startsWith("[")) line.substringAfter("]").trim() else line.trim()
         val toks = body.split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (toks.size < 3) return null
