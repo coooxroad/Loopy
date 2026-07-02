@@ -41,6 +41,22 @@ class GeteventReader {
 
     private var job: Job? = null
 
+    // Shizuku.newProcess 는 이 API 버전에서 private 이라 리플렉션으로 호출한다.
+    // (rikka.shizuku.* 는 프레임워크 클래스가 아니라 hidden-API 제약이 없고,
+    //  debug 빌드라 난독화도 없어 안전하다. 반환형 ShizukuRemoteProcess 는
+    //  java.lang.Process 를 상속하므로 Process 로 받아 쓴다.)
+    private val newProcessMethod by lazy {
+        Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java,
+        ).apply { isAccessible = true }
+    }
+
+    private fun newShizukuProcess(cmd: Array<String>): Process =
+        newProcessMethod.invoke(null, cmd, null, null) as Process
+
     /** getevent -pl 결과에서 터치스크린 디바이스를 찾는다. 없으면 null. */
     fun probe(): TouchDevice? {
         val out = runBlockingShell("getevent -pl") ?: return null
@@ -105,7 +121,7 @@ class GeteventReader {
         stop()
         job = scope.launch(Dispatchers.IO) {
             val proc = try {
-                Shizuku.newProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"), null, null)
+                newShizukuProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
             } catch (t: Throwable) {
                 return@launch
             }
@@ -174,7 +190,7 @@ class GeteventReader {
     /** 짧게 끝나는 셸 명령을 동기 실행하고 stdout 을 통째로 반환. */
     private fun runBlockingShell(cmd: String): String? {
         return try {
-            val proc = Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val proc = newShizukuProcess(arrayOf("sh", "-c", cmd))
             val text = proc.inputStream.bufferedReader().readText()
             proc.waitFor()
             text
