@@ -169,7 +169,7 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 recordedCount = recorder.events.size
                                 phase = null
                                 busy = false
-                                lastMsg = "이벤트 $recordedCount개 녹화됨. '재생'을 눌러봐."
+                                lastMsg = "이벤트 ${recordedCount}개 녹화됨. '재생'을 눌러봐."
                             }
                         }
                     }
