@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun M1aScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     val scope = rememberCoroutineScope()
-    val injector = remember { InputInjector() }
+    val injector = remember { InputInjector(scope) }
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var tapCount by remember { mutableIntStateOf(0) }
