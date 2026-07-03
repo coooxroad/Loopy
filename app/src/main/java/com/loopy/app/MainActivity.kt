@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,9 +14,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -21,21 +24,23 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.loopy.app.input.GeteventReader
-import com.loopy.app.input.TouchDevice
-import com.loopy.app.input.TouchPoint
+import com.loopy.app.input.InputInjector
 import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.GlassCard
@@ -44,6 +49,7 @@ import com.loopy.app.ui.theme.LoopyViolet
 import com.loopy.app.ui.theme.MeshGradientBackground
 import com.loopy.app.ui.theme.TextHi
 import com.loopy.app.ui.theme.TextLo
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import rikka.shizuku.Shizuku
 
@@ -62,9 +68,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             LoopyTheme {
-                M0Screen(
-                    registerRefresh = { cb -> onShizukuChanged = cb },
-                )
+                M1aScreen(registerRefresh = { cb -> onShizukuChanged = cb })
             }
         }
     }
@@ -77,23 +81,22 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
+private fun M1aScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     val scope = rememberCoroutineScope()
-    val reader = remember { GeteventReader() }
+    val injector = remember { InputInjector() }
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
-    var streaming by remember { mutableStateOf(false) }
-    var last by remember { mutableStateOf<TouchPoint?>(null) }
-    var lastDev by remember { mutableStateOf<TouchDevice?>(null) }
-    val log = remember { mutableStateListOf<String>() }
+    var tapCount by remember { mutableIntStateOf(0) }
+    var countdown by remember { mutableStateOf<Int?>(null) }
+    var targetCenter by remember { mutableStateOf(Offset.Zero) }
+    var lastMsg by remember { mutableStateOf("발사 버튼을 누르면 3초 뒤 중앙을 자동으로 탭해.") }
 
-    // Shizuku 바인더 상태 변화 시 화면 갱신
     LaunchedEffect(Unit) {
         registerRefresh { state = ShizukuManager.state() }
     }
 
     Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = !streaming)
+        MeshGradientBackground(animate = countdown == null)
 
         Column(
             modifier = Modifier
@@ -104,9 +107,9 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
         ) {
             Spacer(Modifier.height(24.dp))
             Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("M0 · 터치 감지 검증", color = TextLo, fontSize = 14.sp)
+            Text("M1a · 재생(주입) 엔진 검증", color = TextLo, fontSize = 14.sp)
 
-            // ── 상태 카드 ──
+            // ── Shizuku 상태 ──
             GlassCard(Modifier.fillMaxWidth()) {
                 Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
@@ -119,80 +122,66 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
                     color = if (state == ShizukuState.READY) LoopyViolet else TextLo,
                     fontSize = 13.sp,
                 )
-                Spacer(Modifier.height(14.dp))
-
-                when (state) {
-                    ShizukuState.NEEDS_PERMISSION -> LoopyButton("권한 허용") {
+                if (state == ShizukuState.NEEDS_PERMISSION) {
+                    Spacer(Modifier.height(14.dp))
+                    LoopyButton("권한 허용") {
                         ShizukuManager.requestPermission { granted ->
                             state = if (granted) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION
                         }
                     }
-                    ShizukuState.READY -> {
-                        if (!streaming) {
-                            LoopyButton("터치 감지 시작") {
-                                scope.launch {
-                                    val devs = reader.probe()
-                                    if (devs.isEmpty()) {
-                                        log.add(0, "터치 디바이스를 못 찾음 (getevent -pl 실패?)")
-                                    } else {
-                                        log.add(0, "── 발견한 디바이스 ${devs.size}개 (화면을 만져서 진짜를 찾자) ──")
-                                        devs.forEach {
-                                            log.add(0, "· ${it.name}  ${it.path}  max ${it.maxX}×${it.maxY}")
-                                        }
-                                        streaming = true
-                                        reader.stream(scope, devs) { dev, p ->
-                                            last = p
-                                            lastDev = dev
-                                            if (p.down) {
-                                                log.add(
-                                                    0,
-                                                    "%s  %.3f, %.3f  (raw %d, %d)"
-                                                        .format(dev.name, p.nx, p.ny, p.rawX, p.rawY)
-                                                )
-                                                if (log.size > 60) log.removeAt(log.size - 1)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            LoopyButton("정지", filled = false) {
-                                reader.stop()
-                                streaming = false
-                            }
+                } else if (state == ShizukuState.NOT_INSTALLED) {
+                    Spacer(Modifier.height(14.dp))
+                    LoopyButton("다시 확인") { state = ShizukuManager.state() }
+                }
+            }
+
+            // ── 주입 테스트 ──
+            GlassCard(Modifier.fillMaxWidth()) {
+                Text("주입 테스트", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(lastMsg, color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(14.dp))
+
+                LoopyButton(
+                    text = if (countdown != null) "발사까지 ${countdown}..." else "가상 탭 발사 (3초 뒤)",
+                    enabled = state == ShizukuState.READY && countdown == null,
+                ) {
+                    scope.launch {
+                        val c = targetCenter
+                        if (c == Offset.Zero) {
+                            lastMsg = "타깃 위치를 아직 못 잡았어. 잠깐 뒤 다시 눌러봐."
+                            return@launch
                         }
-                    }
-                    ShizukuState.NOT_INSTALLED -> {
-                        LoopyButton("다시 확인") { state = ShizukuManager.state() }
+                        for (i in 3 downTo 1) { countdown = i; delay(1000) }
+                        countdown = null
+                        val x = c.x.toInt()
+                        val y = c.y.toInt()
+                        lastMsg = "주입: input tap $x $y … 상자 숫자가 오르면 성공!"
+                        injector.tap(x, y)
                     }
                 }
             }
 
-            // ── 라이브 좌표 카드 ──
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("실시간 좌표", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(4.dp))
-                val l = last
-                val d = lastDev
-                Text(
-                    if (l != null && l.down) "● %.3f, %.3f".format(l.nx, l.ny) else "○ 대기 중",
-                    color = if (l != null && l.down) LoopyViolet else TextLo,
-                    fontSize = 22.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
-                if (d != null && l != null && l.down) {
-                    Text(d.name, color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                }
-                Spacer(Modifier.height(10.dp))
-                Column(
-                    Modifier.fillMaxWidth().heightIn(max = 320.dp).verticalScroll(rememberScrollState())
-                ) {
-                    if (log.isEmpty()) {
-                        Text("화면을 만지면 좌표가 여기 찍혀.", color = TextLo, fontSize = 12.sp)
-                    }
-                    log.forEach { line ->
-                        Text(line, color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                    }
+            // ── 타깃 상자 (직접 누르지 말 것) ──
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0x14FFFFFF))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(24.dp))
+                    .onGloballyPositioned { targetCenter = it.boundsInWindow().center }
+                    .clickable {
+                        tapCount += 1
+                        lastMsg = "탭 감지됨! (누적 $tapCount)"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("$tapCount", color = LoopyViolet, fontSize = 64.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("탭 카운트", color = TextLo, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("이 상자를 직접 누르지 말고,\n위 발사 버튼만 눌러봐.", color = TextLo, fontSize = 12.sp)
                 }
             }
 
@@ -202,13 +191,21 @@ private fun M0Screen(registerRefresh: ((() -> Unit)) -> Unit) {
 }
 
 @Composable
-private fun LoopyButton(text: String, filled: Boolean = true, onClick: () -> Unit) {
+private fun LoopyButton(
+    text: String,
+    filled: Boolean = true,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth().height(48.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (filled) LoopyViolet else Color(0x1AFFFFFF),
             contentColor = if (filled) Color.White else TextHi,
+            disabledContainerColor = Color(0x0DFFFFFF),
+            disabledContentColor = TextLo,
         ),
     ) {
         Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)

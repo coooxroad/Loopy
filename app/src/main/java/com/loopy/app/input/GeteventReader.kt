@@ -1,10 +1,10 @@
 package com.loopy.app.input
 
+import com.loopy.app.shizuku.Shell
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -39,22 +39,6 @@ data class TouchDevice(
 class GeteventReader {
 
     private val jobs = mutableListOf<Job>()
-
-    // Shizuku.newProcess 는 이 API 버전에서 private 이라 리플렉션으로 호출한다.
-    // (rikka.shizuku.* 는 프레임워크 클래스가 아니라 hidden-API 제약이 없고,
-    //  debug 빌드라 난독화도 없어 안전하다. 반환형 ShizukuRemoteProcess 는
-    //  java.lang.Process 를 상속하므로 Process 로 받아 쓴다.)
-    private val newProcessMethod by lazy {
-        Shizuku::class.java.getDeclaredMethod(
-            "newProcess",
-            Array<String>::class.java,
-            Array<String>::class.java,
-            String::class.java,
-        ).apply { isAccessible = true }
-    }
-
-    private fun newShizukuProcess(cmd: Array<String>): Process =
-        newProcessMethod.invoke(null, cmd, null, null) as Process
 
     /**
      * getevent -pl 결과에서 ABS_MT_POSITION_X/Y 를 가진 디바이스를 전부 찾는다.
@@ -127,7 +111,7 @@ class GeteventReader {
 
     private fun streamOne(dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
         val proc = try {
-            newShizukuProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
+            Shell.newProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
         } catch (t: Throwable) {
             return
         }
@@ -194,7 +178,7 @@ class GeteventReader {
     /** 짧게 끝나는 셸 명령을 동기 실행하고 stdout 을 통째로 반환. */
     private fun runBlockingShell(cmd: String): String? {
         return try {
-            val proc = newShizukuProcess(arrayOf("sh", "-c", cmd))
+            val proc = Shell.newProcess(arrayOf("sh", "-c", cmd))
             val text = proc.inputStream.bufferedReader().readText()
             proc.waitFor()
             text
