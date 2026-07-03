@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,15 +33,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.loopy.app.input.InputInjector
+import com.loopy.app.input.GeteventReader
+import com.loopy.app.input.Player
+import com.loopy.app.input.Recorder
+import com.loopy.app.input.TouchDevice
 import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.GlassCard
@@ -62,13 +63,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(deadListener)
-
         setContent {
             LoopyTheme {
-                M1aScreen(registerRefresh = { cb -> onShizukuChanged = cb })
+                M1bScreen(registerRefresh = { cb -> onShizukuChanged = cb })
             }
         }
     }
@@ -81,22 +80,24 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun M1aScreen(registerRefresh: ((() -> Unit)) -> Unit) {
+private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     val scope = rememberCoroutineScope()
-    val injector = remember { InputInjector(scope) }
+    val reader = remember { GeteventReader() }
+    val recorder = remember { Recorder() }
+    val player = remember { Player(scope) }
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
+    var device by remember { mutableStateOf<TouchDevice?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var phase by remember { mutableStateOf<String?>(null) }
+    var recordedCount by remember { mutableIntStateOf(0) }
     var tapCount by remember { mutableIntStateOf(0) }
-    var countdown by remember { mutableStateOf<Int?>(null) }
-    var targetCenter by remember { mutableStateOf(Offset.Zero) }
-    var lastMsg by remember { mutableStateOf("발사 버튼을 누르면 3초 뒤 중앙을 자동으로 탭해.") }
+    var lastMsg by remember { mutableStateOf("녹화 → (상자 탭) → 재생 순서로 확인해보자.") }
 
-    LaunchedEffect(Unit) {
-        registerRefresh { state = ShizukuManager.state() }
-    }
+    LaunchedEffect(Unit) { registerRefresh { state = ShizukuManager.state() } }
 
     Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = countdown == null)
+        MeshGradientBackground(animate = phase == null)
 
         Column(
             modifier = Modifier
@@ -107,7 +108,7 @@ private fun M1aScreen(registerRefresh: ((() -> Unit)) -> Unit) {
         ) {
             Spacer(Modifier.height(24.dp))
             Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("M1a · 재생(주입) 엔진 검증", color = TextLo, fontSize = 14.sp)
+            Text("M1b-1 · 녹화 → sendevent 재생", color = TextLo, fontSize = 14.sp)
 
             // ── Shizuku 상태 ──
             GlassCard(Modifier.fillMaxWidth()) {
@@ -135,53 +136,87 @@ private fun M1aScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 }
             }
 
-            // ── 주입 테스트 ──
+            // ── 녹화 / 재생 ──
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("주입 테스트", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("녹화 · 재생", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
-                Text(lastMsg, color = TextLo, fontSize = 12.sp)
+                Text(phase ?: lastMsg, color = if (phase != null) LoopyViolet else TextLo, fontSize = 13.sp)
+                Spacer(Modifier.height(4.dp))
+                Text("녹화된 이벤트: $recordedCount 개", color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(14.dp))
 
-                LoopyButton(
-                    text = if (countdown != null) "발사까지 ${countdown}..." else "가상 탭 발사 (3초 뒤)",
-                    enabled = state == ShizukuState.READY && countdown == null,
-                ) {
-                    scope.launch {
-                        val c = targetCenter
-                        if (c == Offset.Zero) {
-                            lastMsg = "타깃 위치를 아직 못 잡았어. 잠깐 뒤 다시 눌러봐."
-                            return@launch
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.weight(1f)) {
+                        LoopyButton(
+                            text = "녹화 (3초)",
+                            enabled = state == ShizukuState.READY && !busy,
+                        ) {
+                            scope.launch {
+                                val devs = reader.probe()
+                                val dev = devs.firstOrNull { it.name.contains("touchscreen", true) }
+                                    ?: devs.firstOrNull()
+                                if (dev == null) {
+                                    lastMsg = "터치스크린을 못 찾음 (getevent -pl 실패?)"
+                                    return@launch
+                                }
+                                device = dev
+                                busy = true
+                                phase = "준비… 2"; delay(1000)
+                                phase = "준비… 1"; delay(1000)
+                                recorder.start(scope, dev)
+                                for (i in 3 downTo 1) { phase = "● 녹화중 $i — 아래 상자를 탭!"; delay(1000) }
+                                recorder.stop()
+                                recordedCount = recorder.events.size
+                                phase = null
+                                busy = false
+                                lastMsg = "이벤트 $recordedCount개 녹화됨. '재생'을 눌러봐."
+                            }
                         }
-                        for (i in 3 downTo 1) { countdown = i; delay(1000) }
-                        countdown = null
-                        val x = c.x.toInt()
-                        val y = c.y.toInt()
-                        lastMsg = "주입: input tap $x $y … 상자 숫자가 오르면 성공!"
-                        injector.tap(x, y)
+                    }
+                    Box(Modifier.weight(1f)) {
+                        LoopyButton(
+                            text = "재생 (2초)",
+                            filled = false,
+                            enabled = state == ShizukuState.READY && !busy && recordedCount > 0,
+                        ) {
+                            scope.launch {
+                                val dev = device ?: return@launch
+                                val evs = recorder.events.toList()
+                                if (evs.isEmpty()) { lastMsg = "먼저 녹화해줘"; return@launch }
+                                busy = true
+                                for (i in 2 downTo 1) { phase = "재생까지 $i"; delay(1000) }
+                                phase = "▶ 재생중…"
+                                val durMs = ((evs.last().tMicros - evs.first().tMicros) / 1000).coerceAtLeast(0)
+                                player.play(dev, evs)
+                                delay(durMs + 800)
+                                phase = null
+                                busy = false
+                                lastMsg = "재생 끝. 상자 숫자가 저절로 늘었으면 성공! 🎯"
+                            }
+                        }
                     }
                 }
             }
 
-            // ── 타깃 상자 (직접 누르지 말 것) ──
+            // ── 타깃 상자 ──
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(240.dp)
+                    .height(220.dp)
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color(0x14FFFFFF))
                     .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(24.dp))
-                    .onGloballyPositioned { targetCenter = it.boundsInWindow().center }
                     .clickable {
                         tapCount += 1
-                        lastMsg = "탭 감지됨! (누적 $tapCount)"
+                        lastMsg = "탭 감지 (누적 $tapCount)"
                     },
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("$tapCount", color = LoopyViolet, fontSize = 64.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                    Text("$tapCount", color = LoopyViolet, fontSize = 60.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
                     Text("탭 카운트", color = TextLo, fontSize = 13.sp)
                     Spacer(Modifier.height(8.dp))
-                    Text("이 상자를 직접 누르지 말고,\n위 발사 버튼만 눌러봐.", color = TextLo, fontSize = 12.sp)
+                    Text("녹화중일 때 여기를 몇 번 탭해.\n재생 때 숫자가 저절로 오르면 성공.", color = TextLo, fontSize = 12.sp)
                 }
             }
 
@@ -208,6 +243,6 @@ private fun LoopyButton(
             disabledContentColor = TextLo,
         ),
     ) {
-        Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
