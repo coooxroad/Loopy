@@ -18,9 +18,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * 진짜 mesh gradient 셰이더(AGSL)는 API 33+ 전용이라, 크고 흐린 radial 블롭 여러 개를
- * 아주 느리게 회전시켜 어느 기기에서나 도는 mesh 느낌을 낸다. 재생 중에는 animate=false로
- * 꺼서 GPU/배터리를 아낀다.
+ * 오프화이트 배경 위에 파스텔(피치/라벤더/민트) 블롭을 크고 흐리게 겹쳐 아주 느리게
+ * 움직여 mesh 느낌을 낸다. 밝은 배경이라 alpha 를 살짝 높여 은은하게 보이게 한다.
+ * 재생 중에는 animate=false 로 꺼서 GPU/배터리를 아낀다.
  */
 @Composable
 fun MeshGradientBackground(
@@ -33,7 +33,7 @@ fun MeshGradientBackground(
             initialValue = 0f,
             targetValue = (2 * Math.PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(28_000, easing = LinearEasing),
+                animation = tween(30_000, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart,
             ),
             label = "phase",
@@ -45,10 +45,10 @@ fun MeshGradientBackground(
         val h = size.height
         val r = maxOf(w, h) * 0.85f
 
-        blob(LoopyViolet, w * (0.25f + 0.10f * cos(phase)), h * (0.20f + 0.08f * sin(phase)), r)
-        blob(LoopyCyan, w * (0.80f + 0.10f * sin(phase * 0.9f)), h * (0.30f + 0.10f * cos(phase * 1.1f)), r * 0.9f)
-        blob(LoopyBlue, w * (0.60f + 0.12f * cos(phase * 1.3f)), h * (0.85f + 0.06f * sin(phase)), r * 0.95f)
-        blob(LoopyPink, w * (0.15f + 0.08f * sin(phase * 0.7f)), h * (0.80f + 0.08f * cos(phase * 0.8f)), r * 0.7f)
+        blob(MeshPeach, w * (0.22f + 0.10f * cos(phase)), h * (0.18f + 0.08f * sin(phase)), r * 0.9f)
+        blob(MeshMint, w * (0.82f + 0.10f * sin(phase * 0.9f)), h * (0.26f + 0.10f * cos(phase * 1.1f)), r * 0.85f)
+        blob(MeshLavender, w * (0.55f + 0.12f * cos(phase * 1.3f)), h * (0.88f + 0.06f * sin(phase)), r)
+        blob(MeshPeach, w * (0.12f + 0.08f * sin(phase * 0.7f)), h * (0.82f + 0.08f * cos(phase * 0.8f)), r * 0.6f)
     }
 }
 
@@ -57,7 +57,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.blob(
 ) {
     drawCircle(
         brush = Brush.radialGradient(
-            colors = listOf(color.copy(alpha = 0.55f), color.copy(alpha = 0f)),
+            colors = listOf(color.copy(alpha = 0.65f), color.copy(alpha = 0f)),
             center = Offset(cx, cy),
             radius = radius,
         ),

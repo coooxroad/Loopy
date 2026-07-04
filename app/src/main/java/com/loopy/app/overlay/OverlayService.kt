@@ -8,9 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.util.TypedValue
@@ -26,18 +26,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 화면 위 오버레이 컨트롤 (탭 테스트용, 나중에 매크로 컨트롤로 확장).
  *
- * 구성:
- *  - 조준점(십자): 드래그해서 원하는 위치로 옮긴다.
- *  - 컨트롤 바: "여기 탭"(조준점 위치를 input tap), "닫기"(서비스 종료). 역시 드래그 가능.
- *
- * input tap 은 조준점 중심의 화면 픽셀 좌표로 주입한다. IO 스레드에서 실행(ANR 방지).
- * 좌표계: TYPE_APPLICATION_OVERLAY + FLAG_LAYOUT_NO_LIMITS 라 params.x/y 는
- * 디스플레이 좌상단 기준 픽셀 → input tap 의 좌표계와 맞는다.
+ * 핵심: 조준점은 터치 가능한 오버레이 창이라, input tap 을 조준점 위치에 쏘면
+ * 게임이 아니라 조준점이 그 탭을 가로챈다. 그래서 주입하는 순간에만 조준점을
+ * FLAG_NOT_TOUCHABLE 로 바꿔 탭이 아래(게임)로 통과하게 한다.
  */
 class OverlayService : Service() {
 
@@ -64,19 +62,15 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun baseParams(): WindowManager.LayoutParams {
-        val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        return WindowManager.LayoutParams(
+    private fun baseParams(): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            type,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-        }
-    }
+        ).apply { gravity = Gravity.TOP or Gravity.START }
 
     // ── 조준점 ──
     private fun addCrosshair() {
@@ -93,38 +87,46 @@ class OverlayService : Service() {
     private fun addControlBar() {
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = pill(0xE61A1A24.toInt(), dp(16))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = pill(0xF2FFFFFF.toInt(), dp(18))
+            elevation = dp(6).toFloat()
         }
         val title = TextView(this).apply {
             text = "Loopy 탭 테스트"
-            setTextColor(0xFFF3F3F7.toInt())
+            setTextColor(0xFF2B2D42.toInt())
             textSize = 13f
         }
         coordLabel = TextView(this).apply {
-            setTextColor(0xFF9A9AB0.toInt())
+            setTextColor(0xFF8A8DA0.toInt())
             textSize = 11f
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val tapBtn = Button(this).apply {
             text = "여기 탭"
+            setTextColor(0xFFFFFFFF.toInt())
+            background = pill(0xFF6C7BFF.toInt(), dp(12))
             setOnClickListener { tapAtCrosshair() }
         }
         val closeBtn = Button(this).apply {
             text = "닫기"
+            setTextColor(0xFF2B2D42.toInt())
+            background = pill(0xFFECECF2.toInt(), dp(12))
             setOnClickListener { stopSelf() }
         }
         row.addView(tapBtn)
-        row.addView(closeBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
+        row.addView(
+            closeBtn,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { leftMargin = dp(8) },
+        )
 
         bar.addView(title)
         bar.addView(coordLabel)
         bar.addView(row)
 
-        barParams = baseParams().apply {
-            x = dp(16); y = dp(60)
-        }
-        // 제목/좌표 영역을 잡고 드래그 (버튼은 클릭 우선)
+        barParams = baseParams().apply { x = dp(16); y = dp(60) }
         makeDraggable(title, barParams) {}
         makeDraggable(coordLabel, barParams) {}
         wm.addView(bar, barParams)
@@ -134,13 +136,23 @@ class OverlayService : Service() {
     private fun tapAtCrosshair() {
         val cx = crosshairParams.x + crosshair.width / 2
         val cy = crosshairParams.y + crosshair.height / 2
-        coordLabel.text = "탭: ($cx, $cy) …"
+        coordLabel.text = "탭 주입: ($cx, $cy)…"
+        setCrosshairTouchable(false) // 조준점이 탭을 가로채지 않게
         scope.launch {
-            kotlinx.coroutines.withContext(Dispatchers.IO) {
-                Shell.exec("input tap $cx $cy")
-            }
-            coordLabel.text = "탭 완료: ($cx, $cy)"
+            delay(60)
+            val diag = withContext(Dispatchers.IO) { Shell.execDiag("input tap $cx $cy") }
+            setCrosshairTouchable(true)
+            coordLabel.text = "($cx,$cy) → ${diag.take(110)}"
         }
+    }
+
+    private fun setCrosshairTouchable(touchable: Boolean) {
+        crosshairParams.flags = if (touchable) {
+            crosshairParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            crosshairParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        runCatching { wm.updateViewLayout(crosshair, crosshairParams) }
     }
 
     private fun updateCoordLabel() {
@@ -170,7 +182,7 @@ class OverlayService : Service() {
                     params.x = startX + (e.rawX - touchX).toInt()
                     params.y = startY + (e.rawY - touchY).toInt()
                     val root = if (v === crosshair) crosshair else bar
-                    wm.updateViewLayout(root, params)
+                    runCatching { wm.updateViewLayout(root, params) }
                     onMoved()
                     true
                 }
@@ -179,11 +191,10 @@ class OverlayService : Service() {
         }
     }
 
-    private fun pill(color: Int, radius: Int) =
-        android.graphics.drawable.GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = radius.toFloat()
-        }
+    private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius.toFloat()
+    }
 
     private fun startAsForeground() {
         val channelId = "loopy_overlay"
@@ -213,21 +224,21 @@ class OverlayService : Service() {
         runCatching { wm.removeView(bar) }
     }
 
-    /** 반투명 링 + 십자 + 중심점을 그리는 조준점 뷰. */
+    /** 반투명 링 + 십자 + 중심점을 그리는 조준점 뷰 (페리윙클). */
     class CrosshairView(context: Context, private val sizePx: Int) : View(context) {
         private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = sizePx * 0.06f
-            color = 0x807C5CFF.toInt()
+            color = 0x806C7BFF.toInt()
         }
         private val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = sizePx * 0.04f
-            color = 0xCC7C5CFF.toInt()
+            color = 0xCC6C7BFF.toInt()
         }
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = 0xFF7C5CFF.toInt()
+            color = 0xFF6C7BFF.toInt()
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

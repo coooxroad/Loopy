@@ -7,6 +7,9 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,9 +19,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -26,8 +28,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,10 +40,15 @@ import androidx.compose.ui.unit.sp
 import com.loopy.app.overlay.OverlayService
 import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
+import com.loopy.app.ui.theme.Accent
+import com.loopy.app.ui.theme.CardStroke
 import com.loopy.app.ui.theme.GlassCard
+import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.LoopyTheme
-import com.loopy.app.ui.theme.LoopyViolet
 import com.loopy.app.ui.theme.MeshGradientBackground
+import com.loopy.app.ui.theme.MeshLavender
+import com.loopy.app.ui.theme.MeshMint
+import com.loopy.app.ui.theme.MeshPeach
 import com.loopy.app.ui.theme.TextHi
 import com.loopy.app.ui.theme.TextLo
 import rikka.shizuku.Shizuku
@@ -107,7 +117,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                         ShizukuState.NEEDS_PERMISSION -> "설치됨 · 권한 허용 필요"
                         ShizukuState.READY -> "준비 완료"
                     },
-                    color = if (state == ShizukuState.READY) LoopyViolet else TextLo,
+                    color = if (state == ShizukuState.READY) Accent else TextLo,
                     fontSize = 13.sp,
                 )
                 if (state == ShizukuState.NEEDS_PERMISSION) {
@@ -129,17 +139,18 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (canOverlay) "허용됨" else "다른 앱 위에 표시 권한이 필요해",
-                    color = if (canOverlay) LoopyViolet else TextLo,
+                    color = if (canOverlay) Accent else TextLo,
                     fontSize = 13.sp,
                 )
                 Spacer(Modifier.height(12.dp))
                 if (!canOverlay) {
                     LoopyButton("권한 설정 열기") {
-                        val intent = Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:${context.packageName}"),
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            )
                         )
-                        context.startActivity(intent)
                     }
                     Spacer(Modifier.height(8.dp))
                 }
@@ -154,15 +165,12 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 Spacer(Modifier.height(6.dp))
                 Text(msg, color = TextLo, fontSize = 12.sp)
                 Spacer(Modifier.height(12.dp))
-                LoopyButton(
-                    text = "오버레이 켜기",
-                    enabled = canOverlay,
-                ) {
+                LoopyButton(text = "오버레이 켜기", enabled = canOverlay) {
                     context.startForegroundService(Intent(context, OverlayService::class.java))
                     msg = if (state != ShizukuState.READY)
                         "오버레이는 떴어. 근데 Shizuku가 준비 안 돼서 탭은 안 먹을 거야. 위에서 Shizuku부터 켜줘."
                     else
-                        "켜졌어! 이제 로블록스로 전환 → 조준점을 타워 놓을 자리로 드래그 → '여기 탭'."
+                        "켜졌어! 로블록스로 전환 → 조준점을 놓을 자리로 드래그 → '여기 탭'."
                 }
                 Spacer(Modifier.height(8.dp))
                 LoopyButton("오버레이 끄기", filled = false) {
@@ -176,6 +184,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     }
 }
 
+/** 파스텔 그라데이션 알약 버튼. filled=false 는 흰 카드 + 얇은 테두리(보조). */
 @Composable
 private fun LoopyButton(
     text: String,
@@ -183,17 +192,24 @@ private fun LoopyButton(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth().height(48.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (filled) LoopyViolet else Color(0x1AFFFFFF),
-            contentColor = if (filled) Color.White else TextHi,
-            disabledContainerColor = Color(0x0DFFFFFF),
-            disabledContentColor = TextLo,
-        ),
-    ) {
-        Text(text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    val shape = RoundedCornerShape(50)
+    val base = Modifier
+        .fillMaxWidth()
+        .height(50.dp)
+        .clip(shape)
+        .alpha(if (enabled) 1f else 0.45f)
+    val styled = if (filled) {
+        base.background(Brush.horizontalGradient(listOf(MeshPeach, MeshLavender, MeshMint)))
+    } else {
+        base.background(LoopyCard).border(1.dp, CardStroke, shape)
+    }
+    val clickMod = if (enabled) styled.clickable { onClick() } else styled
+    Box(clickMod, contentAlignment = Alignment.Center) {
+        Text(
+            text,
+            color = if (filled) TextHi else Accent,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

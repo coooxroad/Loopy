@@ -8,14 +8,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * 글래스 카드. Compose엔 backdrop blur가 기본이 없어서 M0에선 반투명 + 얇은 하이라이트
- * 테두리로 유리 문법을 만든다. 진짜 배경 블러는 나중에 Haze 라이브러리로 한 줄 업그레이드.
+ * 카드. 파스텔 라이트 테마에선 퓨어 화이트 + 부드러운 그림자(elevation)로 '공중에 뜬'
+ * 클린 플랫 느낌을 낸다. 아주 얇은 차콜 테두리로 경계를 살짝 잡아준다.
  */
 @Composable
 fun GlassCard(
@@ -27,19 +25,14 @@ fun GlassCard(
     val shape = RoundedCornerShape(cornerRadius)
     Surface(
         modifier = modifier,
-        color = GlassFill,
+        color = LoopyCard,
         shape = shape,
+        shadowElevation = 6.dp,
+        tonalElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, CardStroke),
     ) {
         Column(
-            modifier = Modifier
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        listOf(Color(0x33FFFFFF), Color(0x0DFFFFFF)),
-                    ),
-                    shape = shape,
-                )
-                .padding(padding),
+            modifier = Modifier.padding(padding),
             content = content,
         )
     }
