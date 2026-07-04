@@ -1,91 +1,72 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy M1b-1 (녹화 → sendevent 재생) — Loopy 폴더 안에서 실행
+# Loopy M1b-1 재생 진단 추가
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행 (cd ~/Loopy)"; exit 1; fi
 
-mkdir -p "$(dirname "app/src/main/java/com/loopy/app/input/Recorder.kt")"
-cat > "app/src/main/java/com/loopy/app/input/Recorder.kt" << 'LOOPY_EOF'
-package com.loopy.app.input
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/shizuku/Shell.kt")"
+cat > "app/src/main/java/com/loopy/app/shizuku/Shell.kt" << 'LOOPY_EOF'
+package com.loopy.app.shizuku
 
-import com.loopy.app.shizuku.Shell
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import java.util.Collections
+import rikka.shizuku.Shizuku
 
 /**
- * 기기가 실제로 뿜은 raw 입력 이벤트 한 줄.
- * type/code/value 는 리눅스 input_event 의 원시 숫자값 그대로(추측/변환 없음).
- * value 는 0xffffffff(=트래킹ID 해제) 같은 값을 담아야 해서 Long 으로 둔다.
- */
-data class RawEvent(
-    val tMicros: Long,   // getevent 타임스탬프(마이크로초, 절대값)
-    val type: Int,
-    val code: Int,
-    val value: Long,
-)
-
-/**
- * 터치스크린의 raw getevent 스트림을 그대로 캡처한다.
- * 파싱/정규화 없이 원본 숫자를 저장하므로, 이걸 sendevent 로 되쏘면
- * 기기 자신의 프로토콜이라 100% 인식된다(M1b-1 검증의 핵심).
+ * Shizuku 셸 실행을 한 곳으로 모은 진입점.
  *
- * getevent -t (숫자 hex + 타임스탬프) 사용. M0 에서 -lt 가 동작했으므로 -t 도 지원됨.
+ * Shizuku.newProcess 는 이 API 버전에서 private 이라 리플렉션으로 호출한다.
+ * (rikka.shizuku.* 는 안드로이드 프레임워크 클래스가 아니라 hidden-API 제약이 없고,
+ *  debug 빌드라 난독화도 없어 안전하다. 반환형 ShizukuRemoteProcess 는
+ *  java.lang.Process 를 상속하므로 Process 로 받아 쓴다.)
  */
-class Recorder {
+object Shell {
 
-    private var job: Job? = null
-    val events: MutableList<RawEvent> = Collections.synchronizedList(mutableListOf())
-
-    fun start(scope: CoroutineScope, dev: TouchDevice) {
-        stop()
-        events.clear()
-        job = scope.launch(Dispatchers.IO) {
-            val proc = try {
-                Shell.newProcess(arrayOf("sh", "-c", "getevent -t ${dev.path}"))
-            } catch (t: Throwable) {
-                return@launch
-            }
-            try {
-                proc.inputStream.bufferedReader().forEachLine { line ->
-                    parse(line)?.let { events.add(it) }
-                }
-            } catch (_: Throwable) {
-            } finally {
-                runCatching { proc.destroy() }
-            }
-        }
+    private val newProcessMethod by lazy {
+        Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java,
+        ).apply { isAccessible = true }
     }
 
-    fun stop() {
-        job?.cancel()
-        job = null
+    /** raw 프로세스 생성. 스트리밍(getevent)처럼 살아있는 프로세스가 필요할 때 사용. */
+    fun newProcess(cmd: Array<String>): Process =
+        newProcessMethod.invoke(null, cmd, null, null) as Process
+
+    private fun sh(cmd: String): Process = newProcess(arrayOf("sh", "-c", cmd))
+
+    /** 명령을 실행하고 stdout 을 통째로 반환(동기). 실패 시 null. */
+    fun run(cmd: String): String? = try {
+        val p = sh(cmd)
+        val text = p.inputStream.bufferedReader().readText()
+        p.waitFor()
+        text
+    } catch (t: Throwable) {
+        null
     }
 
-    /** `[   86185.123456] 0003 0035 000007a1` → RawEvent. 마지막 3토큰을 hex 로 읽는다. */
-    private fun parse(line: String): RawEvent? {
-        val open = line.indexOf('[')
-        val close = line.indexOf(']')
-        if (open < 0 || close < 0 || close <= open) return null
-        val tMicros = try {
-            (line.substring(open + 1, close).trim().toDouble() * 1_000_000).toLong()
+    /** 출력이 필요 없는 명령을 실행하고 끝날 때까지 대기(동기). */
+    fun exec(cmd: String) {
+        try {
+            sh(cmd).waitFor()
         } catch (_: Throwable) {
-            return null
         }
-        val toks = line.substring(close + 1).trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (toks.size < 3) return null
-        val n = toks.size
+    }
+
+    /** 진단용: 실행 후 exit 코드 + stderr + stdout 을 요약 문자열로 반환. */
+    fun execDiag(cmd: String): String {
         return try {
-            RawEvent(
-                tMicros = tMicros,
-                type = toks[n - 3].toInt(16),
-                code = toks[n - 2].toInt(16),
-                value = toks[n - 1].toLong(16),
-            )
-        } catch (_: Throwable) {
-            null
+            val p = sh(cmd)
+            val out = p.inputStream.bufferedReader().readText()
+            val err = p.errorStream.bufferedReader().readText()
+            val code = p.waitFor()
+            buildString {
+                append("exit=").append(code)
+                if (err.isNotBlank()) append("\nERR: ").append(err.take(300))
+                if (out.isNotBlank()) append("\nOUT: ").append(out.take(200))
+            }
+        } catch (t: Throwable) {
+            "예외: ${t.message}"
         }
     }
 }
@@ -99,46 +80,47 @@ import com.loopy.app.shizuku.Shell
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
  * 캡처한 raw 이벤트를 sendevent 로 되쏜다.
  *
- * 성능/타이밍의 핵심: 이벤트마다 sendevent 를 "따로" 실행하면(프로세스 포크) 느리고
- * 타이밍이 뭉개진다. 그래서 전체 시퀀스를 sleep 이 섞인 "하나의 셸 스크립트"로 만들어
- * 한 프로세스에서 실행한다. (M1b-1 은 짧은 시퀀스라 이걸로 충분. 긴 매크로의
- * 추가 최적화는 나중에.)
+ * 전체 시퀀스를 sleep 이 섞인 "하나의 셸 스크립트"로 만들어 한 프로세스에서 실행한다.
+ * 진단 모드: execDiag 로 sendevent 의 exit/stderr 를 받아 onResult 로 돌려준다.
  *
- * value 변환: getevent 는 0xffffffff 를 그대로 준다(=트래킹ID 해제, 의미상 -1).
- * sendevent 에는 부호 있는 정수로 넣어야 하므로 32비트 부호 해석(Long→Int)한다.
+ * value 변환: getevent 는 0xffffffff(=트래킹ID 해제)를 그대로 준다.
+ * sendevent 엔 부호 있는 32비트로 넣어야 하므로 Long→Int 로 부호 해석한다.
  * 예: 0xffffffff → -1, 0x7a1 → 1953.
  */
 class Player(
     private val scope: CoroutineScope,
 ) {
 
-    fun play(dev: TouchDevice, events: List<RawEvent>, onDone: () -> Unit = {}) {
+    fun play(dev: TouchDevice, events: List<RawEvent>, onResult: (String) -> Unit = {}) {
         scope.launch(Dispatchers.IO) {
-            if (events.isNotEmpty()) {
-                val sb = StringBuilder()
-                var prev = events.first().tMicros
-                for (e in events) {
-                    val dt = e.tMicros - prev
-                    if (dt >= 5_000) { // 5ms 이상 간격만 sleep 으로 재현
-                        sb.append("sleep ")
-                            .append(String.format(Locale.US, "%.3f", dt / 1_000_000.0))
-                            .append('\n')
-                    }
-                    sb.append("sendevent ").append(dev.path).append(' ')
-                        .append(e.type).append(' ')
-                        .append(e.code).append(' ')
-                        .append(e.value.toInt()) // 32비트 부호 해석
-                        .append('\n')
-                    prev = e.tMicros
-                }
-                Shell.exec(sb.toString())
+            if (events.isEmpty()) {
+                withContext(Dispatchers.Main) { onResult("이벤트 없음") }
+                return@launch
             }
-            onDone()
+            val sb = StringBuilder()
+            var prev = events.first().tMicros
+            for (e in events) {
+                val dt = e.tMicros - prev
+                if (dt >= 5_000) {
+                    sb.append("sleep ")
+                        .append(String.format(Locale.US, "%.3f", dt / 1_000_000.0))
+                        .append('\n')
+                }
+                sb.append("sendevent ").append(dev.path).append(' ')
+                    .append(e.type).append(' ')
+                    .append(e.code).append(' ')
+                    .append(e.value.toInt())
+                    .append('\n')
+                prev = e.tMicros
+            }
+            val diag = Shell.execDiag(sb.toString())
+            withContext(Dispatchers.Main) { onResult(diag) }
         }
     }
 }
@@ -240,6 +222,8 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var phase by remember { mutableStateOf<String?>(null) }
     var recordedCount by remember { mutableIntStateOf(0) }
     var tapCount by remember { mutableIntStateOf(0) }
+    var preview by remember { mutableStateOf("") }
+    var diag by remember { mutableStateOf("") }
     var lastMsg by remember { mutableStateOf("녹화 → (상자 탭) → 재생 순서로 확인해보자.") }
 
     LaunchedEffect(Unit) { registerRefresh { state = ShizukuManager.state() } }
@@ -291,6 +275,16 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 Text(phase ?: lastMsg, color = if (phase != null) LoopyViolet else TextLo, fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("녹화된 이벤트: $recordedCount 개", color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                if (preview.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("첫 이벤트 미리보기:", color = TextLo, fontSize = 11.sp)
+                    Text(preview, color = TextHi, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (diag.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("재생 진단:", color = TextLo, fontSize = 11.sp)
+                    Text(diag, color = LoopyViolet, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
                 Spacer(Modifier.height(14.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -314,10 +308,15 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 recorder.start(scope, dev)
                                 for (i in 3 downTo 1) { phase = "● 녹화중 $i — 아래 상자를 탭!"; delay(1000) }
                                 recorder.stop()
-                                recordedCount = recorder.events.size
+                                val evs = recorder.events.toList()
+                                recordedCount = evs.size
+                                preview = evs.take(8).joinToString("\n") {
+                                    "type=${it.type}  code=${it.code}  val=${it.value}"
+                                }
+                                diag = ""
                                 phase = null
                                 busy = false
-                                lastMsg = "이벤트 $recordedCount개 녹화됨. '재생'을 눌러봐."
+                                lastMsg = "이벤트 ${recordedCount}개 녹화됨. '재생'을 눌러봐."
                             }
                         }
                     }
@@ -335,11 +334,11 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 for (i in 2 downTo 1) { phase = "재생까지 $i"; delay(1000) }
                                 phase = "▶ 재생중…"
                                 val durMs = ((evs.last().tMicros - evs.first().tMicros) / 1000).coerceAtLeast(0)
-                                player.play(dev, evs)
+                                player.play(dev, evs) { result -> diag = result }
                                 delay(durMs + 800)
                                 phase = null
                                 busy = false
-                                lastMsg = "재생 끝. 상자 숫자가 저절로 늘었으면 성공! 🎯"
+                                lastMsg = "재생 끝. 상자 숫자가 올랐으면 성공. 안 올랐으면 아래 진단을 봐."
                             }
                         }
                     }
@@ -396,9 +395,9 @@ private fun LoopyButton(
 }
 LOOPY_EOF
 
-echo "파일 3개 반영 완료."
+echo "파일 3개 반영."
 git add -A
-git commit -m "M1b-1: raw getevent 녹화 → sendevent 재생"
+git commit -m "M1b-1 진단: sendevent 결과/이벤트 미리보기 표시"
 git push
-echo "푸시 완료! Actions 확인."
+echo "푸시 완료!"
 

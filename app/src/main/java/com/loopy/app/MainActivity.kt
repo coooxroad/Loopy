@@ -92,6 +92,8 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var phase by remember { mutableStateOf<String?>(null) }
     var recordedCount by remember { mutableIntStateOf(0) }
     var tapCount by remember { mutableIntStateOf(0) }
+    var preview by remember { mutableStateOf("") }
+    var diag by remember { mutableStateOf("") }
     var lastMsg by remember { mutableStateOf("녹화 → (상자 탭) → 재생 순서로 확인해보자.") }
 
     LaunchedEffect(Unit) { registerRefresh { state = ShizukuManager.state() } }
@@ -143,6 +145,16 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 Text(phase ?: lastMsg, color = if (phase != null) LoopyViolet else TextLo, fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
                 Text("녹화된 이벤트: $recordedCount 개", color = TextLo, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                if (preview.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("첫 이벤트 미리보기:", color = TextLo, fontSize = 11.sp)
+                    Text(preview, color = TextHi, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
+                if (diag.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("재생 진단:", color = TextLo, fontSize = 11.sp)
+                    Text(diag, color = LoopyViolet, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                }
                 Spacer(Modifier.height(14.dp))
 
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -166,7 +178,12 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 recorder.start(scope, dev)
                                 for (i in 3 downTo 1) { phase = "● 녹화중 $i — 아래 상자를 탭!"; delay(1000) }
                                 recorder.stop()
-                                recordedCount = recorder.events.size
+                                val evs = recorder.events.toList()
+                                recordedCount = evs.size
+                                preview = evs.take(8).joinToString("\n") {
+                                    "type=${it.type}  code=${it.code}  val=${it.value}"
+                                }
+                                diag = ""
                                 phase = null
                                 busy = false
                                 lastMsg = "이벤트 ${recordedCount}개 녹화됨. '재생'을 눌러봐."
@@ -187,11 +204,11 @@ private fun M1bScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 for (i in 2 downTo 1) { phase = "재생까지 $i"; delay(1000) }
                                 phase = "▶ 재생중…"
                                 val durMs = ((evs.last().tMicros - evs.first().tMicros) / 1000).coerceAtLeast(0)
-                                player.play(dev, evs)
+                                player.play(dev, evs) { result -> diag = result }
                                 delay(durMs + 800)
                                 phase = null
                                 busy = false
-                                lastMsg = "재생 끝. 상자 숫자가 저절로 늘었으면 성공! 🎯"
+                                lastMsg = "재생 끝. 상자 숫자가 올랐으면 성공. 안 올랐으면 아래 진단을 봐."
                             }
                         }
                     }
