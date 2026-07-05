@@ -34,6 +34,8 @@ data class TouchDevice(
 class GeteventReader {
 
     private val jobs = mutableListOf<Job>()
+    private val procs = mutableListOf<Process>()
+    @Volatile private var active = false
 
     fun probe(): List<TouchDevice> {
         val out = Shell.run("getevent -pl") ?: return emptyList()
@@ -79,6 +81,7 @@ class GeteventReader {
         onPoint: (TouchDevice, TouchPoint) -> Unit,
     ) {
         stop()
+        active = true
         for (dev in devices) jobs += scope.launch(Dispatchers.IO) { streamOne(dev, onPoint) }
     }
 
@@ -90,6 +93,7 @@ class GeteventReader {
         } catch (t: Throwable) {
             return
         }
+        synchronized(procs) { procs.add(proc) }
         val slots = HashMap<Int, Slot>()
         val touched = HashSet<Int>()
         var curSlot = 0
@@ -115,7 +119,7 @@ class GeteventReader {
                     "SYN_REPORT" -> {
                         for (sl in touched) {
                             val s = slots[sl] ?: continue
-                            if (s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
+                            if (active && s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
                                 onPoint(
                                     dev,
                                     TouchPoint(
@@ -139,6 +143,11 @@ class GeteventReader {
     }
 
     fun stop() {
+        active = false
+        synchronized(procs) {
+            procs.forEach { runCatching { it.destroy() } }
+            procs.clear()
+        }
         jobs.forEach { it.cancel() }
         jobs.clear()
     }
