@@ -18,6 +18,7 @@ object PlaylistStore {
         macroIds: List<String>,
         shuffle: Boolean,
         cycles: Int,
+        gapMs: Int,
         existingId: String? = null,
     ): Playlist {
         val pl = Playlist(
@@ -27,6 +28,7 @@ object PlaylistStore {
             macroIds = macroIds,
             shuffle = shuffle,
             cycles = cycles,
+            gapMs = gapMs,
         )
         File(dir(ctx), "${pl.id}.json").writeText(toJson(pl))
         return pl
@@ -54,6 +56,7 @@ object PlaylistStore {
             .put("macroIds", ids)
             .put("shuffle", p.shuffle)
             .put("cycles", p.cycles)
+            .put("gapMs", p.gapMs)
             .toString()
     }
 
@@ -69,6 +72,7 @@ object PlaylistStore {
             macroIds = ids,
             shuffle = o.getBoolean("shuffle"),
             cycles = o.getInt("cycles"),
+            gapMs = o.optInt("gapMs", 0),
         )
     }
 }

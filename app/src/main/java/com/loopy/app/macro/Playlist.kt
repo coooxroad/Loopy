@@ -13,4 +13,5 @@ data class Playlist(
     val macroIds: List<String>,
     val shuffle: Boolean,
     val cycles: Int,
+    val gapMs: Int, // 매크로 사이 대기(ms)
 )

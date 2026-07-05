@@ -213,6 +213,7 @@ class OverlayService : Service() {
                     val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
                     status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
                     runActions(m.actions)
+                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
                 }
                 cycle++
             }

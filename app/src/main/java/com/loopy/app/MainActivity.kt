@@ -103,6 +103,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var plName by remember { mutableStateOf("") }
     var plShuffle by remember { mutableStateOf(false) }
     var plCycles by remember { mutableStateOf("") }
+    var plGap by remember { mutableStateOf("") }
     val pattern = remember { mutableStateListOf<String>() }
     var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
 
@@ -117,6 +118,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
         plName = pl?.name ?: ""
         plShuffle = pl?.shuffle ?: false
         plCycles = pl?.cycles?.takeIf { it > 0 }?.toString() ?: ""
+        plGap = pl?.gapMs?.takeIf { it > 0 }?.let { (it / 1000.0).toString() } ?: ""
         pattern.clear()
         pl?.macroIds?.let { pattern.addAll(it) }
         editorOpen = true
@@ -136,13 +138,15 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             name = plName, onName = { plName = it },
             shuffle = plShuffle, onShuffle = { plShuffle = it },
             cycles = plCycles, onCycles = { plCycles = it.filter { c -> c.isDigit() } },
+            gap = plGap, onGap = { plGap = it.filter { c -> c.isDigit() || c == '.' } },
             pattern = pattern,
             macros = editorMacros,
             onSave = {
                 if (plName.isNotBlank() && pattern.isNotEmpty()) {
                     PlaylistStore.save(
                         context, plName.trim(), pattern.toList(),
-                        plShuffle, plCycles.toIntOrNull() ?: 0, editId,
+                        plShuffle, plCycles.toIntOrNull() ?: 0,
+                        ((plGap.toDoubleOrNull() ?: 0.0) * 1000).toInt(), editId,
                     )
                     refresh()
                     editorOpen = false
@@ -233,7 +237,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 Text(pl.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
                                 val sh = if (pl.shuffle) " · 셔플" else ""
-                                Text("${pl.macroIds.size}스텝 · $rep$sh", color = TextLo, fontSize = 11.sp)
+                                val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
+                                Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 11.sp)
                             }
                             Text("편집", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { openEditor(pl) })
                             Spacer(Modifier.width(14.dp))
@@ -298,6 +303,7 @@ private fun PlaylistEditor(
     name: String, onName: (String) -> Unit,
     shuffle: Boolean, onShuffle: (Boolean) -> Unit,
     cycles: String, onCycles: (String) -> Unit,
+    gap: String, onGap: (String) -> Unit,
     pattern: MutableList<String>,
     macros: List<Macro>,
     onSave: () -> Unit,
@@ -327,6 +333,11 @@ private fun PlaylistEditor(
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
                     placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
+                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
             }
 
             GlassCard(Modifier.fillMaxWidth()) {

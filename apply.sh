@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 플레이리스트(패턴+셔플백+무한/N회) + 편집기
+# Loopy: 플레이리스트 매크로 사이 대기시간
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -21,6 +21,7 @@ data class Playlist(
     val macroIds: List<String>,
     val shuffle: Boolean,
     val cycles: Int,
+    val gapMs: Int, // 매크로 사이 대기(ms)
 )
 LOOPY_EOF
 
@@ -46,6 +47,7 @@ object PlaylistStore {
         macroIds: List<String>,
         shuffle: Boolean,
         cycles: Int,
+        gapMs: Int,
         existingId: String? = null,
     ): Playlist {
         val pl = Playlist(
@@ -55,6 +57,7 @@ object PlaylistStore {
             macroIds = macroIds,
             shuffle = shuffle,
             cycles = cycles,
+            gapMs = gapMs,
         )
         File(dir(ctx), "${pl.id}.json").writeText(toJson(pl))
         return pl
@@ -82,6 +85,7 @@ object PlaylistStore {
             .put("macroIds", ids)
             .put("shuffle", p.shuffle)
             .put("cycles", p.cycles)
+            .put("gapMs", p.gapMs)
             .toString()
     }
 
@@ -97,6 +101,7 @@ object PlaylistStore {
             macroIds = ids,
             shuffle = o.getBoolean("shuffle"),
             cycles = o.getInt("cycles"),
+            gapMs = o.optInt("gapMs", 0),
         )
     }
 }
@@ -319,6 +324,7 @@ class OverlayService : Service() {
                     val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
                     status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
                     runActions(m.actions)
+                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
                 }
                 cycle++
             }
@@ -576,6 +582,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var plName by remember { mutableStateOf("") }
     var plShuffle by remember { mutableStateOf(false) }
     var plCycles by remember { mutableStateOf("") }
+    var plGap by remember { mutableStateOf("") }
     val pattern = remember { mutableStateListOf<String>() }
     var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
 
@@ -590,6 +597,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
         plName = pl?.name ?: ""
         plShuffle = pl?.shuffle ?: false
         plCycles = pl?.cycles?.takeIf { it > 0 }?.toString() ?: ""
+        plGap = pl?.gapMs?.takeIf { it > 0 }?.let { (it / 1000.0).toString() } ?: ""
         pattern.clear()
         pl?.macroIds?.let { pattern.addAll(it) }
         editorOpen = true
@@ -609,13 +617,15 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             name = plName, onName = { plName = it },
             shuffle = plShuffle, onShuffle = { plShuffle = it },
             cycles = plCycles, onCycles = { plCycles = it.filter { c -> c.isDigit() } },
+            gap = plGap, onGap = { plGap = it.filter { c -> c.isDigit() || c == '.' } },
             pattern = pattern,
             macros = editorMacros,
             onSave = {
                 if (plName.isNotBlank() && pattern.isNotEmpty()) {
                     PlaylistStore.save(
                         context, plName.trim(), pattern.toList(),
-                        plShuffle, plCycles.toIntOrNull() ?: 0, editId,
+                        plShuffle, plCycles.toIntOrNull() ?: 0,
+                        ((plGap.toDoubleOrNull() ?: 0.0) * 1000).toInt(), editId,
                     )
                     refresh()
                     editorOpen = false
@@ -706,7 +716,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                                 Text(pl.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                                 val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
                                 val sh = if (pl.shuffle) " · 셔플" else ""
-                                Text("${pl.macroIds.size}스텝 · $rep$sh", color = TextLo, fontSize = 11.sp)
+                                val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
+                                Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 11.sp)
                             }
                             Text("편집", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { openEditor(pl) })
                             Spacer(Modifier.width(14.dp))
@@ -771,6 +782,7 @@ private fun PlaylistEditor(
     name: String, onName: (String) -> Unit,
     shuffle: Boolean, onShuffle: (Boolean) -> Unit,
     cycles: String, onCycles: (String) -> Unit,
+    gap: String, onGap: (String) -> Unit,
     pattern: MutableList<String>,
     macros: List<Macro>,
     onSave: () -> Unit,
@@ -800,6 +812,11 @@ private fun PlaylistEditor(
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
                     placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
+                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
             }
 
             GlassCard(Modifier.fillMaxWidth()) {
@@ -868,7 +885,7 @@ LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "플레이리스트: 패턴+셔플백+무한/N회 재생 + 메인앱 편집기"
+git commit -m "플레이리스트: 매크로 사이 대기시간(gap) 추가"
 git push
 echo "푸시 완료!"
 
