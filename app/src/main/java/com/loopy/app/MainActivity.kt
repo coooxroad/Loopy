@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.loopy.app.overlay.OverlayService
+import com.loopy.app.service.LoopyService
 import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.Accent
@@ -91,6 +92,9 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             state = ShizukuManager.state()
             canOverlay = Settings.canDrawOverlays(context)
         }
+    }
+    LaunchedEffect(state) {
+        if (state == ShizukuState.READY) LoopyService.bind(context)
     }
 
     Box(Modifier.fillMaxSize()) {

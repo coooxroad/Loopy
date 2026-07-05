@@ -21,7 +21,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.loopy.app.shizuku.Shell
+import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,12 +47,14 @@ class OverlayService : Service() {
     private lateinit var bar: LinearLayout
     private lateinit var barParams: WindowManager.LayoutParams
     private lateinit var coordLabel: TextView
+    private val locBuf = IntArray(2)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         startAsForeground()
+        LoopyService.bind(this) // injectInputEvent 엔진 연결
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         addCrosshair()
         addControlBar()
@@ -133,16 +135,26 @@ class OverlayService : Service() {
         updateCoordLabel()
     }
 
+    /**
+     * 조준점 중심의 "실제 화면 픽셀 좌표". getLocationOnScreen 은 상태바/노치를 포함한
+     * 물리 화면 기준이라 input tap 의 좌표계와 정확히 일치한다. (params.x/y 는 상태바를
+     * 제외한 영역 기준이라 회전 시 상태바 크기만큼 어긋났던 원인.)
+     */
+    private fun crosshairCenter(): Pair<Int, Int> {
+        crosshair.getLocationOnScreen(locBuf)
+        return (locBuf[0] + crosshair.width / 2) to (locBuf[1] + crosshair.height / 2)
+    }
+
     private fun tapAtCrosshair() {
-        val cx = crosshairParams.x + crosshair.width / 2
-        val cy = crosshairParams.y + crosshair.height / 2
+        val (cx, cy) = crosshairCenter()
         coordLabel.text = "탭 주입: ($cx, $cy)…"
         setCrosshairTouchable(false) // 조준점이 탭을 가로채지 않게
         scope.launch {
             delay(60)
-            val diag = withContext(Dispatchers.IO) { Shell.execDiag("input tap $cx $cy") }
+            val ok = withContext(Dispatchers.IO) { LoopyService.tap(cx, cy) }
             setCrosshairTouchable(true)
-            coordLabel.text = "($cx,$cy) → ${diag.take(110)}"
+            coordLabel.text = if (ok) "탭 완료: ($cx, $cy)"
+            else "서비스 미연결 — 앱에서 Shizuku 확인 후 오버레이 재실행"
         }
     }
 
@@ -156,8 +168,7 @@ class OverlayService : Service() {
     }
 
     private fun updateCoordLabel() {
-        val cx = crosshairParams.x + crosshair.width / 2
-        val cy = crosshairParams.y + crosshair.height / 2
+        val (cx, cy) = crosshairCenter()
         coordLabel.text = "조준점: ($cx, $cy)"
     }
 

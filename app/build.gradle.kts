@@ -34,6 +34,7 @@ android {
     }
     buildFeatures {
         compose = true
+        aidl = true
     }
 
     // Shizuku.newProcess 등이 @RestrictTo 로 표시돼 있어 lint 가 막지 않도록.
