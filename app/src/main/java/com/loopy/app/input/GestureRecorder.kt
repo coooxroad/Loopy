@@ -63,6 +63,17 @@ class GestureRecorder {
                     dur >= HOLD_THRESH_MS -> Type.HOLD
                     else -> Type.TAP
                 }
+                // 디바운스: 직전 탭과 아주 짧은 시간 + 거의 같은 자리면 슬롯 재사용
+                // 경계에서 생긴 중복이므로 버린다. (물리적으로 불가능한 간격)
+                if (type == Type.TAP) {
+                    val last = raws.lastOrNull()
+                    if (last != null && last.type == Type.TAP &&
+                        (t.downT - last.endT) in 0L until DEDUP_MS &&
+                        hypot((t.downX - last.x).toDouble(), (t.downY - last.y).toDouble()) < DEDUP_DIST
+                    ) {
+                        return
+                    }
+                }
                 raws.add(Raw(t.downT, now, type, t.downX, t.downY, t.curX, t.curY, dur))
             }
         }
@@ -84,5 +95,8 @@ class GestureRecorder {
     companion object {
         const val MOVE_THRESH = 0.03f
         const val HOLD_THRESH_MS = 400L
+        // 디바운스: 이 시간 미만 + 이 거리 미만의 연속 탭은 중복으로 간주.
+        const val DEDUP_MS = 50L
+        const val DEDUP_DIST = 0.02
     }
 }
