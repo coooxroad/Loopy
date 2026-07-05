@@ -85,7 +85,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var msg by remember { mutableStateOf("오버레이를 켠 뒤, 로블록스로 전환해서 '여기 탭'을 눌러봐.") }
+    var msg by remember { mutableStateOf("오버레이를 켜고 로블록스로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
 
     LaunchedEffect(Unit) {
         registerRefresh {
@@ -174,7 +174,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     msg = if (state != ShizukuState.READY)
                         "오버레이는 떴어. 근데 Shizuku가 준비 안 돼서 탭은 안 먹을 거야. 위에서 Shizuku부터 켜줘."
                     else
-                        "켜졌어! 로블록스로 전환 → 조준점을 놓을 자리로 드래그 → '여기 탭'."
+                        "켜졌어! 로블록스로 전환 → '● 녹화'로 플레이 기록 → '▶ 재생'."
                 }
                 Spacer(Modifier.height(8.dp))
                 LoopyButton("오버레이 끄기", filled = false) {

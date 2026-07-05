@@ -14,4 +14,7 @@ interface ILoopyService {
 
     // 같은 자리 더블탭. gapMs = 두 탭 사이 간격.
     void doubleTap(int x, int y, int gapMs) = 4;
+
+    // 같은 자리에서 durationMs 동안 누르고 있기(홀드/롱프레스).
+    void hold(int x, int y, int durationMs) = 5;
 }

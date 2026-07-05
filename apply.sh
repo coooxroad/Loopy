@@ -1,77 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy B-1: injectInputEvent (Shizuku UserService) 탭
+# Loopy B-2: 녹화(탭/홀드/스와이프) → 재생
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
-mkdir -p "$(dirname "app/build.gradle.kts")"
-cat > "app/build.gradle.kts" << 'LOOPY_EOF'
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")
-}
-
-android {
-    namespace = "com.loopy.app"
-    compileSdk = 34
-
-    defaultConfig {
-        applicationId = "com.loopy.app"
-        minSdk = 26
-        targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-m0"
-    }
-
-    buildTypes {
-        debug {
-            isMinifyEnabled = false
-        }
-        release {
-            isMinifyEnabled = false
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-    buildFeatures {
-        compose = true
-        aidl = true
-    }
-
-    // Shizuku.newProcess 등이 @RestrictTo 로 표시돼 있어 lint 가 막지 않도록.
-    // (assembleDebug 는 lint 를 안 돌리지만 안전장치로 둔다.)
-    lint {
-        abortOnError = false
-        checkReleaseBuilds = false
-    }
-}
-
-dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
-    implementation("androidx.activity:activity-compose:1.9.2")
-
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
-    implementation(composeBom)
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-
-    // Shizuku: shell/root 권한으로 getevent 실행
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
-}
-LOOPY_EOF
+rm -f "app/src/main/java/com/loopy/app/input/InputInjector.kt"
 
 mkdir -p "$(dirname "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl")"
 cat > "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl" << 'LOOPY_EOF'
@@ -91,6 +24,9 @@ interface ILoopyService {
 
     // 같은 자리 더블탭. gapMs = 두 탭 사이 간격.
     void doubleTap(int x, int y, int gapMs) = 4;
+
+    // 같은 자리에서 durationMs 동안 누르고 있기(홀드/롱프레스).
+    void hold(int x, int y, int durationMs) = 5;
 }
 LOOPY_EOF
 
@@ -116,7 +52,7 @@ import kotlin.system.exitProcess
  *  - getInstance() 로 인스턴스를 얻고 injectInputEvent(InputEvent, int) 를 리플렉션 호출.
  *  - MotionEvent 의 source 를 TOUCHSCREEN 으로 지정해야 터치로 인식된다.
  */
-class LoopyUserService : ILoopyService.Stub {
+class LoopyUserService : ILoopyService.Stub() {
 
     private val instance: Any
     private val injectMethod: Method
@@ -162,6 +98,18 @@ class LoopyUserService : ILoopyService.Stub {
             downUp(x, y)
             Thread.sleep(gapMs.toLong().coerceAtLeast(0))
             downUp(x, y)
+        }
+    }
+
+    override fun hold(x: Int, y: Int, durationMs: Int) {
+        runCatching {
+            val t = SystemClock.uptimeMillis()
+            val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
+            inject(down); down.recycle()
+            Thread.sleep(durationMs.toLong().coerceAtLeast(0))
+            val t2 = SystemClock.uptimeMillis()
+            val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
+            inject(up); up.recycle()
         }
     }
 
@@ -256,8 +204,106 @@ object LoopyService {
     fun doubleTap(x: Int, y: Int, gapMs: Int): Boolean =
         runCatching { svc?.doubleTap(x, y, gapMs); svc != null }.getOrDefault(false)
 
+    fun hold(x: Int, y: Int, durationMs: Int): Boolean =
+        runCatching { svc?.hold(x, y, durationMs); svc != null }.getOrDefault(false)
+
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Boolean =
         runCatching { svc?.swipe(x1, y1, x2, y2, durationMs); svc != null }.getOrDefault(false)
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/input/GestureRecorder.kt")"
+cat > "app/src/main/java/com/loopy/app/input/GestureRecorder.kt" << 'LOOPY_EOF'
+package com.loopy.app.input
+
+import android.os.SystemClock
+import java.util.Collections
+import kotlin.math.hypot
+
+/**
+ * getevent 로 읽은 터치 포인트(panel 정규화 0~1)를 손가락 down→up 단위로 보고
+ * 탭 / 홀드 / 스와이프로 판정해 Action 리스트로 쌓는다.
+ *
+ * 좌표는 panel 정규화(u,v) 그대로 저장한다. 화면 픽셀 변환(회전 보정)은 재생 쪽에서
+ * 현재 방향에 맞춰 수행하므로, 저장은 방향 독립적이다.
+ *
+ * 판정 기준:
+ *  - 이동거리 >= MOVE_THRESH  → 스와이프 (시작→끝, 걸린 시간)
+ *  - 그 외 누른 시간 >= HOLD_THRESH_MS → 홀드 (좌표, 시간)
+ *  - 그 외 → 탭
+ */
+class GestureRecorder {
+
+    enum class Type { TAP, HOLD, SWIPE }
+
+    data class Action(
+        val delayMs: Long,      // 이전 행동이 끝난 뒤 이 행동 시작까지 대기
+        val type: Type,
+        val x: Float, val y: Float,     // 시작(panel 0~1)
+        val x2: Float, val y2: Float,   // 스와이프 끝
+        val durationMs: Long,           // 홀드/스와이프 지속
+    )
+
+    val actions: MutableList<Action> = Collections.synchronizedList(mutableListOf())
+
+    /** panel 좌표(u,v)가 무시 대상(예: 컨트롤 바 위)인지. 재생/판정 쪽에서 주입. */
+    var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
+
+    private var down = false
+    private var downT = 0L
+    private var downX = 0f
+    private var downY = 0f
+    private var curX = 0f
+    private var curY = 0f
+    private var lastEndT = 0L
+
+    fun reset() {
+        actions.clear()
+        down = false
+        lastEndT = 0L
+    }
+
+    fun onPoint(p: TouchPoint) {
+        val now = SystemClock.uptimeMillis()
+        when {
+            p.down && !down -> { // 손가락 내려감
+                down = true
+                downT = now
+                downX = p.nx; downY = p.ny
+                curX = p.nx; curY = p.ny
+            }
+            p.down -> { // 이동 중
+                curX = p.nx; curY = p.ny
+            }
+            !p.down && down -> { // 손가락 뗌 → 판정
+                down = false
+                if (shouldIgnore(downX, downY)) {
+                    lastEndT = now
+                    return
+                }
+                val dur = now - downT
+                val dist = hypot((curX - downX).toDouble(), (curY - downY).toDouble()).toFloat()
+                val delay = if (actions.isEmpty()) 0L else (downT - lastEndT).coerceAtLeast(0L)
+                val a = when {
+                    dist >= MOVE_THRESH ->
+                        Action(delay, Type.SWIPE, downX, downY, curX, curY, dur)
+                    dur >= HOLD_THRESH_MS ->
+                        Action(delay, Type.HOLD, downX, downY, 0f, 0f, dur)
+                    else ->
+                        Action(delay, Type.TAP, downX, downY, 0f, 0f, 0L)
+                }
+                actions.add(a)
+                lastEndT = now
+            }
+        }
+    }
+
+    companion object {
+        // panel 정규화 기준 이동거리 임계(≈ 화면 3%). 넘으면 스와이프.
+        const val MOVE_THRESH = 0.03f
+        // 이 시간 이상 누르면 홀드로 본다.
+        const val HOLD_THRESH_MS = 400L
+    }
 }
 LOOPY_EOF
 
@@ -272,20 +318,25 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.IBinder
+import android.util.DisplayMetrics
 import android.util.TypedValue
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.Surface
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.loopy.app.input.GeteventReader
+import com.loopy.app.input.GestureRecorder
+import com.loopy.app.input.TouchDevice
 import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -296,59 +347,48 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 화면 위 오버레이 컨트롤 (탭 테스트용, 나중에 매크로 컨트롤로 확장).
+ * 매크로 컨트롤 오버레이. (조준점 탭 테스트는 제거됨)
  *
- * 핵심: 조준점은 터치 가능한 오버레이 창이라, input tap 을 조준점 위치에 쏘면
- * 게임이 아니라 조준점이 그 탭을 가로챈다. 그래서 주입하는 순간에만 조준점을
- * FLAG_NOT_TOUCHABLE 로 바꿔 탭이 아래(게임)로 통과하게 한다.
+ * 녹화: getevent 로 사용자의 실제 터치를 읽어 GestureRecorder 로 탭/홀드/스와이프 판정.
+ *       컨트롤 바 위의 터치는 무시(shouldIgnore).
+ * 재생: 저장된 Action 을 현재 화면 방향에 맞게 픽셀로 변환해 injectInputEvent 로 주입.
+ *
+ * 저장(파일)은 다음 단계. 지금은 메모리에서 녹화→재생 왕복 검증.
  */
 class OverlayService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var wm: WindowManager
 
-    private lateinit var crosshair: CrosshairView
-    private lateinit var crosshairParams: WindowManager.LayoutParams
+    private val reader = GeteventReader()
+    private val recorder = GestureRecorder()
+    private var device: TouchDevice? = null
+    private var recording = false
+
     private lateinit var bar: LinearLayout
     private lateinit var barParams: WindowManager.LayoutParams
-    private lateinit var coordLabel: TextView
-    private val locBuf = IntArray(2)
+    private lateinit var status: TextView
+    private lateinit var recordBtn: Button
+    private lateinit var playBtn: Button
+
+    private val displayObj by lazy {
+        (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         startAsForeground()
-        LoopyService.bind(this) // injectInputEvent 엔진 연결
+        LoopyService.bind(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        addCrosshair()
+        recorder.shouldIgnore = { u, v -> barContains(u, v) }
         addControlBar()
     }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
-
-    private fun baseParams(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-
-    // ── 조준점 ──
-    private fun addCrosshair() {
-        crosshair = CrosshairView(this, dp(72))
-        crosshairParams = baseParams().apply {
-            width = dp(72); height = dp(72)
-            x = dp(140); y = dp(300)
-        }
-        makeDraggable(crosshair, crosshairParams) { updateCoordLabel() }
-        wm.addView(crosshair, crosshairParams)
-    }
 
     // ── 컨트롤 바 ──
     private fun addControlBar() {
@@ -359,107 +399,159 @@ class OverlayService : Service() {
             elevation = dp(6).toFloat()
         }
         val title = TextView(this).apply {
-            text = "Loopy 탭 테스트"
+            text = "Loopy"
             setTextColor(0xFF2B2D42.toInt())
-            textSize = 13f
+            textSize = 15f
         }
-        coordLabel = TextView(this).apply {
+        status = TextView(this).apply {
             setTextColor(0xFF8A8DA0.toInt())
             textSize = 11f
+            text = "녹화를 눌러 시작"
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val tapBtn = Button(this).apply {
-            text = "여기 탭"
+        recordBtn = Button(this).apply {
+            text = "● 녹화"
+            setTextColor(0xFFFFFFFF.toInt())
+            background = pill(0xFFFF7A6E.toInt(), dp(12))
+            setOnClickListener { toggleRecord() }
+        }
+        playBtn = Button(this).apply {
+            text = "▶ 재생"
             setTextColor(0xFFFFFFFF.toInt())
             background = pill(0xFF6C7BFF.toInt(), dp(12))
-            setOnClickListener { tapAtCrosshair() }
+            setOnClickListener { play() }
         }
-        val closeBtn = Button(this).apply {
-            text = "닫기"
-            setTextColor(0xFF2B2D42.toInt())
-            background = pill(0xFFECECF2.toInt(), dp(12))
-            setOnClickListener { stopSelf() }
-        }
-        row.addView(tapBtn)
+        row.addView(recordBtn)
         row.addView(
-            closeBtn,
+            playBtn,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ).apply { leftMargin = dp(8) },
         )
+        val closeBtn = TextView(this).apply {
+            text = "닫기"
+            setTextColor(0xFF8A8DA0.toInt())
+            textSize = 11f
+            setPadding(0, dp(6), 0, 0)
+            setOnClickListener { stopSelf() }
+        }
 
         bar.addView(title)
-        bar.addView(coordLabel)
+        bar.addView(status)
         bar.addView(row)
+        bar.addView(closeBtn)
 
-        barParams = baseParams().apply { x = dp(16); y = dp(60) }
-        makeDraggable(title, barParams) {}
-        makeDraggable(coordLabel, barParams) {}
+        barParams = baseParams().apply { x = dp(12); y = dp(60) }
+        makeDraggable(title)
         wm.addView(bar, barParams)
-        updateCoordLabel()
     }
 
-    /**
-     * 조준점 중심의 "실제 화면 픽셀 좌표". getLocationOnScreen 은 상태바/노치를 포함한
-     * 물리 화면 기준이라 input tap 의 좌표계와 정확히 일치한다. (params.x/y 는 상태바를
-     * 제외한 영역 기준이라 회전 시 상태바 크기만큼 어긋났던 원인.)
-     */
-    private fun crosshairCenter(): Pair<Int, Int> {
-        crosshair.getLocationOnScreen(locBuf)
-        return (locBuf[0] + crosshair.width / 2) to (locBuf[1] + crosshair.height / 2)
+    private fun baseParams(): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            android.graphics.PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+    // ── 녹화 ──
+    private fun toggleRecord() {
+        if (!recording) startRecord() else stopRecord()
     }
 
-    private fun tapAtCrosshair() {
-        val (cx, cy) = crosshairCenter()
-        coordLabel.text = "탭 주입: ($cx, $cy)…"
-        setCrosshairTouchable(false) // 조준점이 탭을 가로채지 않게
+    private fun startRecord() {
+        val devs = reader.probe()
+        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
+        if (dev == null) {
+            status.text = "터치 디바이스를 못 찾음"
+            return
+        }
+        device = dev
+        recorder.reset()
+        recording = true
+        recordBtn.text = "■ 정지"
+        status.text = "● 녹화중 — 평소처럼 플레이해"
+        reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
+    }
+
+    private fun stopRecord() {
+        reader.stop()
+        recording = false
+        recordBtn.text = "● 녹화"
+        status.text = "행동 ${recorder.actions.size}개 · 재생 가능"
+    }
+
+    // ── 재생 ──
+    private fun play() {
+        if (recording) stopRecord()
+        val list = recorder.actions.toList()
+        if (list.isEmpty()) {
+            status.text = "녹화된 행동이 없어"
+            return
+        }
+        status.text = "▶ 재생중… (${list.size}개)"
         scope.launch {
-            delay(60)
-            val ok = withContext(Dispatchers.IO) { LoopyService.tap(cx, cy) }
-            setCrosshairTouchable(true)
-            coordLabel.text = if (ok) "탭 완료: ($cx, $cy)"
-            else "서비스 미연결 — 앱에서 Shizuku 확인 후 오버레이 재실행"
+            val m = DisplayMetrics()
+            displayObj.getRealMetrics(m)
+            val w = m.widthPixels
+            val h = m.heightPixels
+            val rot = displayObj.rotation
+            for (a in list) {
+                delay(a.delayMs)
+                val (x, y) = toPx(a.x, a.y, w, h, rot)
+                withContext(Dispatchers.IO) {
+                    when (a.type) {
+                        GestureRecorder.Type.TAP -> LoopyService.tap(x, y)
+                        GestureRecorder.Type.HOLD -> LoopyService.hold(x, y, a.durationMs.toInt())
+                        GestureRecorder.Type.SWIPE -> {
+                            val (x2, y2) = toPx(a.x2, a.y2, w, h, rot)
+                            LoopyService.swipe(x, y, x2, y2, a.durationMs.toInt().coerceAtLeast(50))
+                        }
+                    }
+                }
+            }
+            status.text = "재생 끝 · 행동 ${list.size}개"
         }
     }
 
-    private fun setCrosshairTouchable(touchable: Boolean) {
-        crosshairParams.flags = if (touchable) {
-            crosshairParams.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
-            crosshairParams.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        runCatching { wm.updateViewLayout(crosshair, crosshairParams) }
+    /** panel 정규화(u,v) → 현재 방향의 화면 픽셀. getevent 는 회전 전 패널 좌표라 보정 필요. */
+    private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
+        Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
+        Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
+        Surface.ROTATION_270 -> ((1 - v) * w).toInt() to (u * h).toInt()
+        else -> (u * w).toInt() to (v * h).toInt()
     }
 
-    private fun updateCoordLabel() {
-        val (cx, cy) = crosshairCenter()
-        coordLabel.text = "조준점: ($cx, $cy)"
+    /** panel(u,v) 가 컨트롤 바 위인지 (녹화에서 무시하려고). */
+    private fun barContains(u: Float, v: Float): Boolean {
+        val m = DisplayMetrics()
+        displayObj.getRealMetrics(m)
+        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
+        val loc = IntArray(2)
+        bar.getLocationOnScreen(loc)
+        val rect = Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height)
+        return rect.contains(px, py)
     }
 
-    /** 뷰를 드래그하면 해당 window 의 x/y 를 갱신. */
-    private fun makeDraggable(
-        handle: View,
-        params: WindowManager.LayoutParams,
-        onMoved: () -> Unit,
-    ) {
+    private fun makeDraggable(handle: View) {
         var startX = 0
         var startY = 0
         var touchX = 0f
         var touchY = 0f
-        handle.setOnTouchListener { v, e ->
+        handle.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startX = params.x; startY = params.y
+                    startX = barParams.x; startY = barParams.y
                     touchX = e.rawX; touchY = e.rawY
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    params.x = startX + (e.rawX - touchX).toInt()
-                    params.y = startY + (e.rawY - touchY).toInt()
-                    val root = if (v === crosshair) crosshair else bar
-                    runCatching { wm.updateViewLayout(root, params) }
-                    onMoved()
+                    barParams.x = startX + (e.rawX - touchX).toInt()
+                    barParams.y = startY + (e.rawY - touchY).toInt()
+                    runCatching { wm.updateViewLayout(bar, barParams) }
                     true
                 }
                 else -> false
@@ -481,8 +573,8 @@ class OverlayService : Service() {
             )
         }
         val notif: Notification = Notification.Builder(this, channelId)
-            .setContentTitle("Loopy 오버레이 실행 중")
-            .setContentText("탭 테스트 컨트롤이 화면에 떠 있어요")
+            .setContentTitle("Loopy 실행 중")
+            .setContentText("매크로 컨트롤이 화면에 떠 있어요")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setOngoing(true)
             .build()
@@ -495,40 +587,9 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        reader.stop()
         scope.cancel()
-        runCatching { wm.removeView(crosshair) }
         runCatching { wm.removeView(bar) }
-    }
-
-    /** 반투명 링 + 십자 + 중심점을 그리는 조준점 뷰 (페리윙클). */
-    class CrosshairView(context: Context, private val sizePx: Int) : View(context) {
-        private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = sizePx * 0.06f
-            color = 0x806C7BFF.toInt()
-        }
-        private val cross = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = sizePx * 0.04f
-            color = 0xCC6C7BFF.toInt()
-        }
-        private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = 0xFF6C7BFF.toInt()
-        }
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            setMeasuredDimension(sizePx, sizePx)
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            val c = sizePx / 2f
-            val r = sizePx * 0.42f
-            canvas.drawCircle(c, c, r, ring)
-            canvas.drawLine(c, c - r, c, c + r, cross)
-            canvas.drawLine(c - r, c, c + r, c, cross)
-            canvas.drawCircle(c, c, sizePx * 0.06f, dot)
-        }
     }
 }
 LOOPY_EOF
@@ -622,7 +683,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var msg by remember { mutableStateOf("오버레이를 켠 뒤, 로블록스로 전환해서 '여기 탭'을 눌러봐.") }
+    var msg by remember { mutableStateOf("오버레이를 켜고 로블록스로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
 
     LaunchedEffect(Unit) {
         registerRefresh {
@@ -711,7 +772,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     msg = if (state != ShizukuState.READY)
                         "오버레이는 떴어. 근데 Shizuku가 준비 안 돼서 탭은 안 먹을 거야. 위에서 Shizuku부터 켜줘."
                     else
-                        "켜졌어! 로블록스로 전환 → 조준점을 놓을 자리로 드래그 → '여기 탭'."
+                        "켜졌어! 로블록스로 전환 → '● 녹화'로 플레이 기록 → '▶ 재생'."
                 }
                 Spacer(Modifier.height(8.dp))
                 LoopyButton("오버레이 끄기", filled = false) {
@@ -756,9 +817,9 @@ private fun LoopyButton(
 }
 LOOPY_EOF
 
-echo "파일 6개 반영."
+echo "반영 완료."
 git add -A
-git commit -m "B-1: Shizuku UserService + injectInputEvent 탭 주입, 좌표 오프셋 수정"
+git commit -m "B-2: getevent 제스처 녹화(탭/홀드/스와이프) → injectInputEvent 재생"
 git push
 echo "푸시 완료!"
 

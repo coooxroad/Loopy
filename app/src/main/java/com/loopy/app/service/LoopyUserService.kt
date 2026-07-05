@@ -67,6 +67,18 @@ class LoopyUserService : ILoopyService.Stub() {
         }
     }
 
+    override fun hold(x: Int, y: Int, durationMs: Int) {
+        runCatching {
+            val t = SystemClock.uptimeMillis()
+            val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
+            inject(down); down.recycle()
+            Thread.sleep(durationMs.toLong().coerceAtLeast(0))
+            val t2 = SystemClock.uptimeMillis()
+            val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
+            inject(up); up.recycle()
+        }
+    }
+
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
         runCatching {
             val steps = (durationMs / 10).coerceIn(2, 100)
