@@ -23,9 +23,10 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.GestureRecorder
+import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
+import com.loopy.app.macro.MacroStore
 import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,13 +37,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 매크로 컨트롤 오버레이. (조준점 탭 테스트는 제거됨)
- *
- * 녹화: getevent 로 사용자의 실제 터치를 읽어 GestureRecorder 로 탭/홀드/스와이프 판정.
- *       컨트롤 바 위의 터치는 무시(shouldIgnore).
- * 재생: 저장된 Action 을 현재 화면 방향에 맞게 픽셀로 변환해 injectInputEvent 로 주입.
- *
- * 저장(파일)은 다음 단계. 지금은 메모리에서 녹화→재생 왕복 검증.
+ * 매크로 컨트롤 오버레이.
+ *  - 녹화: getevent → GestureRecorder(탭/홀드/스와이프). 정지 시 자동 저장(날짜시간 이름).
+ *  - 재생: '지금 녹화' 또는 📁 목록에서 고른 저장 매크로를 injectInputEvent 로 주입.
  */
 class OverlayService : Service() {
 
@@ -58,7 +55,7 @@ class OverlayService : Service() {
     private lateinit var barParams: WindowManager.LayoutParams
     private lateinit var status: TextView
     private lateinit var recordBtn: Button
-    private lateinit var playBtn: Button
+    private var listPanel: LinearLayout? = null
 
     private val displayObj by lazy {
         (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
@@ -79,7 +76,6 @@ class OverlayService : Service() {
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    // ── 컨트롤 바 ──
     private fun addControlBar() {
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -98,26 +94,12 @@ class OverlayService : Service() {
             text = "녹화를 눌러 시작"
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        recordBtn = Button(this).apply {
-            text = "● 녹화"
-            setTextColor(0xFFFFFFFF.toInt())
-            background = pill(0xFFFF7A6E.toInt(), dp(12))
-            setOnClickListener { toggleRecord() }
-        }
-        playBtn = Button(this).apply {
-            text = "▶ 재생"
-            setTextColor(0xFFFFFFFF.toInt())
-            background = pill(0xFF6C7BFF.toInt(), dp(12))
-            setOnClickListener { play() }
-        }
+        recordBtn = pillButton("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
+        val playBtn = pillButton("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
+        val listBtn = pillButton("📁", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
         row.addView(recordBtn)
-        row.addView(
-            playBtn,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { leftMargin = dp(8) },
-        )
+        row.addView(playBtn, marginLeft(dp(8)))
+        row.addView(listBtn, marginLeft(dp(8)))
         val closeBtn = TextView(this).apply {
             text = "닫기"
             setTextColor(0xFF8A8DA0.toInt())
@@ -135,6 +117,19 @@ class OverlayService : Service() {
         makeDraggable(title)
         wm.addView(bar, barParams)
     }
+
+    private fun pillButton(
+        label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit,
+    ) = Button(this).apply {
+        text = label
+        setTextColor(fg)
+        background = pill(bg, dp(12))
+        setOnClickListener { onClick() }
+    }
+
+    private fun marginLeft(px: Int) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+    ).apply { leftMargin = px }
 
     private fun baseParams(): WindowManager.LayoutParams =
         WindowManager.LayoutParams(
@@ -170,18 +165,27 @@ class OverlayService : Service() {
         reader.stop()
         recording = false
         recordBtn.text = "● 녹화"
-        status.text = "행동 ${recorder.count()}개 · 재생 가능"
+        val snap = recorder.snapshot()
+        if (snap.isEmpty()) {
+            status.text = "행동 없음 (저장 안 함)"
+            return
+        }
+        val m = MacroStore.saveNew(this, snap)
+        status.text = "저장됨: ${m.name} · ${snap.size}개"
     }
 
     // ── 재생 ──
-    private fun play() {
+    private fun playRecorded() {
         if (recording) stopRecord()
-        val list = recorder.snapshot()
+        playActions(recorder.snapshot(), "지금 녹화")
+    }
+
+    private fun playActions(list: List<GestureRecorder.Action>, label: String) {
         if (list.isEmpty()) {
-            status.text = "녹화된 행동이 없어"
+            status.text = "재생할 행동이 없어"
             return
         }
-        status.text = "▶ 재생중… (${list.size}개)"
+        status.text = "▶ 재생중… $label (${list.size})"
         scope.launch {
             val m = DisplayMetrics()
             displayObj.getRealMetrics(m)
@@ -202,11 +206,46 @@ class OverlayService : Service() {
                     }
                 }
             }
-            status.text = "재생 끝 · 행동 ${list.size}개"
+            status.text = "재생 끝 · $label"
         }
     }
 
-    /** panel 정규화(u,v) → 현재 방향의 화면 픽셀. getevent 는 회전 전 패널 좌표라 보정 필요. */
+    // ── 저장 목록 (드롭다운) ──
+    private fun toggleList() {
+        listPanel?.let {
+            bar.removeView(it)
+            listPanel = null
+            return
+        }
+        val macros = MacroStore.list(this)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        if (macros.isEmpty()) {
+            panel.addView(TextView(this).apply {
+                text = "저장된 매크로 없음"
+                setTextColor(0xFF8A8DA0.toInt()); textSize = 11f
+            })
+        } else {
+            for (mac in macros) {
+                panel.addView(TextView(this).apply {
+                    text = "▶ ${mac.name}  (${mac.actions.size})"
+                    setTextColor(0xFF2B2D42.toInt())
+                    textSize = 12f
+                    setPadding(0, dp(7), 0, dp(7))
+                    setOnClickListener {
+                        toggleList()
+                        playActions(mac.actions, mac.name)
+                    }
+                })
+            }
+        }
+        bar.addView(panel)
+        listPanel = panel
+    }
+
+    /** panel 정규화(u,v) → 현재 방향의 화면 픽셀. */
     private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
         Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
         Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
@@ -214,7 +253,6 @@ class OverlayService : Service() {
         else -> (u * w).toInt() to (v * h).toInt()
     }
 
-    /** panel(u,v) 가 컨트롤 바 위인지 (녹화에서 무시하려고). */
     private fun barContains(u: Float, v: Float): Boolean {
         val m = DisplayMetrics()
         displayObj.getRealMetrics(m)

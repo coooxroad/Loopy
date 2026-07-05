@@ -13,15 +13,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.loopy.app.macro.Macro
+import com.loopy.app.macro.MacroStore
 import com.loopy.app.overlay.OverlayService
 import com.loopy.app.service.LoopyService
 import com.loopy.app.shizuku.ShizukuManager
@@ -86,11 +93,17 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var msg by remember { mutableStateOf("오버레이를 켜고 로블록스로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
+    var macros by remember { mutableStateOf(MacroStore.list(context)) }
+    var renaming by remember { mutableStateOf<Macro?>(null) }
+    var nameField by remember { mutableStateOf("") }
+
+    fun refreshMacros() { macros = MacroStore.list(context) }
 
     LaunchedEffect(Unit) {
         registerRefresh {
             state = ShizukuManager.state()
             canOverlay = Settings.canDrawOverlays(context)
+            refreshMacros()
         }
     }
     LaunchedEffect(state) {
@@ -109,7 +122,7 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
         ) {
             Spacer(Modifier.height(24.dp))
             Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("오버레이 탭 테스트", color = TextLo, fontSize = 14.sp)
+            Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
 
             // ── Shizuku ──
             GlassCard(Modifier.fillMaxWidth()) {
@@ -137,15 +150,17 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                 }
             }
 
-            // ── 오버레이 권한 ──
+            // ── 오버레이 ──
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("2. 오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("2. 오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (canOverlay) "허용됨" else "다른 앱 위에 표시 권한이 필요해",
+                    if (canOverlay) "권한 허용됨" else "다른 앱 위에 표시 권한 필요",
                     color = if (canOverlay) Accent else TextLo,
                     fontSize = 13.sp,
                 )
+                Spacer(Modifier.height(6.dp))
+                Text(msg, color = TextLo, fontSize = 12.sp)
                 Spacer(Modifier.height(12.dp))
                 if (!canOverlay) {
                     LoopyButton("권한 설정 열기") {
@@ -157,38 +172,80 @@ private fun LauncherScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                }
-                LoopyButton("권한 상태 새로고침", filled = false) {
-                    canOverlay = Settings.canDrawOverlays(context)
+                    LoopyButton("권한 상태 새로고침", filled = false) {
+                        canOverlay = Settings.canDrawOverlays(context)
+                    }
+                } else {
+                    LoopyButton("오버레이 켜기") {
+                        context.startForegroundService(Intent(context, OverlayService::class.java))
+                        msg = "켜졌어! 로블록스로 전환 → '● 녹화' → '▶ 재생' / 📁 목록."
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LoopyButton("오버레이 끄기", filled = false) {
+                        context.stopService(Intent(context, OverlayService::class.java))
+                        msg = "오버레이를 껐어."
+                    }
                 }
             }
 
-            // ── 오버레이 켜기 ──
+            // ── 저장된 매크로 ──
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("3. 오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text(msg, color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(12.dp))
-                LoopyButton(text = "오버레이 켜기", enabled = canOverlay) {
-                    context.startForegroundService(Intent(context, OverlayService::class.java))
-                    msg = if (state != ShizukuState.READY)
-                        "오버레이는 떴어. 근데 Shizuku가 준비 안 돼서 탭은 안 먹을 거야. 위에서 Shizuku부터 켜줘."
-                    else
-                        "켜졌어! 로블록스로 전환 → '● 녹화'로 플레이 기록 → '▶ 재생'."
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("3. 저장된 매크로", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    Text("새로고침", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { refreshMacros() })
                 }
-                Spacer(Modifier.height(8.dp))
-                LoopyButton("오버레이 끄기", filled = false) {
-                    context.stopService(Intent(context, OverlayService::class.java))
-                    msg = "오버레이를 껐어."
+                Spacer(Modifier.height(4.dp))
+                if (macros.isEmpty()) {
+                    Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 12.sp)
+                } else {
+                    macros.forEach { m ->
+                        Spacer(Modifier.height(10.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(m.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                Text("${m.actions.size}개 행동", color = TextLo, fontSize = 11.sp)
+                            }
+                            Text("이름변경", color = Accent, fontSize = 12.sp,
+                                modifier = Modifier.clickable { renaming = m; nameField = m.name })
+                            Spacer(Modifier.width(14.dp))
+                            Text("삭제", color = TextLo, fontSize = 12.sp,
+                                modifier = Modifier.clickable { MacroStore.delete(context, m.id); refreshMacros() })
+                        }
+                    }
                 }
             }
 
             Spacer(Modifier.height(24.dp))
         }
     }
+
+    val editing = renaming
+    if (editing != null) {
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (nameField.isNotBlank()) MacroStore.rename(context, editing.id, nameField.trim())
+                    renaming = null
+                    refreshMacros()
+                }) { Text("저장", color = Accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { renaming = null }) { Text("취소", color = TextLo) }
+            },
+            title = { Text("이름 변경", color = TextHi) },
+            text = {
+                OutlinedTextField(
+                    value = nameField,
+                    onValueChange = { nameField = it },
+                    singleLine = true,
+                )
+            },
+            containerColor = LoopyCard,
+        )
+    }
 }
 
-/** 파스텔 그라데이션 알약 버튼. filled=false 는 흰 카드 + 얇은 테두리(보조). */
 @Composable
 private fun LoopyButton(
     text: String,
