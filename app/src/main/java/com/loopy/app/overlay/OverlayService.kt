@@ -170,13 +170,13 @@ class OverlayService : Service() {
         reader.stop()
         recording = false
         recordBtn.text = "● 녹화"
-        status.text = "행동 ${recorder.actions.size}개 · 재생 가능"
+        status.text = "행동 ${recorder.count()}개 · 재생 가능"
     }
 
     // ── 재생 ──
     private fun play() {
         if (recording) stopRecord()
-        val list = recorder.actions.toList()
+        val list = recorder.snapshot()
         if (list.isEmpty()) {
             status.text = "녹화된 행동이 없어"
             return
