@@ -18,7 +18,7 @@ import kotlin.system.exitProcess
  *  - getInstance() 로 인스턴스를 얻고 injectInputEvent(InputEvent, int) 를 리플렉션 호출.
  *  - MotionEvent 의 source 를 TOUCHSCREEN 으로 지정해야 터치로 인식된다.
  */
-class LoopyUserService : ILoopyService.Stub {
+class LoopyUserService : ILoopyService.Stub() {
 
     private val instance: Any
     private val injectMethod: Method
