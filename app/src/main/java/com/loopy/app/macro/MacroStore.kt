@@ -83,7 +83,10 @@ object MacroStore {
             actions.add(
                 GestureRecorder.Action(
                     delayMs = a.getLong("delayMs"),
-                    type = GestureRecorder.Type.valueOf(a.getString("type")),
+                    type = when (a.getString("type")) {
+                        "SWIPE" -> GestureRecorder.Type.SWIPE
+                        else -> GestureRecorder.Type.PRESS // 기존 TAP/HOLD → PRESS
+                    },
                     x = a.getDouble("x").toFloat(),
                     y = a.getDouble("y").toFloat(),
                     x2 = a.getDouble("x2").toFloat(),

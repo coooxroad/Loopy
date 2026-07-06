@@ -8,13 +8,13 @@ import kotlin.math.hypot
  * getevent 포인트(슬롯별)를 손가락 단위로 보고 탭/홀드/스와이프로 판정한다.
  * 손가락이 겹쳐도(빠른 타이핑) 슬롯마다 독립적으로 추적하므로 뭉개지지 않는다.
  *
- * 판정: 이동거리 >= MOVE_THRESH → 스와이프 / 누른 시간 >= HOLD_THRESH_MS → 홀드 / 그 외 탭.
+ * 판정: 이동거리 >= MOVE_THRESH → 스와이프 / 그 외 → PRESS(좌표 + 실제 누른 시간).
  * 좌표는 panel 정규화(0~1)로 저장. 여러 손가락이 동시에 눌려도, 재생은 시작 시각 순서로
  * 순차 실행하므로 타이핑 순서가 보존된다.
  */
 class GestureRecorder {
 
-    enum class Type { TAP, HOLD, SWIPE }
+    enum class Type { PRESS, SWIPE }
 
     data class Action(
         val delayMs: Long,
@@ -58,16 +58,12 @@ class GestureRecorder {
                 if (shouldIgnore(t.downX, t.downY)) return
                 val dur = now - t.downT
                 val dist = hypot((t.curX - t.downX).toDouble(), (t.curY - t.downY).toDouble()).toFloat()
-                val type = when {
-                    dist >= MOVE_THRESH -> Type.SWIPE
-                    dur >= HOLD_THRESH_MS -> Type.HOLD
-                    else -> Type.TAP
-                }
-                // 디바운스: 직전 탭과 아주 짧은 시간 + 거의 같은 자리면 슬롯 재사용
-                // 경계에서 생긴 중복이므로 버린다. (물리적으로 불가능한 간격)
-                if (type == Type.TAP) {
+                val type = if (dist >= MOVE_THRESH) Type.SWIPE else Type.PRESS
+                // 디바운스: 직전 PRESS 와 아주 짧은 시간 + 거의 같은 자리면 슬롯 재사용
+                // 경계에서 생긴 중복이므로 버린다.
+                if (type == Type.PRESS) {
                     val last = raws.lastOrNull()
-                    if (last != null && last.type == Type.TAP &&
+                    if (last != null && last.type == Type.PRESS &&
                         (t.downT - last.endT) in 0L until DEDUP_MS &&
                         hypot((t.downX - last.x).toDouble(), (t.downY - last.y).toDouble()) < DEDUP_DIST
                     ) {
@@ -94,8 +90,7 @@ class GestureRecorder {
 
     companion object {
         const val MOVE_THRESH = 0.03f
-        const val HOLD_THRESH_MS = 400L
-        // 디바운스: 이 시간 미만 + 이 거리 미만의 연속 탭은 중복으로 간주.
+        // 디바운스: 이 시간 미만 + 이 거리 미만의 연속 PRESS 는 중복으로 간주.
         const val DEDUP_MS = 50L
         const val DEDUP_DIST = 0.02
     }

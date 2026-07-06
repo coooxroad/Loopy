@@ -1,107 +1,384 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 플레이리스트 매크로 사이 대기시간
+# Loopy: 탭/홀드를 press(좌표+실제 누른시간)로 통합
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
-mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/Playlist.kt")"
-cat > "app/src/main/java/com/loopy/app/macro/Playlist.kt" << 'LOOPY_EOF'
-package com.loopy.app.macro
+mkdir -p "$(dirname "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl")"
+cat > "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl" << 'LOOPY_EOF'
+// Shizuku UserService 인터페이스. elevated(shell) 프로세스에서 실행되는 메서드들.
+package com.loopy.app.service;
 
-/**
- * 매크로들을 엮은 플레이리스트.
- *  - macroIds: 패턴 순서(중복 가능). 예: [A, A, B, C]
- *  - shuffle: 켜면 매 사이클마다 그 패턴을 섞어서(셔플백) 재생
- *  - cycles: 반복 횟수. 0 = 무한
- */
-data class Playlist(
-    val id: String,
-    val name: String,
-    val createdAt: Long,
-    val macroIds: List<String>,
-    val shuffle: Boolean,
-    val cycles: Int,
-    val gapMs: Int, // 매크로 사이 대기(ms)
-)
+interface ILoopyService {
+    // Shizuku 서버가 서비스를 종료할 때 호출하는 예약 트랜잭션 ID (고정).
+    void destroy() = 16777114;
+    void exit() = 1;
+
+    // 좌표를 durationMs 동안 누르고 뗌. 탭(짧게)/홀드(길게) 통합.
+    void press(int x, int y, int durationMs) = 2;
+
+    // (x1,y1) → (x2,y2) 로 durationMs 동안 스와이프.
+    void swipe(int x1, int y1, int x2, int y2, int durationMs) = 3;
+}
 LOOPY_EOF
 
-mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/PlaylistStore.kt")"
-cat > "app/src/main/java/com/loopy/app/macro/PlaylistStore.kt" << 'LOOPY_EOF'
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/service/LoopyUserService.kt")"
+cat > "app/src/main/java/com/loopy/app/service/LoopyUserService.kt" << 'LOOPY_EOF'
+package com.loopy.app.service
+
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.MotionEvent
+import java.lang.reflect.Method
+import kotlin.system.exitProcess
+
+/**
+ * Shizuku UserService 본체. shell 프로세스에서 injectInputEvent 로 터치를 주입한다.
+ * (scrcpy 방식: InputManagerGlobal → getInstance → injectInputEvent, source=TOUCHSCREEN)
+ *
+ * press(x, y, durationMs): 좌표를 durationMs 만큼 누르고 뗀다. 사용자가 실제로 누른
+ * 시간을 그대로 재생하므로, 짧게 톡 친 건 짧게 / 꾹 누른 건 길게 = 원본과 동일.
+ * (0ms 순간 탭은 런처/앱이 인식 못 하는 문제도 자연히 해결된다.)
+ */
+class LoopyUserService : ILoopyService.Stub() {
+
+    private val instance: Any
+    private val injectMethod: Method
+
+    init {
+        val cls = runCatching { Class.forName("android.hardware.input.InputManagerGlobal") }
+            .getOrElse { Class.forName("android.hardware.input.InputManager") }
+        val getInstance = cls.getDeclaredMethod("getInstance").apply { isAccessible = true }
+        instance = getInstance.invoke(null)!!
+        injectMethod = runCatching {
+            instance.javaClass.getMethod("injectInputEvent", InputEvent::class.java, Integer.TYPE)
+        }.getOrElse {
+            instance.javaClass.getDeclaredMethod("injectInputEvent", InputEvent::class.java, Integer.TYPE)
+        }.apply { isAccessible = true }
+    }
+
+    private fun inject(ev: InputEvent) {
+        injectMethod.invoke(instance, ev, 0) // 0 = ASYNC
+    }
+
+    private fun motion(downTime: Long, eventTime: Long, action: Int, x: Int, y: Int): MotionEvent {
+        val ev = MotionEvent.obtain(downTime, eventTime, action, x.toFloat(), y.toFloat(), 0)
+        ev.source = InputDevice.SOURCE_TOUCHSCREEN
+        return ev
+    }
+
+    override fun press(x: Int, y: Int, durationMs: Int) {
+        runCatching {
+            val t = SystemClock.uptimeMillis()
+            val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
+            inject(down); down.recycle()
+            // 최소 20ms 는 유지(순간탭 인식 실패 방지). 그 이상은 사용자가 누른 시간 그대로.
+            Thread.sleep(durationMs.toLong().coerceAtLeast(20L))
+            val t2 = SystemClock.uptimeMillis()
+            val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
+            inject(up); up.recycle()
+        }
+    }
+
+    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
+        runCatching {
+            val steps = (durationMs / 10).coerceIn(2, 100)
+            val downTime = SystemClock.uptimeMillis()
+            val down = motion(downTime, downTime, MotionEvent.ACTION_DOWN, x1, y1)
+            inject(down); down.recycle()
+            for (i in 1..steps) {
+                val f = i.toFloat() / steps
+                val x = (x1 + (x2 - x1) * f).toInt()
+                val y = (y1 + (y2 - y1) * f).toInt()
+                Thread.sleep((durationMs / steps).toLong().coerceAtLeast(1))
+                val now = SystemClock.uptimeMillis()
+                val move = motion(downTime, now, MotionEvent.ACTION_MOVE, x, y)
+                inject(move); move.recycle()
+            }
+            val end = SystemClock.uptimeMillis()
+            val up = motion(downTime, end, MotionEvent.ACTION_UP, x2, y2)
+            inject(up); up.recycle()
+        }
+    }
+
+    override fun exit() {
+        destroy()
+    }
+
+    override fun destroy() {
+        exitProcess(0)
+    }
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/service/LoopyService.kt")"
+cat > "app/src/main/java/com/loopy/app/service/LoopyService.kt" << 'LOOPY_EOF'
+package com.loopy.app.service
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.ServiceConnection
+import android.os.IBinder
+import rikka.shizuku.Shizuku
+
+/**
+ * 앱 프로세스에서 Shizuku UserService(LoopyUserService)를 바인딩하고 호출을 넘겨주는 싱글톤.
+ * 실제 injectInputEvent 는 shell 프로세스(LoopyUserService)에서 일어난다.
+ *
+ * tap/swipe 은 바인더 호출이라 호출 스레드를 잠깐 붙잡으므로 IO 스레드에서 부를 것.
+ * 반환값은 "서비스가 연결돼 있어 호출을 보냈는지" (false 면 아직 미연결/실패).
+ */
+object LoopyService {
+
+    @Volatile private var svc: ILoopyService? = null
+    @Volatile private var binding = false
+
+    fun isReady(): Boolean = svc != null
+
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            binding = false
+            svc = if (binder != null && binder.pingBinder()) {
+                ILoopyService.Stub.asInterface(binder)
+            } else null
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            svc = null
+        }
+    }
+
+    private fun args(context: Context) =
+        Shizuku.UserServiceArgs(
+            ComponentName(context.packageName, LoopyUserService::class.java.name)
+        )
+            .daemon(false)
+            .processNameSuffix("loopy")
+            .debuggable(false)
+            .version(1)
+
+    /** Shizuku 권한이 허용된 뒤 호출. 이미 연결됐거나 진행 중이면 무시. */
+    fun bind(context: Context) {
+        if (svc != null || binding) return
+        binding = true
+        runCatching { Shizuku.bindUserService(args(context.applicationContext), conn) }
+            .onFailure { binding = false }
+    }
+
+    fun press(x: Int, y: Int, durationMs: Int): Boolean =
+        runCatching { svc?.press(x, y, durationMs); svc != null }.getOrDefault(false)
+
+    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Boolean =
+        runCatching { svc?.swipe(x1, y1, x2, y2, durationMs); svc != null }.getOrDefault(false)
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/input/GestureRecorder.kt")"
+cat > "app/src/main/java/com/loopy/app/input/GestureRecorder.kt" << 'LOOPY_EOF'
+package com.loopy.app.input
+
+import android.os.SystemClock
+import java.util.Collections
+import kotlin.math.hypot
+
+/**
+ * getevent 포인트(슬롯별)를 손가락 단위로 보고 탭/홀드/스와이프로 판정한다.
+ * 손가락이 겹쳐도(빠른 타이핑) 슬롯마다 독립적으로 추적하므로 뭉개지지 않는다.
+ *
+ * 판정: 이동거리 >= MOVE_THRESH → 스와이프 / 그 외 → PRESS(좌표 + 실제 누른 시간).
+ * 좌표는 panel 정규화(0~1)로 저장. 여러 손가락이 동시에 눌려도, 재생은 시작 시각 순서로
+ * 순차 실행하므로 타이핑 순서가 보존된다.
+ */
+class GestureRecorder {
+
+    enum class Type { PRESS, SWIPE }
+
+    data class Action(
+        val delayMs: Long,
+        val type: Type,
+        val x: Float, val y: Float,
+        val x2: Float, val y2: Float,
+        val durationMs: Long,
+    )
+
+    private data class Raw(
+        val startT: Long, val endT: Long, val type: Type,
+        val x: Float, val y: Float, val x2: Float, val y2: Float, val durationMs: Long,
+    )
+
+    private class Track(val downT: Long, val downX: Float, val downY: Float) {
+        var curX = downX
+        var curY = downY
+    }
+
+    private val raws = Collections.synchronizedList(mutableListOf<Raw>())
+    private val tracks = HashMap<Int, Track>()
+
+    /** panel 좌표(u,v)가 무시 대상(컨트롤 바 위)인지. */
+    var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
+
+    fun reset() {
+        raws.clear()
+        tracks.clear()
+    }
+
+    fun count(): Int = raws.size
+
+    fun onPoint(p: TouchPoint) {
+        val now = SystemClock.uptimeMillis()
+        val t = tracks[p.slot]
+        when {
+            p.down && t == null -> tracks[p.slot] = Track(now, p.nx, p.ny)
+            p.down && t != null -> { t.curX = p.nx; t.curY = p.ny }
+            !p.down && t != null -> {
+                tracks.remove(p.slot)
+                if (shouldIgnore(t.downX, t.downY)) return
+                val dur = now - t.downT
+                val dist = hypot((t.curX - t.downX).toDouble(), (t.curY - t.downY).toDouble()).toFloat()
+                val type = if (dist >= MOVE_THRESH) Type.SWIPE else Type.PRESS
+                // 디바운스: 직전 PRESS 와 아주 짧은 시간 + 거의 같은 자리면 슬롯 재사용
+                // 경계에서 생긴 중복이므로 버린다.
+                if (type == Type.PRESS) {
+                    val last = raws.lastOrNull()
+                    if (last != null && last.type == Type.PRESS &&
+                        (t.downT - last.endT) in 0L until DEDUP_MS &&
+                        hypot((t.downX - last.x).toDouble(), (t.downY - last.y).toDouble()) < DEDUP_DIST
+                    ) {
+                        return
+                    }
+                }
+                raws.add(Raw(t.downT, now, type, t.downX, t.downY, t.curX, t.curY, dur))
+            }
+        }
+    }
+
+    /** 시작 시각 순으로 정렬하고 행동 사이 대기시간을 계산한 재생용 리스트. */
+    fun snapshot(): List<Action> {
+        val sorted = synchronized(raws) { raws.toList() }.sortedBy { it.startT }
+        val result = ArrayList<Action>(sorted.size)
+        var prevEnd = 0L
+        for (r in sorted) {
+            val delay = if (result.isEmpty()) 0L else (r.startT - prevEnd).coerceAtLeast(0L)
+            result.add(Action(delay, r.type, r.x, r.y, r.x2, r.y2, r.durationMs))
+            prevEnd = r.endT
+        }
+        return result
+    }
+
+    companion object {
+        const val MOVE_THRESH = 0.03f
+        // 디바운스: 이 시간 미만 + 이 거리 미만의 연속 PRESS 는 중복으로 간주.
+        const val DEDUP_MS = 50L
+        const val DEDUP_DIST = 0.02
+    }
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/MacroStore.kt")"
+cat > "app/src/main/java/com/loopy/app/macro/MacroStore.kt" << 'LOOPY_EOF'
 package com.loopy.app.macro
 
 import android.content.Context
+import com.loopy.app.input.GestureRecorder
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
-/** 플레이리스트를 filesDir/playlists/{id}.json 로 저장/관리. */
-object PlaylistStore {
+/**
+ * 매크로를 앱 내부 저장소에 JSON 파일로 저장/관리한다. (filesDir/macros/{id}.json)
+ * 직렬화는 안드로이드 기본 내장 org.json 사용 — 의존성 추가 없음.
+ */
+object MacroStore {
 
     private fun dir(ctx: Context): File =
-        File(ctx.filesDir, "playlists").apply { mkdirs() }
+        File(ctx.filesDir, "macros").apply { mkdirs() }
 
-    fun save(
-        ctx: Context,
-        name: String,
-        macroIds: List<String>,
-        shuffle: Boolean,
-        cycles: Int,
-        gapMs: Int,
-        existingId: String? = null,
-    ): Playlist {
-        val pl = Playlist(
-            id = existingId ?: UUID.randomUUID().toString(),
-            name = name,
-            createdAt = System.currentTimeMillis(),
-            macroIds = macroIds,
-            shuffle = shuffle,
-            cycles = cycles,
-            gapMs = gapMs,
-        )
-        File(dir(ctx), "${pl.id}.json").writeText(toJson(pl))
-        return pl
+    /** "Jun 14 AM 2:00" 형식 자동 이름. */
+    fun autoName(time: Long = System.currentTimeMillis()): String =
+        SimpleDateFormat("MMM d a h:mm", Locale.ENGLISH).format(Date(time))
+
+    /** actions 로 새 매크로를 만들어 저장하고 반환. */
+    fun saveNew(ctx: Context, actions: List<GestureRecorder.Action>): Macro {
+        val now = System.currentTimeMillis()
+        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, actions)
+        write(ctx, macro)
+        return macro
+    }
+
+    fun rename(ctx: Context, id: String, newName: String) {
+        val m = read(ctx, id) ?: return
+        write(ctx, m.copy(name = newName))
     }
 
     fun delete(ctx: Context, id: String) {
         File(dir(ctx), "$id.json").delete()
     }
 
-    fun list(ctx: Context): List<Playlist> =
+    /** 최신순 목록. 손상된 파일은 건너뜀. */
+    fun list(ctx: Context): List<Macro> =
         (dir(ctx).listFiles { f -> f.extension == "json" } ?: emptyArray())
             .mapNotNull { runCatching { fromJson(it.readText()) }.getOrNull() }
             .sortedByDescending { it.createdAt }
 
-    fun read(ctx: Context, id: String): Playlist? =
+    fun read(ctx: Context, id: String): Macro? =
         runCatching { fromJson(File(dir(ctx), "$id.json").readText()) }.getOrNull()
 
-    private fun toJson(p: Playlist): String {
-        val ids = JSONArray()
-        p.macroIds.forEach { ids.put(it) }
+    private fun write(ctx: Context, macro: Macro) {
+        File(dir(ctx), "${macro.id}.json").writeText(toJson(macro))
+    }
+
+    // ── 직렬화 ──
+    private fun toJson(m: Macro): String {
+        val arr = JSONArray()
+        for (a in m.actions) {
+            arr.put(
+                JSONObject()
+                    .put("delayMs", a.delayMs)
+                    .put("type", a.type.name)
+                    .put("x", a.x.toDouble()).put("y", a.y.toDouble())
+                    .put("x2", a.x2.toDouble()).put("y2", a.y2.toDouble())
+                    .put("durationMs", a.durationMs)
+            )
+        }
         return JSONObject()
-            .put("id", p.id)
-            .put("name", p.name)
-            .put("createdAt", p.createdAt)
-            .put("macroIds", ids)
-            .put("shuffle", p.shuffle)
-            .put("cycles", p.cycles)
-            .put("gapMs", p.gapMs)
+            .put("id", m.id)
+            .put("name", m.name)
+            .put("createdAt", m.createdAt)
+            .put("actions", arr)
             .toString()
     }
 
-    private fun fromJson(text: String): Playlist {
+    private fun fromJson(text: String): Macro {
         val o = JSONObject(text)
-        val arr = o.getJSONArray("macroIds")
-        val ids = ArrayList<String>(arr.length())
-        for (i in 0 until arr.length()) ids.add(arr.getString(i))
-        return Playlist(
+        val arr = o.getJSONArray("actions")
+        val actions = ArrayList<GestureRecorder.Action>(arr.length())
+        for (i in 0 until arr.length()) {
+            val a = arr.getJSONObject(i)
+            actions.add(
+                GestureRecorder.Action(
+                    delayMs = a.getLong("delayMs"),
+                    type = when (a.getString("type")) {
+                        "SWIPE" -> GestureRecorder.Type.SWIPE
+                        else -> GestureRecorder.Type.PRESS // 기존 TAP/HOLD → PRESS
+                    },
+                    x = a.getDouble("x").toFloat(),
+                    y = a.getDouble("y").toFloat(),
+                    x2 = a.getDouble("x2").toFloat(),
+                    y2 = a.getDouble("y2").toFloat(),
+                    durationMs = a.getLong("durationMs"),
+                )
+            )
+        }
+        return Macro(
             id = o.getString("id"),
             name = o.getString("name"),
             createdAt = o.getLong("createdAt"),
-            macroIds = ids,
-            shuffle = o.getBoolean("shuffle"),
-            cycles = o.getInt("cycles"),
-            gapMs = o.optInt("gapMs", 0),
+            actions = actions,
         )
     }
 }
@@ -354,8 +631,7 @@ class OverlayService : Service() {
             val (x, y) = toPx(a.x, a.y, w, h, rot)
             withContext(Dispatchers.IO) {
                 when (a.type) {
-                    GestureRecorder.Type.TAP -> LoopyService.tap(x, y)
-                    GestureRecorder.Type.HOLD -> LoopyService.hold(x, y, a.durationMs.toInt())
+                    GestureRecorder.Type.PRESS -> LoopyService.press(x, y, a.durationMs.toInt())
                     GestureRecorder.Type.SWIPE -> {
                         val (x2, y2) = toPx(a.x2, a.y2, w, h, rot)
                         LoopyService.swipe(x, y, x2, y2, a.durationMs.toInt().coerceAtLeast(50))
@@ -475,417 +751,9 @@ class OverlayService : Service() {
 }
 LOOPY_EOF
 
-mkdir -p "$(dirname "app/src/main/java/com/loopy/app/MainActivity.kt")"
-cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
-package com.loopy.app
-
-import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.provider.Settings
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.Playlist
-import com.loopy.app.macro.PlaylistStore
-import com.loopy.app.overlay.OverlayService
-import com.loopy.app.service.LoopyService
-import com.loopy.app.shizuku.ShizukuManager
-import com.loopy.app.shizuku.ShizukuState
-import com.loopy.app.ui.theme.Accent
-import com.loopy.app.ui.theme.CardStroke
-import com.loopy.app.ui.theme.GlassCard
-import com.loopy.app.ui.theme.LoopyCard
-import com.loopy.app.ui.theme.LoopyTheme
-import com.loopy.app.ui.theme.MeshGradientBackground
-import com.loopy.app.ui.theme.MeshLavender
-import com.loopy.app.ui.theme.MeshMint
-import com.loopy.app.ui.theme.MeshPeach
-import com.loopy.app.ui.theme.TextHi
-import com.loopy.app.ui.theme.TextLo
-import rikka.shizuku.Shizuku
-
-class MainActivity : ComponentActivity() {
-    private val binderListener = Shizuku.OnBinderReceivedListener { onShizukuChanged?.invoke() }
-    private val deadListener = Shizuku.OnBinderDeadListener { onShizukuChanged?.invoke() }
-    private var onShizukuChanged: (() -> Unit)? = null
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        Shizuku.addBinderReceivedListenerSticky(binderListener)
-        Shizuku.addBinderDeadListener(deadListener)
-        setContent { LoopyTheme { RootScreen(registerRefresh = { cb -> onShizukuChanged = cb }) } }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        Shizuku.removeBinderReceivedListener(binderListener)
-        Shizuku.removeBinderDeadListener(deadListener)
-    }
-}
-
-@Composable
-private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
-    val context = LocalContext.current
-
-    var state by remember { mutableStateOf(ShizukuManager.state()) }
-    var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var msg by remember { mutableStateOf("오버레이를 켜고 로블록스로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
-    var macros by remember { mutableStateOf(MacroStore.list(context)) }
-    var playlists by remember { mutableStateOf(PlaylistStore.list(context)) }
-    var renaming by remember { mutableStateOf<Macro?>(null) }
-    var nameField by remember { mutableStateOf("") }
-
-    // 편집기 상태
-    var editorOpen by remember { mutableStateOf(false) }
-    var editId by remember { mutableStateOf<String?>(null) }
-    var plName by remember { mutableStateOf("") }
-    var plShuffle by remember { mutableStateOf(false) }
-    var plCycles by remember { mutableStateOf("") }
-    var plGap by remember { mutableStateOf("") }
-    val pattern = remember { mutableStateListOf<String>() }
-    var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
-
-    fun refresh() {
-        macros = MacroStore.list(context)
-        playlists = PlaylistStore.list(context)
-    }
-
-    fun openEditor(pl: Playlist?) {
-        editorMacros = MacroStore.list(context)
-        editId = pl?.id
-        plName = pl?.name ?: ""
-        plShuffle = pl?.shuffle ?: false
-        plCycles = pl?.cycles?.takeIf { it > 0 }?.toString() ?: ""
-        plGap = pl?.gapMs?.takeIf { it > 0 }?.let { (it / 1000.0).toString() } ?: ""
-        pattern.clear()
-        pl?.macroIds?.let { pattern.addAll(it) }
-        editorOpen = true
-    }
-
-    LaunchedEffect(Unit) {
-        registerRefresh {
-            state = ShizukuManager.state()
-            canOverlay = Settings.canDrawOverlays(context)
-            refresh()
-        }
-    }
-    LaunchedEffect(state) { if (state == ShizukuState.READY) LoopyService.bind(context) }
-
-    if (editorOpen) {
-        PlaylistEditor(
-            name = plName, onName = { plName = it },
-            shuffle = plShuffle, onShuffle = { plShuffle = it },
-            cycles = plCycles, onCycles = { plCycles = it.filter { c -> c.isDigit() } },
-            gap = plGap, onGap = { plGap = it.filter { c -> c.isDigit() || c == '.' } },
-            pattern = pattern,
-            macros = editorMacros,
-            onSave = {
-                if (plName.isNotBlank() && pattern.isNotEmpty()) {
-                    PlaylistStore.save(
-                        context, plName.trim(), pattern.toList(),
-                        plShuffle, plCycles.toIntOrNull() ?: 0,
-                        ((plGap.toDoubleOrNull() ?: 0.0) * 1000).toInt(), editId,
-                    )
-                    refresh()
-                    editorOpen = false
-                }
-            },
-            onCancel = { editorOpen = false },
-        )
-        return
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = true)
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Spacer(Modifier.height(24.dp))
-            Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-            Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
-
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("1. Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    when (state) {
-                        ShizukuState.NOT_INSTALLED -> "연결 안 됨 · Shizuku 앱 실행 필요"
-                        ShizukuState.NEEDS_PERMISSION -> "설치됨 · 권한 허용 필요"
-                        ShizukuState.READY -> "준비 완료"
-                    },
-                    color = if (state == ShizukuState.READY) Accent else TextLo, fontSize = 13.sp,
-                )
-                if (state == ShizukuState.NEEDS_PERMISSION) {
-                    Spacer(Modifier.height(12.dp))
-                    LoopyButton("권한 허용") {
-                        ShizukuManager.requestPermission { g ->
-                            state = if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION
-                        }
-                    }
-                } else if (state == ShizukuState.NOT_INSTALLED) {
-                    Spacer(Modifier.height(12.dp))
-                    LoopyButton("다시 확인") { state = ShizukuManager.state() }
-                }
-            }
-
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("2. 오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text(if (canOverlay) "권한 허용됨" else "다른 앱 위에 표시 권한 필요",
-                    color = if (canOverlay) Accent else TextLo, fontSize = 13.sp)
-                Spacer(Modifier.height(6.dp))
-                Text(msg, color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(12.dp))
-                if (!canOverlay) {
-                    LoopyButton("권한 설정 열기") {
-                        context.startActivity(
-                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    LoopyButton("권한 상태 새로고침", filled = false) { canOverlay = Settings.canDrawOverlays(context) }
-                } else {
-                    LoopyButton("오버레이 켜기") {
-                        context.startForegroundService(Intent(context, OverlayService::class.java))
-                        msg = "켜졌어! 로블록스로 전환 → 녹화/재생, 📁 목록."
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    LoopyButton("오버레이 끄기", filled = false) {
-                        context.stopService(Intent(context, OverlayService::class.java))
-                        msg = "오버레이를 껐어."
-                    }
-                }
-            }
-
-            // ── 플레이리스트 ──
-            GlassCard(Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("3. 플레이리스트", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text("+ 새로 만들기", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { openEditor(null) })
-                }
-                if (playlists.isEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("매크로 2개 이상 저장한 뒤 만들어봐.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    playlists.forEach { pl ->
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(pl.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
-                                val sh = if (pl.shuffle) " · 셔플" else ""
-                                val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
-                                Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 11.sp)
-                            }
-                            Text("편집", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { openEditor(pl) })
-                            Spacer(Modifier.width(14.dp))
-                            Text("삭제", color = TextLo, fontSize = 12.sp,
-                                modifier = Modifier.clickable { PlaylistStore.delete(context, pl.id); refresh() })
-                        }
-                    }
-                }
-            }
-
-            // ── 저장된 매크로 ──
-            GlassCard(Modifier.fillMaxWidth()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("4. 저장된 매크로", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                    Text("새로고침", color = Accent, fontSize = 12.sp, modifier = Modifier.clickable { refresh() })
-                }
-                if (macros.isEmpty()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    macros.forEach { m ->
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(m.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("${m.actions.size}개 행동", color = TextLo, fontSize = 11.sp)
-                            }
-                            Text("이름변경", color = Accent, fontSize = 12.sp,
-                                modifier = Modifier.clickable { renaming = m; nameField = m.name })
-                            Spacer(Modifier.width(14.dp))
-                            Text("삭제", color = TextLo, fontSize = 12.sp,
-                                modifier = Modifier.clickable { MacroStore.delete(context, m.id); refresh() })
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-
-    val editing = renaming
-    if (editing != null) {
-        AlertDialog(
-            onDismissRequest = { renaming = null },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (nameField.isNotBlank()) MacroStore.rename(context, editing.id, nameField.trim())
-                    renaming = null; refresh()
-                }) { Text("저장", color = Accent) }
-            },
-            dismissButton = { TextButton(onClick = { renaming = null }) { Text("취소", color = TextLo) } },
-            title = { Text("이름 변경", color = TextHi) },
-            text = { OutlinedTextField(value = nameField, onValueChange = { nameField = it }, singleLine = true) },
-            containerColor = LoopyCard,
-        )
-    }
-}
-
-@Composable
-private fun PlaylistEditor(
-    name: String, onName: (String) -> Unit,
-    shuffle: Boolean, onShuffle: (Boolean) -> Unit,
-    cycles: String, onCycles: (String) -> Unit,
-    gap: String, onGap: (String) -> Unit,
-    pattern: MutableList<String>,
-    macros: List<Macro>,
-    onSave: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = false)
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Spacer(Modifier.height(24.dp))
-            Text("플레이리스트 편집", color = TextHi, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("이름", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("셔플 (매 사이클 섞기)", color = TextHi, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = shuffle, onCheckedChange = onShuffle)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("반복 횟수 (비우면 무한)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
-                    placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
-                Spacer(Modifier.height(10.dp))
-                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
-                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
-            }
-
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(2.dp))
-                Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
-                if (pattern.isEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("아래에서 매크로를 탭해 추가해.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    pattern.forEachIndexed { i, id ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                .background(MeshLavender.copy(alpha = 0.35f)).padding(12.dp)
-                                .clickable { pattern.removeAt(i) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${i + 1}. ${macroName(id)}", color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("✕", color = TextLo, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
-
-            GlassCard(Modifier.fillMaxWidth()) {
-                Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (macros.isEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("저장된 매크로가 없어.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    macros.forEach { m ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clickable { pattern.add(m.id) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(m.name, color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("+ 추가", color = Accent, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.weight(1f)) { LoopyButton("저장", onClick = onSave) }
-                Box(Modifier.weight(1f)) { LoopyButton("취소", filled = false, onClick = onCancel) }
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
-private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(50)
-    val base = Modifier.fillMaxWidth().height(50.dp).clip(shape).alpha(if (enabled) 1f else 0.45f)
-    val styled = if (filled) base.background(Brush.horizontalGradient(listOf(MeshPeach, MeshLavender, MeshMint)))
-    else base.background(LoopyCard).border(1.dp, CardStroke, shape)
-    val clickMod = if (enabled) styled.clickable { onClick() } else styled
-    Box(clickMod, contentAlignment = Alignment.Center) {
-        Text(text, color = if (filled) TextHi else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-    }
-}
-LOOPY_EOF
-
 echo "반영."
 git add -A
-git commit -m "플레이리스트: 매크로 사이 대기시간(gap) 추가"
+git commit -m "press 통합: 실제 누른 시간 기록/재생 (탭/홀드 일원화)"
 git push
 echo "푸시 완료!"
 

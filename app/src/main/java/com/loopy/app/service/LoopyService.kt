@@ -50,14 +50,8 @@ object LoopyService {
             .onFailure { binding = false }
     }
 
-    fun tap(x: Int, y: Int): Boolean =
-        runCatching { svc?.tap(x, y); svc != null }.getOrDefault(false)
-
-    fun doubleTap(x: Int, y: Int, gapMs: Int): Boolean =
-        runCatching { svc?.doubleTap(x, y, gapMs); svc != null }.getOrDefault(false)
-
-    fun hold(x: Int, y: Int, durationMs: Int): Boolean =
-        runCatching { svc?.hold(x, y, durationMs); svc != null }.getOrDefault(false)
+    fun press(x: Int, y: Int, durationMs: Int): Boolean =
+        runCatching { svc?.press(x, y, durationMs); svc != null }.getOrDefault(false)
 
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Boolean =
         runCatching { svc?.swipe(x1, y1, x2, y2, durationMs); svc != null }.getOrDefault(false)

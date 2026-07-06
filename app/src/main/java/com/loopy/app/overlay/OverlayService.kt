@@ -243,8 +243,7 @@ class OverlayService : Service() {
             val (x, y) = toPx(a.x, a.y, w, h, rot)
             withContext(Dispatchers.IO) {
                 when (a.type) {
-                    GestureRecorder.Type.TAP -> LoopyService.tap(x, y)
-                    GestureRecorder.Type.HOLD -> LoopyService.hold(x, y, a.durationMs.toInt())
+                    GestureRecorder.Type.PRESS -> LoopyService.press(x, y, a.durationMs.toInt())
                     GestureRecorder.Type.SWIPE -> {
                         val (x2, y2) = toPx(a.x2, a.y2, w, h, rot)
                         LoopyService.swipe(x, y, x2, y2, a.durationMs.toInt().coerceAtLeast(50))

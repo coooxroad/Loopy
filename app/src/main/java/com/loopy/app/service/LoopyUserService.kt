@@ -8,15 +8,12 @@ import java.lang.reflect.Method
 import kotlin.system.exitProcess
 
 /**
- * Shizuku UserService 본체. Shizuku 가 이 클래스를 shell(uid 2000) 프로세스에 띄운다.
- * 그 프로세스는 shell 권한이라, adb 의 `input` 명령과 동일하게 injectInputEvent 를
- * 호출할 수 있다(앱 프로세스에서는 권한이 없어 불가).
+ * Shizuku UserService 본체. shell 프로세스에서 injectInputEvent 로 터치를 주입한다.
+ * (scrcpy 방식: InputManagerGlobal → getInstance → injectInputEvent, source=TOUCHSCREEN)
  *
- * 주입 방식은 scrcpy 와 동일:
- *  - 안드로이드 14+ 에서 일부가 InputManagerGlobal 로 옮겨졌으므로 그것을 먼저 시도,
- *    없으면 InputManager 로 폴백.
- *  - getInstance() 로 인스턴스를 얻고 injectInputEvent(InputEvent, int) 를 리플렉션 호출.
- *  - MotionEvent 의 source 를 TOUCHSCREEN 으로 지정해야 터치로 인식된다.
+ * press(x, y, durationMs): 좌표를 durationMs 만큼 누르고 뗀다. 사용자가 실제로 누른
+ * 시간을 그대로 재생하므로, 짧게 톡 친 건 짧게 / 꾹 누른 건 길게 = 원본과 동일.
+ * (0ms 순간 탭은 런처/앱이 인식 못 하는 문제도 자연히 해결된다.)
  */
 class LoopyUserService : ILoopyService.Stub() {
 
@@ -36,8 +33,7 @@ class LoopyUserService : ILoopyService.Stub() {
     }
 
     private fun inject(ev: InputEvent) {
-        // mode 0 = INJECT_INPUT_EVENT_MODE_ASYNC
-        injectMethod.invoke(instance, ev, 0)
+        injectMethod.invoke(instance, ev, 0) // 0 = ASYNC
     }
 
     private fun motion(downTime: Long, eventTime: Long, action: Int, x: Int, y: Int): MotionEvent {
@@ -46,33 +42,13 @@ class LoopyUserService : ILoopyService.Stub() {
         return ev
     }
 
-    private fun downUp(x: Int, y: Int) {
-        val t = SystemClock.uptimeMillis()
-        val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
-        inject(down); down.recycle()
-        val t2 = SystemClock.uptimeMillis()
-        val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
-        inject(up); up.recycle()
-    }
-
-    override fun tap(x: Int, y: Int) {
-        runCatching { downUp(x, y) }
-    }
-
-    override fun doubleTap(x: Int, y: Int, gapMs: Int) {
-        runCatching {
-            downUp(x, y)
-            Thread.sleep(gapMs.toLong().coerceAtLeast(0))
-            downUp(x, y)
-        }
-    }
-
-    override fun hold(x: Int, y: Int, durationMs: Int) {
+    override fun press(x: Int, y: Int, durationMs: Int) {
         runCatching {
             val t = SystemClock.uptimeMillis()
             val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
             inject(down); down.recycle()
-            Thread.sleep(durationMs.toLong().coerceAtLeast(0))
+            // 최소 20ms 는 유지(순간탭 인식 실패 방지). 그 이상은 사용자가 누른 시간 그대로.
+            Thread.sleep(durationMs.toLong().coerceAtLeast(20L))
             val t2 = SystemClock.uptimeMillis()
             val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
             inject(up); up.recycle()
