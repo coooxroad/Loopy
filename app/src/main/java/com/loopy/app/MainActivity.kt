@@ -89,8 +89,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@Composable
-
 private enum class Tab(val label: String, val icon: String) {
     HOME("홈", "🏠"), PLAYLIST("플레이리스트", "🎵"), LIBRARY("라이브러리", "📁"), SETTINGS("설정", "⚙️"),
 }
