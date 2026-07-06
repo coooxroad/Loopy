@@ -27,9 +27,8 @@ import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
+import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.StrokeStore
 import com.loopy.app.macro.Playlist
 import com.loopy.app.macro.PlaylistStore
 import com.loopy.app.service.LoopyService
