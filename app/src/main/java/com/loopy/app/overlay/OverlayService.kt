@@ -248,7 +248,7 @@ class OverlayService : Service() {
                 val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
                 xs[i] = px; ys[i] = py; times[i] = s.samples[i].t
             }
-            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times) }
+            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times, s.durationMs) }
         }
     }
 

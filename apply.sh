@@ -1,9 +1,334 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy fix: OverlayService import 손상 복구
+# Loopy fix: 홀드 지속시간 저장/재생 (누른 시간 정확히)
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/Stroke.kt")"
+cat > "app/src/main/java/com/loopy/app/macro/Stroke.kt" << 'LOOPY_EOF'
+package com.loopy.app.macro
+
+/** 한 시점의 터치 좌표. t = 스트로크 시작 기준 ms, nx/ny = panel 정규화(0~1). */
+data class TouchSample(val t: Long, val nx: Float, val ny: Float)
+
+/**
+ * 스트로크 = 손가락이 내려와서(첫 샘플) 떼질 때까지의 좌표 타임라인.
+ * 탭/홀드/스와이프/조이스틱이 전부 이 하나로 표현된다(움직임·시간의 차이일 뿐).
+ * delayMs = 이전 스트로크가 끝난 뒤 이 스트로크 시작까지의 대기.
+ * durationMs = down→up 총 지속시간. 좌표가 안 변하는 홀드도 이 값으로 유지시간을 재현.
+ */
+data class Stroke(val delayMs: Long, val durationMs: Long, val samples: List<TouchSample>)
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/input/RawRecorder.kt")"
+cat > "app/src/main/java/com/loopy/app/input/RawRecorder.kt" << 'LOOPY_EOF'
+package com.loopy.app.input
+
+import android.os.SystemClock
+import com.loopy.app.macro.Stroke
+import com.loopy.app.macro.TouchSample
+import java.util.Collections
+
+/**
+ * getevent 포인트를 슬롯(손가락)별로 보고 "좌표 타임라인 스트로크"를 통째로 기록한다.
+ * 제스처 분류 없음 — 손가락이 그린 모든 미세 이동을 그대로 담으므로 탭/홀드/스와이프/
+ * 조이스틱이 전부 자연히 재현된다.
+ *
+ * (A1=단일 손가락 재현) 여러 손가락이 겹치면 각 슬롯의 스트로크를 따로 기록하고
+ * 재생은 시작 시각 순으로 순차 실행한다. 동시 멀티터치는 다음 단계.
+ */
+class RawRecorder {
+
+    /** panel 좌표(u,v)가 무시 대상(컨트롤 바 위)인지. */
+    var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
+
+    private class Builder(val startT: Long, val downX: Float, val downY: Float) {
+        val samples = ArrayList<TouchSample>()
+    }
+
+    private data class Done(val startT: Long, val endT: Long, val downX: Float, val downY: Float, val samples: List<TouchSample>)
+
+    private val tracks = HashMap<Int, Builder>()
+    private val done = Collections.synchronizedList(mutableListOf<Done>())
+
+    fun reset() {
+        tracks.clear()
+        done.clear()
+    }
+
+    fun count(): Int = done.size
+
+    fun onPoint(p: TouchPoint) {
+        val now = SystemClock.uptimeMillis()
+        val b = tracks[p.slot]
+        when {
+            p.down && b == null -> {
+                val nb = Builder(now, p.nx, p.ny)
+                nb.samples.add(TouchSample(0L, p.nx, p.ny))
+                tracks[p.slot] = nb
+            }
+            p.down && b != null -> {
+                b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
+            }
+            !p.down && b != null -> {
+                tracks.remove(p.slot)
+                if (shouldIgnore(b.downX, b.downY)) return
+                if (b.samples.isNotEmpty()) {
+                    done.add(Done(b.startT, now, b.downX, b.downY, b.samples.toList()))
+                }
+            }
+        }
+    }
+
+    /** 시작 시각 순 정렬 + 스트로크 사이 대기 계산. */
+    fun snapshot(): List<Stroke> {
+        val sorted = synchronized(done) { done.toList() }.sortedBy { it.startT }
+        val out = ArrayList<Stroke>(sorted.size)
+        var prevEnd = 0L
+        for ((i, d) in sorted.withIndex()) {
+            val delay = if (i == 0) 0L else (d.startT - prevEnd).coerceAtLeast(0L)
+            out.add(Stroke(delay, (d.endT - d.startT).coerceAtLeast(0L), d.samples))
+            prevEnd = d.endT
+        }
+        return out
+    }
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/MacroStore.kt")"
+cat > "app/src/main/java/com/loopy/app/macro/MacroStore.kt" << 'LOOPY_EOF'
+package com.loopy.app.macro
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+/** 매크로를 filesDir/macros/{id}.json 로 저장/관리. org.json 사용(의존성 없음). */
+object MacroStore {
+
+    private fun dir(ctx: Context): File = File(ctx.filesDir, "macros").apply { mkdirs() }
+
+    fun autoName(time: Long = System.currentTimeMillis()): String =
+        SimpleDateFormat("MMM d a h:mm", Locale.ENGLISH).format(Date(time))
+
+    fun saveNew(ctx: Context, strokes: List<Stroke>): Macro {
+        val now = System.currentTimeMillis()
+        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes)
+        write(ctx, macro)
+        return macro
+    }
+
+    fun rename(ctx: Context, id: String, newName: String) {
+        val m = read(ctx, id) ?: return
+        write(ctx, m.copy(name = newName))
+    }
+
+    fun delete(ctx: Context, id: String) {
+        File(dir(ctx), "$id.json").delete()
+    }
+
+    fun list(ctx: Context): List<Macro> =
+        (dir(ctx).listFiles { f -> f.extension == "json" } ?: emptyArray())
+            .mapNotNull { runCatching { fromJson(it.readText()) }.getOrNull() }
+            .sortedByDescending { it.createdAt }
+
+    fun read(ctx: Context, id: String): Macro? =
+        runCatching { fromJson(File(dir(ctx), "$id.json").readText()) }.getOrNull()
+
+    private fun write(ctx: Context, macro: Macro) {
+        File(dir(ctx), "${macro.id}.json").writeText(toJson(macro))
+    }
+
+    private fun toJson(m: Macro): String {
+        val strokes = JSONArray()
+        for (s in m.strokes) {
+            val samples = JSONArray()
+            for (p in s.samples) {
+                samples.put(
+                    JSONObject().put("t", p.t).put("x", p.nx.toDouble()).put("y", p.ny.toDouble())
+                )
+            }
+            strokes.put(JSONObject().put("delayMs", s.delayMs).put("durationMs", s.durationMs).put("samples", samples))
+        }
+        return JSONObject()
+            .put("id", m.id).put("name", m.name).put("createdAt", m.createdAt)
+            .put("strokes", strokes)
+            .toString()
+    }
+
+    private fun fromJson(text: String): Macro {
+        val o = JSONObject(text)
+        val strokesArr = o.getJSONArray("strokes")
+        val strokes = ArrayList<Stroke>(strokesArr.length())
+        for (i in 0 until strokesArr.length()) {
+            val so = strokesArr.getJSONObject(i)
+            val sampArr = so.getJSONArray("samples")
+            val samples = ArrayList<TouchSample>(sampArr.length())
+            for (j in 0 until sampArr.length()) {
+                val p = sampArr.getJSONObject(j)
+                samples.add(TouchSample(p.getLong("t"), p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+            }
+            strokes.add(Stroke(so.getLong("delayMs"), so.optLong("durationMs", 0L), samples))
+        }
+        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes)
+    }
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl")"
+cat > "app/src/main/aidl/com/loopy/app/service/ILoopyService.aidl" << 'LOOPY_EOF'
+// Shizuku UserService 인터페이스. elevated(shell) 프로세스에서 실행되는 메서드들.
+package com.loopy.app.service;
+
+interface ILoopyService {
+    void destroy() = 16777114;
+    void exit() = 1;
+
+    // 하나의 스트로크(좌표 타임라인)를 주입. xs/ys = 픽셀 좌표, times = 시작기준 ms.
+    // DOWN(첫 샘플) → 각 샘플 시각에 MOVE → UP(마지막). 탭/홀드/스와이프/조이스틱 통합.
+    void playStroke(in int[] xs, in int[] ys, in long[] times, long durationMs) = 2;
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/service/LoopyUserService.kt")"
+cat > "app/src/main/java/com/loopy/app/service/LoopyUserService.kt" << 'LOOPY_EOF'
+package com.loopy.app.service
+
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.MotionEvent
+import java.lang.reflect.Method
+import kotlin.system.exitProcess
+
+/**
+ * Shizuku UserService 본체. injectInputEvent 로 좌표 타임라인(스트로크)을 재생한다.
+ * (scrcpy 방식: InputManagerGlobal → getInstance → injectInputEvent, source=TOUCHSCREEN)
+ *
+ * playStroke: 첫 샘플에서 DOWN, 각 샘플의 times[i](ms)에 맞춰 MOVE, 마지막에 UP.
+ * 사용자가 그린 경로와 시간을 그대로 재현하므로 탭/홀드/스와이프/조이스틱이 모두 됨.
+ */
+class LoopyUserService : ILoopyService.Stub() {
+
+    private val instance: Any
+    private val injectMethod: Method
+
+    init {
+        val cls = runCatching { Class.forName("android.hardware.input.InputManagerGlobal") }
+            .getOrElse { Class.forName("android.hardware.input.InputManager") }
+        val getInstance = cls.getDeclaredMethod("getInstance").apply { isAccessible = true }
+        instance = getInstance.invoke(null)!!
+        injectMethod = runCatching {
+            instance.javaClass.getMethod("injectInputEvent", InputEvent::class.java, Integer.TYPE)
+        }.getOrElse {
+            instance.javaClass.getDeclaredMethod("injectInputEvent", InputEvent::class.java, Integer.TYPE)
+        }.apply { isAccessible = true }
+    }
+
+    private fun inject(ev: InputEvent) {
+        injectMethod.invoke(instance, ev, 0) // 0 = ASYNC
+    }
+
+    private fun send(downTime: Long, action: Int, x: Int, y: Int) {
+        val ev = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x.toFloat(), y.toFloat(), 0)
+        ev.source = InputDevice.SOURCE_TOUCHSCREEN
+        inject(ev)
+        ev.recycle()
+    }
+
+    override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {
+        runCatching {
+            val n = xs.size
+            if (n == 0) return
+            val downTime = SystemClock.uptimeMillis()
+            send(downTime, MotionEvent.ACTION_DOWN, xs[0], ys[0])
+            for (i in 1 until n) {
+                val wait = (downTime + times[i]) - SystemClock.uptimeMillis()
+                if (wait > 0) Thread.sleep(wait)
+                send(downTime, MotionEvent.ACTION_MOVE, xs[i], ys[i])
+            }
+            // 마지막 샘플 후, down→up 총 지속시간(durationMs)이 될 때까지 유지(홀드 재현).
+            // 최소 20ms 는 보장(순간탭 인식 실패 방지).
+            val upTarget = downTime + durationMs.coerceAtLeast(20L)
+            val remain = upTarget - SystemClock.uptimeMillis()
+            if (remain > 0) Thread.sleep(remain)
+            send(downTime, MotionEvent.ACTION_UP, xs[n - 1], ys[n - 1])
+        }
+    }
+
+    override fun exit() = destroy()
+
+    override fun destroy() {
+        exitProcess(0)
+    }
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/service/LoopyService.kt")"
+cat > "app/src/main/java/com/loopy/app/service/LoopyService.kt" << 'LOOPY_EOF'
+package com.loopy.app.service
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.ServiceConnection
+import android.os.IBinder
+import rikka.shizuku.Shizuku
+
+/**
+ * 앱 프로세스에서 Shizuku UserService(LoopyUserService)를 바인딩하고 호출을 넘겨주는 싱글톤.
+ * 실제 injectInputEvent 는 shell 프로세스(LoopyUserService)에서 일어난다.
+ *
+ * tap/swipe 은 바인더 호출이라 호출 스레드를 잠깐 붙잡으므로 IO 스레드에서 부를 것.
+ * 반환값은 "서비스가 연결돼 있어 호출을 보냈는지" (false 면 아직 미연결/실패).
+ */
+object LoopyService {
+
+    @Volatile private var svc: ILoopyService? = null
+    @Volatile private var binding = false
+
+    fun isReady(): Boolean = svc != null
+
+    private val conn = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            binding = false
+            svc = if (binder != null && binder.pingBinder()) {
+                ILoopyService.Stub.asInterface(binder)
+            } else null
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            svc = null
+        }
+    }
+
+    private fun args(context: Context) =
+        Shizuku.UserServiceArgs(
+            ComponentName(context.packageName, LoopyUserService::class.java.name)
+        )
+            .daemon(false)
+            .processNameSuffix("loopy")
+            .debuggable(false)
+            .version(1)
+
+    /** Shizuku 권한이 허용된 뒤 호출. 이미 연결됐거나 진행 중이면 무시. */
+    fun bind(context: Context) {
+        if (svc != null || binding) return
+        binding = true
+        runCatching { Shizuku.bindUserService(args(context.applicationContext), conn) }
+            .onFailure { binding = false }
+    }
+
+    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long): Boolean =
+        runCatching { svc?.playStroke(xs, ys, times, durationMs); svc != null }.getOrDefault(false)
+}
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/overlay/OverlayService.kt")"
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
 package com.loopy.app.overlay
 
@@ -255,7 +580,7 @@ class OverlayService : Service() {
                 val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
                 xs[i] = px; ys[i] = py; times[i] = s.samples[i].t
             }
-            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times) }
+            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times, s.durationMs) }
         }
     }
 
@@ -371,7 +696,7 @@ LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "fix: OverlayService import 복구 (MacroStore/중복 Macro)"
+git commit -m "fix: 스트로크 총 지속시간 저장/재생 (홀드 누른시간 정확 재현)"
 git push
 echo "푸시 완료!"
 

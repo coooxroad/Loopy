@@ -42,24 +42,22 @@ class LoopyUserService : ILoopyService.Stub() {
         ev.recycle()
     }
 
-    override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray) {
+    override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {
         runCatching {
             val n = xs.size
             if (n == 0) return
             val downTime = SystemClock.uptimeMillis()
             send(downTime, MotionEvent.ACTION_DOWN, xs[0], ys[0])
-            // 단일 샘플(순간 탭)이라도 최소 지속시간 확보
-            if (n == 1) {
-                Thread.sleep(30)
-                send(downTime, MotionEvent.ACTION_UP, xs[0], ys[0])
-                return
-            }
             for (i in 1 until n) {
-                val target = downTime + times[i]
-                val wait = target - SystemClock.uptimeMillis()
+                val wait = (downTime + times[i]) - SystemClock.uptimeMillis()
                 if (wait > 0) Thread.sleep(wait)
                 send(downTime, MotionEvent.ACTION_MOVE, xs[i], ys[i])
             }
+            // 마지막 샘플 후, down→up 총 지속시간(durationMs)이 될 때까지 유지(홀드 재현).
+            // 최소 20ms 는 보장(순간탭 인식 실패 방지).
+            val upTarget = downTime + durationMs.coerceAtLeast(20L)
+            val remain = upTarget - SystemClock.uptimeMillis()
+            if (remain > 0) Thread.sleep(remain)
             send(downTime, MotionEvent.ACTION_UP, xs[n - 1], ys[n - 1])
         }
     }

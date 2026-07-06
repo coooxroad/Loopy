@@ -50,6 +50,6 @@ object LoopyService {
             .onFailure { binding = false }
     }
 
-    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray): Boolean =
-        runCatching { svc?.playStroke(xs, ys, times); svc != null }.getOrDefault(false)
+    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long): Boolean =
+        runCatching { svc?.playStroke(xs, ys, times, durationMs); svc != null }.getOrDefault(false)
 }

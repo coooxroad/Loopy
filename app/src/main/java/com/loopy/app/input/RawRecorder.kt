@@ -63,7 +63,7 @@ class RawRecorder {
         var prevEnd = 0L
         for ((i, d) in sorted.withIndex()) {
             val delay = if (i == 0) 0L else (d.startT - prevEnd).coerceAtLeast(0L)
-            out.add(Stroke(delay, d.samples))
+            out.add(Stroke(delay, (d.endT - d.startT).coerceAtLeast(0L), d.samples))
             prevEnd = d.endT
         }
         return out
