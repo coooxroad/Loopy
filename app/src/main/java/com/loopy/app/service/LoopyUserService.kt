@@ -8,12 +8,11 @@ import java.lang.reflect.Method
 import kotlin.system.exitProcess
 
 /**
- * Shizuku UserService 본체. shell 프로세스에서 injectInputEvent 로 터치를 주입한다.
+ * Shizuku UserService 본체. injectInputEvent 로 좌표 타임라인(스트로크)을 재생한다.
  * (scrcpy 방식: InputManagerGlobal → getInstance → injectInputEvent, source=TOUCHSCREEN)
  *
- * press(x, y, durationMs): 좌표를 durationMs 만큼 누르고 뗀다. 사용자가 실제로 누른
- * 시간을 그대로 재생하므로, 짧게 톡 친 건 짧게 / 꾹 누른 건 길게 = 원본과 동일.
- * (0ms 순간 탭은 런처/앱이 인식 못 하는 문제도 자연히 해결된다.)
+ * playStroke: 첫 샘플에서 DOWN, 각 샘플의 times[i](ms)에 맞춰 MOVE, 마지막에 UP.
+ * 사용자가 그린 경로와 시간을 그대로 재현하므로 탭/홀드/스와이프/조이스틱이 모두 됨.
  */
 class LoopyUserService : ILoopyService.Stub() {
 
@@ -36,49 +35,36 @@ class LoopyUserService : ILoopyService.Stub() {
         injectMethod.invoke(instance, ev, 0) // 0 = ASYNC
     }
 
-    private fun motion(downTime: Long, eventTime: Long, action: Int, x: Int, y: Int): MotionEvent {
-        val ev = MotionEvent.obtain(downTime, eventTime, action, x.toFloat(), y.toFloat(), 0)
+    private fun send(downTime: Long, action: Int, x: Int, y: Int) {
+        val ev = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x.toFloat(), y.toFloat(), 0)
         ev.source = InputDevice.SOURCE_TOUCHSCREEN
-        return ev
+        inject(ev)
+        ev.recycle()
     }
 
-    override fun press(x: Int, y: Int, durationMs: Int) {
+    override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray) {
         runCatching {
-            val t = SystemClock.uptimeMillis()
-            val down = motion(t, t, MotionEvent.ACTION_DOWN, x, y)
-            inject(down); down.recycle()
-            // 최소 20ms 는 유지(순간탭 인식 실패 방지). 그 이상은 사용자가 누른 시간 그대로.
-            Thread.sleep(durationMs.toLong().coerceAtLeast(20L))
-            val t2 = SystemClock.uptimeMillis()
-            val up = motion(t, t2, MotionEvent.ACTION_UP, x, y)
-            inject(up); up.recycle()
-        }
-    }
-
-    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) {
-        runCatching {
-            val steps = (durationMs / 10).coerceIn(2, 100)
+            val n = xs.size
+            if (n == 0) return
             val downTime = SystemClock.uptimeMillis()
-            val down = motion(downTime, downTime, MotionEvent.ACTION_DOWN, x1, y1)
-            inject(down); down.recycle()
-            for (i in 1..steps) {
-                val f = i.toFloat() / steps
-                val x = (x1 + (x2 - x1) * f).toInt()
-                val y = (y1 + (y2 - y1) * f).toInt()
-                Thread.sleep((durationMs / steps).toLong().coerceAtLeast(1))
-                val now = SystemClock.uptimeMillis()
-                val move = motion(downTime, now, MotionEvent.ACTION_MOVE, x, y)
-                inject(move); move.recycle()
+            send(downTime, MotionEvent.ACTION_DOWN, xs[0], ys[0])
+            // 단일 샘플(순간 탭)이라도 최소 지속시간 확보
+            if (n == 1) {
+                Thread.sleep(30)
+                send(downTime, MotionEvent.ACTION_UP, xs[0], ys[0])
+                return
             }
-            val end = SystemClock.uptimeMillis()
-            val up = motion(downTime, end, MotionEvent.ACTION_UP, x2, y2)
-            inject(up); up.recycle()
+            for (i in 1 until n) {
+                val target = downTime + times[i]
+                val wait = target - SystemClock.uptimeMillis()
+                if (wait > 0) Thread.sleep(wait)
+                send(downTime, MotionEvent.ACTION_MOVE, xs[i], ys[i])
+            }
+            send(downTime, MotionEvent.ACTION_UP, xs[n - 1], ys[n - 1])
         }
     }
 
-    override fun exit() {
-        destroy()
-    }
+    override fun exit() = destroy()
 
     override fun destroy() {
         exitProcess(0)

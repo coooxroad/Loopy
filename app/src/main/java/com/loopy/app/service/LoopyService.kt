@@ -50,9 +50,6 @@ object LoopyService {
             .onFailure { binding = false }
     }
 
-    fun press(x: Int, y: Int, durationMs: Int): Boolean =
-        runCatching { svc?.press(x, y, durationMs); svc != null }.getOrDefault(false)
-
-    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int): Boolean =
-        runCatching { svc?.swipe(x1, y1, x2, y2, durationMs); svc != null }.getOrDefault(false)
+    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray): Boolean =
+        runCatching { svc?.playStroke(xs, ys, times); svc != null }.getOrDefault(false)
 }

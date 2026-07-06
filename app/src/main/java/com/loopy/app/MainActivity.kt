@@ -264,7 +264,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(m.name, color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                Text("${m.actions.size}개 행동", color = TextLo, fontSize = 11.sp)
+                                Text("${m.strokes.size} 스트로크", color = TextLo, fontSize = 11.sp)
                             }
                             Text("이름변경", color = Accent, fontSize = 12.sp,
                                 modifier = Modifier.clickable { renaming = m; nameField = m.name })

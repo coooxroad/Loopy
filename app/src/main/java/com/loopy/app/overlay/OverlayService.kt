@@ -23,11 +23,13 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.loopy.app.input.GestureRecorder
+import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
+import com.loopy.app.macro.Stroke
+import com.loopy.app.macro.Macro
+import com.loopy.app.macro.StrokeStore
 import com.loopy.app.macro.Playlist
 import com.loopy.app.macro.PlaylistStore
 import com.loopy.app.service.LoopyService
@@ -44,7 +46,7 @@ import kotlin.coroutines.coroutineContext
 
 /**
  * 매크로/플레이리스트 컨트롤 오버레이.
- *  - 녹화: getevent → GestureRecorder. 정지 시 자동 저장.
+ *  - 녹화: getevent → RawRecorder(좌표 타임라인). 정지 시 자동 저장.
  *  - 재생: 저장 매크로 하나, 또는 플레이리스트(셔플백 + N회/무한)를 injectInputEvent 로 주입.
  */
 class OverlayService : Service() {
@@ -53,7 +55,7 @@ class OverlayService : Service() {
     private lateinit var wm: WindowManager
 
     private val reader = GeteventReader()
-    private val recorder = GestureRecorder()
+    private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
     private var playJob: Job? = null
@@ -182,14 +184,14 @@ class OverlayService : Service() {
         startSingle(recorder.snapshot(), "지금 녹화")
     }
 
-    private fun startSingle(list: List<GestureRecorder.Action>, label: String) {
+    private fun startSingle(strokes: List<Stroke>, label: String) {
         if (recording) stopRecord()
         stopPlayback(null)
-        if (list.isEmpty()) { status.text = "재생할 행동이 없어"; return }
+        if (strokes.isEmpty()) { status.text = "재생할 게 없어"; return }
         stopPlayBtn.visibility = View.VISIBLE
         status.text = "▶ 재생중… $label"
         playJob = scope.launch {
-            runActions(list)
+            runStrokes(strokes)
             status.text = "재생 끝 · $label"
             stopPlayBtn.visibility = View.GONE
             playJob = null
@@ -212,7 +214,7 @@ class OverlayService : Service() {
                     val m = macros[id] ?: continue
                     val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
                     status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
-                    runActions(m.actions)
+                    runStrokes(m.strokes)
                     if (pl.gapMs > 0) delay(pl.gapMs.toLong())
                 }
                 cycle++
@@ -230,26 +232,24 @@ class OverlayService : Service() {
         if (msg != null) status.text = msg
     }
 
-    /** 한 매크로의 액션들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능(delay). */
-    private suspend fun runActions(list: List<GestureRecorder.Action>) {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val w = m.widthPixels
-        val h = m.heightPixels
-        val rot = displayObj.rotation
-        for (a in list) {
+    /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
+    private suspend fun runStrokes(strokes: List<Stroke>) {
+        for (s in strokes) {
             if (!coroutineContext.isActive) return
-            delay(a.delayMs)
-            val (x, y) = toPx(a.x, a.y, w, h, rot)
-            withContext(Dispatchers.IO) {
-                when (a.type) {
-                    GestureRecorder.Type.PRESS -> LoopyService.press(x, y, a.durationMs.toInt())
-                    GestureRecorder.Type.SWIPE -> {
-                        val (x2, y2) = toPx(a.x2, a.y2, w, h, rot)
-                        LoopyService.swipe(x, y, x2, y2, a.durationMs.toInt().coerceAtLeast(50))
-                    }
-                }
+            delay(s.delayMs)
+            val m = DisplayMetrics()
+            displayObj.getRealMetrics(m)
+            val w = m.widthPixels
+            val h = m.heightPixels
+            val rot = displayObj.rotation
+            val n = s.samples.size
+            if (n == 0) continue
+            val xs = IntArray(n); val ys = IntArray(n); val times = LongArray(n)
+            for (i in 0 until n) {
+                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
+                xs[i] = px; ys[i] = py; times[i] = s.samples[i].t
             }
+            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times) }
         }
     }
 
@@ -275,8 +275,8 @@ class OverlayService : Service() {
             if (macros.isNotEmpty()) {
                 panel.addView(hint("─ 매크로 ─"))
                 for (mac in macros) {
-                    panel.addView(listRow("▶ ${mac.name} (${mac.actions.size})", 0xFF2B2D42.toInt()) {
-                        toggleList(); startSingle(mac.actions, mac.name)
+                    panel.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
+                        toggleList(); startSingle(mac.strokes, mac.name)
                     })
                 }
             }
