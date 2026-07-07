@@ -25,17 +25,19 @@ data class TouchDevice(
 )
 
 /**
- * getevent 로 물리 터치를 실시간 파싱한다. 멀티터치 프로토콜 B 를 처리한다:
- *  - ABS_MT_SLOT 로 현재 슬롯(손가락) 지정
- *  - 슬롯별로 ABS_MT_TRACKING_ID(내려감/뗌), POSITION_X/Y(위치)
- *  - SYN_REPORT 프레임마다 이번에 바뀐 슬롯들을 각각 방출
- * → 손가락이 겹쳐도 각 손가락을 독립적으로 추적할 수 있다.
+ * getevent 로 물리 터치를 실시간 파싱한다. 멀티터치 프로토콜 B(슬롯) 처리.
+ *
+ * 정지 신뢰성: readLine() 은 블로킹이라 코루틴 cancel 만으론 안 멈춘다. 그래서
+ *  1) 프로세스를 destroy 해 읽기를 끊고,
+ *  2) "세대(gen)" 토큰으로 옛 스트림의 방출을 원천 차단한다.
+ * stop() 이 gen 을 올리면, 그 이전에 시작된 스트림은 gen 불일치로 다시는 방출하지 못한다
+ * (프로세스가 좀비로 남아도 무해). 새 녹화가 옛 스트림을 되살리는 일이 없다.
  */
 class GeteventReader {
 
     private val jobs = mutableListOf<Job>()
     private val procs = mutableListOf<Process>()
-    @Volatile private var active = false
+    @Volatile private var gen = 0
 
     fun probe(): List<TouchDevice> {
         val out = Shell.run("getevent -pl") ?: return emptyList()
@@ -81,13 +83,13 @@ class GeteventReader {
         onPoint: (TouchDevice, TouchPoint) -> Unit,
     ) {
         stop()
-        active = true
-        for (dev in devices) jobs += scope.launch(Dispatchers.IO) { streamOne(dev, onPoint) }
+        val myGen = gen
+        for (dev in devices) jobs += scope.launch(Dispatchers.IO) { streamOne(myGen, dev, onPoint) }
     }
 
     private class Slot(var x: Int = -1, var y: Int = -1, var down: Boolean = false)
 
-    private fun streamOne(dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
+    private fun streamOne(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
         val proc = try {
             Shell.newProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
         } catch (t: Throwable) {
@@ -98,37 +100,26 @@ class GeteventReader {
         val touched = HashSet<Int>()
         var curSlot = 0
         try {
-            proc.inputStream.bufferedReader().forEachLine { line ->
-                val ev = parseLine(line) ?: return@forEachLine
+            val br = proc.inputStream.bufferedReader()
+            while (myGen == gen) {
+                val line = br.readLine() ?: break
+                val ev = parseLine(line) ?: continue
                 when (ev.code) {
-                    "ABS_MT_SLOT" -> {
-                        curSlot = ev.value
-                        touched.add(curSlot)
-                    }
+                    "ABS_MT_SLOT" -> { curSlot = ev.value; touched.add(curSlot) }
                     "ABS_MT_TRACKING_ID" -> {
-                        val s = slots.getOrPut(curSlot) { Slot() }
-                        s.down = ev.value != 0xffffffff.toInt() && ev.value != -1
+                        slots.getOrPut(curSlot) { Slot() }.down =
+                            ev.value != 0xffffffff.toInt() && ev.value != -1
                         touched.add(curSlot)
                     }
-                    "ABS_MT_POSITION_X" -> {
-                        slots.getOrPut(curSlot) { Slot() }.x = ev.value; touched.add(curSlot)
-                    }
-                    "ABS_MT_POSITION_Y" -> {
-                        slots.getOrPut(curSlot) { Slot() }.y = ev.value; touched.add(curSlot)
-                    }
+                    "ABS_MT_POSITION_X" -> { slots.getOrPut(curSlot) { Slot() }.x = ev.value; touched.add(curSlot) }
+                    "ABS_MT_POSITION_Y" -> { slots.getOrPut(curSlot) { Slot() }.y = ev.value; touched.add(curSlot) }
                     "SYN_REPORT" -> {
                         for (sl in touched) {
                             val s = slots[sl] ?: continue
-                            if (active && s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
+                            if (myGen == gen && s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
                                 onPoint(
                                     dev,
-                                    TouchPoint(
-                                        slot = sl,
-                                        nx = s.x.toFloat() / dev.maxX,
-                                        ny = s.y.toFloat() / dev.maxY,
-                                        rawX = s.x, rawY = s.y,
-                                        down = s.down,
-                                    ),
+                                    TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, s.down),
                                 )
                             }
                         }
@@ -138,12 +129,13 @@ class GeteventReader {
             }
         } catch (_: Throwable) {
         } finally {
+            synchronized(procs) { procs.remove(proc) }
             runCatching { proc.destroy() }
         }
     }
 
     fun stop() {
-        active = false
+        gen++ // 이 시점 이전에 시작된 모든 스트림의 방출을 무효화
         synchronized(procs) {
             procs.forEach { runCatching { it.destroy() } }
             procs.clear()
