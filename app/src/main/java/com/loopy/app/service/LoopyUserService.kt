@@ -65,26 +65,34 @@ class LoopyUserService : ILoopyService.Stub() {
         ev.recycle()
     }
 
-    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int) {
-        runCatching {
+    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String {
+        val sb = StringBuilder()
+        try {
             val dt = SystemClock.uptimeMillis()
             val idxShift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
-            // 손가락0 DOWN
             injectMulti(dt, MotionEvent.ACTION_DOWN, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
-            // 손가락1 추가 (POINTER_DOWN, index 1)
+            sb.append("D0ok ")
+            Thread.sleep(8)
             injectMulti(
                 dt, MotionEvent.ACTION_POINTER_DOWN or (1 shl idxShift),
                 intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
             )
+            sb.append("D1ok ")
             Thread.sleep(120)
-            // 손가락1 뗌 (POINTER_UP, index 1)
             injectMulti(
                 dt, MotionEvent.ACTION_POINTER_UP or (1 shl idxShift),
                 intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
             )
-            // 손가락0 UP
+            sb.append("U1ok ")
+            Thread.sleep(8)
             injectMulti(dt, MotionEvent.ACTION_UP, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
+            sb.append("U0ok")
+        } catch (t: Throwable) {
+            val cause = t.cause ?: t
+            sb.append("ERR:").append(cause.javaClass.simpleName)
+                .append(":").append((cause.message ?: "").take(70))
         }
+        return sb.toString()
     }
 
     override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {

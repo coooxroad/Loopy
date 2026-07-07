@@ -159,10 +159,10 @@ class OverlayService : Service() {
             val w = m.widthPixels
             val h = m.heightPixels
             status.text = "✌ 두 지점 동시 탭 주입 중…"
-            val ok = withContext(Dispatchers.IO) {
+            val res = withContext(Dispatchers.IO) {
                 LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
             }
-            status.text = if (ok) "✌ 동시 탭 주입됨 (화면 좌우 중앙 두 점)" else "서비스 미연결"
+            status.text = if (res == null) "서비스 미연결" else "MT: $res"
         }
     }
 

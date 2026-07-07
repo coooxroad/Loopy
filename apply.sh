@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy MT-0: 두 손가락 동시 탭 (멀티포인터 injectInputEvent 검증)
+# Loopy MT-0 진단: 멀티포인터 주입 각 단계 결과 표시
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -17,8 +17,8 @@ interface ILoopyService {
     // DOWN(첫 샘플) → 각 샘플 시각에 MOVE → UP(마지막). 탭/홀드/스와이프/조이스틱 통합.
     void playStroke(in int[] xs, in int[] ys, in long[] times, long durationMs) = 2;
 
-    // MT-0 검증: 두 지점을 동시에 탭(멀티포인터 주입이 이 기기에서 되는지 확인).
-    void twoFingerTapTest(int x1, int y1, int x2, int y2) = 3;
+    // MT-0 검증: 두 지점 동시 탭. 각 단계 결과/예외를 문자열로 돌려준다(진단용).
+    String twoFingerTapTest(int x1, int y1, int x2, int y2) = 3;
 }
 LOOPY_EOF
 
@@ -91,26 +91,34 @@ class LoopyUserService : ILoopyService.Stub() {
         ev.recycle()
     }
 
-    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int) {
-        runCatching {
+    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String {
+        val sb = StringBuilder()
+        try {
             val dt = SystemClock.uptimeMillis()
             val idxShift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
-            // 손가락0 DOWN
             injectMulti(dt, MotionEvent.ACTION_DOWN, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
-            // 손가락1 추가 (POINTER_DOWN, index 1)
+            sb.append("D0ok ")
+            Thread.sleep(8)
             injectMulti(
                 dt, MotionEvent.ACTION_POINTER_DOWN or (1 shl idxShift),
                 intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
             )
+            sb.append("D1ok ")
             Thread.sleep(120)
-            // 손가락1 뗌 (POINTER_UP, index 1)
             injectMulti(
                 dt, MotionEvent.ACTION_POINTER_UP or (1 shl idxShift),
                 intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
             )
-            // 손가락0 UP
+            sb.append("U1ok ")
+            Thread.sleep(8)
             injectMulti(dt, MotionEvent.ACTION_UP, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
+            sb.append("U0ok")
+        } catch (t: Throwable) {
+            val cause = t.cause ?: t
+            sb.append("ERR:").append(cause.javaClass.simpleName)
+                .append(":").append((cause.message ?: "").take(70))
         }
+        return sb.toString()
     }
 
     override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {
@@ -198,8 +206,8 @@ object LoopyService {
     fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long): Boolean =
         runCatching { svc?.playStroke(xs, ys, times, durationMs); svc != null }.getOrDefault(false)
 
-    fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): Boolean =
-        runCatching { svc?.twoFingerTapTest(x1, y1, x2, y2); svc != null }.getOrDefault(false)
+    fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String? =
+        runCatching { svc?.twoFingerTapTest(x1, y1, x2, y2) }.getOrNull()
 }
 LOOPY_EOF
 
@@ -366,10 +374,10 @@ class OverlayService : Service() {
             val w = m.widthPixels
             val h = m.heightPixels
             status.text = "✌ 두 지점 동시 탭 주입 중…"
-            val ok = withContext(Dispatchers.IO) {
+            val res = withContext(Dispatchers.IO) {
                 LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
             }
-            status.text = if (ok) "✌ 동시 탭 주입됨 (화면 좌우 중앙 두 점)" else "서비스 미연결"
+            status.text = if (res == null) "서비스 미연결" else "MT: $res"
         }
     }
 
@@ -588,7 +596,7 @@ LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "MT-0: 두 손가락 동시 탭 멀티포인터 주입 검증 버튼"
+git commit -m "MT-0 진단: 멀티포인터 주입 단계별 결과/예외 표시 + 이벤트 간격"
 git push
 echo "푸시 완료!"
 
