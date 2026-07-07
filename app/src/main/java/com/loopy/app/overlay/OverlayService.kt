@@ -43,6 +43,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * 매크로/플레이리스트 컨트롤 오버레이.
@@ -111,6 +114,10 @@ class OverlayService : Service() {
         row2.addView(listBtn)
         row2.addView(mtBtn, marginLeft(dp(8)))
 
+        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val mt1Btn = pillButton("◎ MT1 (두 원)", 0xFFCDDAFD.toInt(), 0xFF2B2D42.toInt()) { mt1Test() }
+        row3.addView(mt1Btn)
+
         stopPlayBtn = TextView(this).apply {
             text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
             setPadding(0, dp(8), 0, 0)
@@ -127,6 +134,9 @@ class OverlayService : Service() {
         bar.addView(status)
         bar.addView(row1)
         bar.addView(row2, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
+        bar.addView(row3, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
         bar.addView(stopPlayBtn)
@@ -173,6 +183,41 @@ class OverlayService : Service() {
                 if (res == null) "서비스 미연결" else "MT: $res"
             } catch (t: Throwable) {
                 "MT 예외: ${t.javaClass.simpleName}: ${(t.message ?: "").take(60)}"
+            }
+            status.text = msg
+            Toast.makeText(this@OverlayService, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // ── MT-1: 두 원을 동시에 그리기 (동시 재생 엔진 검증) ──
+    private fun mt1Test() {
+        Toast.makeText(this, "MT1: 두 원 동시 그리기", Toast.LENGTH_SHORT).show()
+        scope.launch {
+            val msg = try {
+                val m = DisplayMetrics()
+                displayObj.getRealMetrics(m)
+                val w = m.widthPixels
+                val h = m.heightPixels
+                val n = 40
+                val dur = 1600L
+                val r = (w * 0.12).toInt()
+                val cx0 = (w * 0.3).toInt(); val cy0 = h / 2
+                val cx1 = (w * 0.7).toInt(); val cy1 = h / 2
+                val xs = IntArray(n * 2); val ys = IntArray(n * 2); val times = LongArray(n * 2)
+                for (i in 0 until n) {
+                    val ang = 2 * PI * i / n
+                    val t = i.toLong() * dur / n
+                    xs[i] = (cx0 + r * cos(ang)).toInt(); ys[i] = (cy0 + r * sin(ang)).toInt(); times[i] = t
+                    xs[n + i] = (cx1 + r * cos(ang)).toInt(); ys[n + i] = (cy1 + r * sin(ang)).toInt(); times[n + i] = t
+                }
+                val ok = withContext(Dispatchers.IO) {
+                    LoopyService.playMulti(
+                        intArrayOf(0, 1), longArrayOf(0L, 0L), intArrayOf(n, n), xs, ys, times,
+                    )
+                }
+                if (ok) "MT1 재생됨 — 십자선 2개가 각각 원을 그려야 함" else "서비스 미연결"
+            } catch (t: Throwable) {
+                "MT1 예외: ${t.javaClass.simpleName}: ${(t.message ?: "").take(50)}"
             }
             status.text = msg
             Toast.makeText(this@OverlayService, msg, Toast.LENGTH_LONG).show()

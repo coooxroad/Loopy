@@ -115,6 +115,89 @@ class LoopyUserService : ILoopyService.Stub() {
         }
     }
 
+    /** 현재 활성 포인터 전부를 담은 MotionEvent 하나 주입. action 은 인덱스 포함. */
+    private fun injectPointers(
+        downTime: Long, action: Int, order: List<Int>,
+        posX: Map<Int, Int>, posY: Map<Int, Int>,
+    ) {
+        val n = order.size
+        if (n == 0) return
+        val pp = Array(n) { props(order[it]) }
+        val pc = Array(n) { coords(posX.getValue(order[it]), posY.getValue(order[it])) }
+        val ev = MotionEvent.obtain(
+            downTime, SystemClock.uptimeMillis(), action, n, pp, pc,
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
+        )
+        inject(ev)
+        ev.recycle()
+    }
+
+    private class MEv(val time: Long, val kind: Int, val finger: Int, val x: Int, val y: Int)
+
+    override fun playMulti(
+        fingerIds: IntArray, startMs: LongArray, sampleCounts: IntArray,
+        xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,
+    ) {
+        runCatching {
+            val shift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
+            val events = ArrayList<MEv>()
+            var off = 0
+            for (s in fingerIds.indices) {
+                val cnt = sampleCounts[s]
+                val f = fingerIds[s]
+                for (i in 0 until cnt) {
+                    val t = startMs[s] + timesFlat[off + i]
+                    val kind = if (i == 0) 0 else 1 // DOWN / MOVE
+                    events.add(MEv(t, kind, f, xsFlat[off + i], ysFlat[off + i]))
+                }
+                if (cnt > 0) {
+                    val lastT = startMs[s] + timesFlat[off + cnt - 1]
+                    events.add(MEv(lastT, 2, f, xsFlat[off + cnt - 1], ysFlat[off + cnt - 1])) // UP
+                }
+                off += cnt
+            }
+            if (events.isEmpty()) return
+            // 시각순 정렬. 같은 시각이면 DOWN(0) → MOVE(1) → UP(2) 순.
+            events.sortWith(compareBy({ it.time }, { it.kind }))
+
+            val order = ArrayList<Int>()
+            val posX = HashMap<Int, Int>()
+            val posY = HashMap<Int, Int>()
+            val base = events.first().time
+            val t0 = SystemClock.uptimeMillis()
+            var downTime = t0
+
+            for (ev in events) {
+                val wait = (t0 + (ev.time - base)) - SystemClock.uptimeMillis()
+                if (wait > 0) Thread.sleep(wait)
+                when (ev.kind) {
+                    0 -> { // DOWN
+                        if (order.isEmpty()) downTime = SystemClock.uptimeMillis()
+                        order.add(ev.finger)
+                        posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
+                        val idx = order.indexOf(ev.finger)
+                        val action = if (order.size == 1) MotionEvent.ACTION_DOWN
+                        else MotionEvent.ACTION_POINTER_DOWN or (idx shl shift)
+                        injectPointers(downTime, action, order, posX, posY)
+                    }
+                    1 -> { // MOVE
+                        posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
+                        if (order.isNotEmpty()) injectPointers(downTime, MotionEvent.ACTION_MOVE, order, posX, posY)
+                    }
+                    2 -> { // UP
+                        if (!order.contains(ev.finger)) continue
+                        posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
+                        val idx = order.indexOf(ev.finger)
+                        val action = if (order.size == 1) MotionEvent.ACTION_UP
+                        else MotionEvent.ACTION_POINTER_UP or (idx shl shift)
+                        injectPointers(downTime, action, order, posX, posY)
+                        order.remove(ev.finger)
+                    }
+                }
+            }
+        }
+    }
+
     override fun exit() = destroy()
 
     override fun destroy() {
