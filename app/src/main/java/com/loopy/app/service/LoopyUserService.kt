@@ -42,6 +42,51 @@ class LoopyUserService : ILoopyService.Stub() {
         ev.recycle()
     }
 
+    // ── 멀티포인터 주입 (MT-0) ──
+    private fun props(id: Int) = MotionEvent.PointerProperties().apply {
+        this.id = id
+        toolType = MotionEvent.TOOL_TYPE_FINGER
+    }
+
+    private fun coords(x: Int, y: Int) = MotionEvent.PointerCoords().apply {
+        this.x = x.toFloat(); this.y = y.toFloat(); pressure = 1f; size = 1f
+    }
+
+    /** 여러 포인터를 담은 MotionEvent 하나를 주입. ids/xs/ys 는 같은 길이. */
+    private fun injectMulti(downTime: Long, action: Int, ids: IntArray, xs: IntArray, ys: IntArray) {
+        val n = ids.size
+        val pp = Array(n) { props(ids[it]) }
+        val pc = Array(n) { coords(xs[it], ys[it]) }
+        val ev = MotionEvent.obtain(
+            downTime, SystemClock.uptimeMillis(), action, n, pp, pc,
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
+        )
+        inject(ev)
+        ev.recycle()
+    }
+
+    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int) {
+        runCatching {
+            val dt = SystemClock.uptimeMillis()
+            val idxShift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
+            // 손가락0 DOWN
+            injectMulti(dt, MotionEvent.ACTION_DOWN, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
+            // 손가락1 추가 (POINTER_DOWN, index 1)
+            injectMulti(
+                dt, MotionEvent.ACTION_POINTER_DOWN or (1 shl idxShift),
+                intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
+            )
+            Thread.sleep(120)
+            // 손가락1 뗌 (POINTER_UP, index 1)
+            injectMulti(
+                dt, MotionEvent.ACTION_POINTER_UP or (1 shl idxShift),
+                intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
+            )
+            // 손가락0 UP
+            injectMulti(dt, MotionEvent.ACTION_UP, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
+        }
+    }
+
     override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {
         runCatching {
             val n = xs.size

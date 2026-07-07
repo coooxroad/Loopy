@@ -102,9 +102,11 @@ class OverlayService : Service() {
         recordBtn = pillButton("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
         val playBtn = pillButton("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
         val listBtn = pillButton("📁", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
+        val mtBtn = pillButton("✌", 0xFFB5E2FA.toInt(), 0xFF2B2D42.toInt()) { mtTest() }
         row.addView(recordBtn)
         row.addView(playBtn, marginLeft(dp(8)))
         row.addView(listBtn, marginLeft(dp(8)))
+        row.addView(mtBtn, marginLeft(dp(8)))
 
         stopPlayBtn = TextView(this).apply {
             text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
@@ -148,6 +150,21 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             android.graphics.PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START }
+
+    // ── MT-0: 두 손가락 동시 탭 테스트 ──
+    private fun mtTest() {
+        scope.launch {
+            val m = DisplayMetrics()
+            displayObj.getRealMetrics(m)
+            val w = m.widthPixels
+            val h = m.heightPixels
+            status.text = "✌ 두 지점 동시 탭 주입 중…"
+            val ok = withContext(Dispatchers.IO) {
+                LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
+            }
+            status.text = if (ok) "✌ 동시 탭 주입됨 (화면 좌우 중앙 두 점)" else "서비스 미연결"
+        }
+    }
 
     // ── 녹화 ──
     private fun toggleRecord() {
