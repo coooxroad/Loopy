@@ -70,6 +70,8 @@ class OverlayService : Service() {
     private lateinit var panel: LinearLayout
     private var expanded = false
     private var hintView: TextView? = null
+    private var dimView: View? = null
+    private var deepLocked = false
     private lateinit var status: TextView
     private lateinit var recordBtn: ImageButton
     private lateinit var stopPlayBtn: TextView
@@ -118,9 +120,14 @@ class OverlayService : Service() {
         recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
         val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
         val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
+        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFF6C7BFF.toInt(), 0x226C7BFF) {
+            setDeepSLock(true)
+            if (expanded) toggleExpand()
+        }
         panel.addView(recordBtn)
         panel.addView(playBtn, marginLeft(dp(8)))
         panel.addView(listBtn, marginLeft(dp(8)))
+        panel.addView(moonBtn, marginLeft(dp(8)))
 
         val hRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -178,6 +185,35 @@ class OverlayService : Service() {
         setColor(color)
     }
 
+    /** Deep SLock: 검은 레이어(non-touchable, 매크로 통과) + 최소 밝기. 달 버튼/FAB 재탭으로 토글. */
+    private fun setDeepSLock(on: Boolean) {
+        if (on) {
+            if (dimView != null) return
+            val v = View(this).apply { setBackgroundColor(0xDB000000.toInt()) } // ~86% 블랙
+            val p = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                android.graphics.PixelFormat.TRANSLUCENT,
+            ).apply { screenBrightness = 0.01f } // 최소 밝기(권한 불필요)
+            runCatching { wm.addView(v, p) }
+            dimView = v
+            // FAB(달 버튼)를 검은 레이어 위로 올려 다시 누를 수 있게
+            runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
+            fab.alpha = 0.4f // 희미하게
+            deepLocked = true
+        } else {
+            dimView?.let { runCatching { wm.removeView(it) } }
+            dimView = null
+            fab.alpha = 1f
+            deepLocked = false
+        }
+    }
+
     /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
     private fun toggleExpand() {
         expanded = !expanded
@@ -228,7 +264,9 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
-                    if (!dragged && !longFired) toggleExpand()
+                    if (!dragged && !longFired) {
+                        if (deepLocked) setDeepSLock(false) else toggleExpand()
+                    }
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
@@ -473,6 +511,7 @@ class OverlayService : Service() {
         super.onDestroy()
         reader.stop()
         scope.cancel()
+        dimView?.let { runCatching { wm.removeView(it) } }
         runCatching { wm.removeView(bar) }
     }
 }
