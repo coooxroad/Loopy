@@ -23,9 +23,11 @@ import android.view.Surface
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.loopy.app.R
 import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
@@ -69,7 +71,7 @@ class OverlayService : Service() {
     private var expanded = false
     private var hintView: TextView? = null
     private lateinit var status: TextView
-    private lateinit var recordBtn: Button
+    private lateinit var recordBtn: ImageButton
     private lateinit var stopPlayBtn: TextView
     private var listPanel: LinearLayout? = null
 
@@ -113,12 +115,12 @@ class OverlayService : Service() {
             elevation = dp(6).toFloat()
             visibility = View.GONE
         }
-        recordBtn = slimBtn("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
-        val playBtn = slimBtn("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
-        val listBtn = slimBtn("📁", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
+        recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
+        val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
+        val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
         panel.addView(recordBtn)
-        panel.addView(playBtn, marginLeft(dp(6)))
-        panel.addView(listBtn, marginLeft(dp(6)))
+        panel.addView(playBtn, marginLeft(dp(8)))
+        panel.addView(listBtn, marginLeft(dp(8)))
 
         val hRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -158,14 +160,23 @@ class OverlayService : Service() {
         wm.addView(bar, barParams)
     }
 
-    private fun slimBtn(label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit) =
-        Button(this).apply {
-            text = label; setTextColor(fg); textSize = 12f
-            background = pill(bg, dp(14))
-            minWidth = 0; minHeight = 0
-            setPadding(dp(12), dp(5), dp(12), dp(5))
+    /** 원형 아이콘 버튼 — 아이콘 tint + 옅은 원형 배경으로 airy 하게. */
+    private fun iconBtn(iconRes: Int, tint: Int, bgTint: Int, onClick: () -> Unit) =
+        ImageButton(this).apply {
+            setImageResource(iconRes)
+            setColorFilter(tint)
+            background = circleBg(bgTint)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            val sz = dp(42)
+            layoutParams = LinearLayout.LayoutParams(sz, sz)
+            setPadding(dp(11), dp(11), dp(11), dp(11))
             setOnClickListener { onClick() }
         }
+
+    private fun circleBg(color: Int) = android.graphics.drawable.GradientDrawable().apply {
+        shape = android.graphics.drawable.GradientDrawable.OVAL
+        setColor(color)
+    }
 
     /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
     private fun toggleExpand() {
@@ -255,7 +266,7 @@ class OverlayService : Service() {
         device = dev
         recorder.reset()
         recording = true
-        recordBtn.text = "■ 정지"
+        recordBtn.setImageResource(R.drawable.ic_ov_stop)
         status.text = "● 녹화중 — 평소처럼 플레이해"
         reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
     }
@@ -263,7 +274,7 @@ class OverlayService : Service() {
     private fun stopRecord() {
         reader.stop()
         recording = false
-        recordBtn.text = "● 녹화"
+        recordBtn.setImageResource(R.drawable.ic_ov_record)
         val snap = recorder.snapshot()
         if (snap.isEmpty()) { status.text = "행동 없음 (저장 안 함)"; return }
         val m = MacroStore.saveNew(this, snap)
