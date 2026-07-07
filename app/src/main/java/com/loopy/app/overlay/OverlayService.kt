@@ -99,15 +99,17 @@ class OverlayService : Service() {
         status = TextView(this).apply {
             setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
         }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         recordBtn = pillButton("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
         val playBtn = pillButton("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
-        val listBtn = pillButton("📁", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
-        val mtBtn = pillButton("✌", 0xFFB5E2FA.toInt(), 0xFF2B2D42.toInt()) { mtTest() }
-        row.addView(recordBtn)
-        row.addView(playBtn, marginLeft(dp(8)))
-        row.addView(listBtn, marginLeft(dp(8)))
-        row.addView(mtBtn, marginLeft(dp(8)))
+        row1.addView(recordBtn)
+        row1.addView(playBtn, marginLeft(dp(8)))
+
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val listBtn = pillButton("📁 목록", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
+        val mtBtn = pillButton("✌ MT", 0xFFB5E2FA.toInt(), 0xFF2B2D42.toInt()) { mtTest() }
+        row2.addView(listBtn)
+        row2.addView(mtBtn, marginLeft(dp(8)))
 
         stopPlayBtn = TextView(this).apply {
             text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
@@ -123,7 +125,10 @@ class OverlayService : Service() {
 
         bar.addView(title)
         bar.addView(status)
-        bar.addView(row)
+        bar.addView(row1)
+        bar.addView(row2, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
         bar.addView(stopPlayBtn)
         bar.addView(closeBtn)
 
