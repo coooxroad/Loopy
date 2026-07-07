@@ -50,12 +50,6 @@ object LoopyService {
             .onFailure { binding = false }
     }
 
-    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long): Boolean =
-        runCatching { svc?.playStroke(xs, ys, times, durationMs); svc != null }.getOrDefault(false)
-
-    fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String? =
-        runCatching { svc?.twoFingerTapTest(x1, y1, x2, y2) }.getOrNull()
-
     fun playMulti(
         fingerIds: IntArray, startMs: LongArray, durationsMs: LongArray, sampleCounts: IntArray,
         xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,

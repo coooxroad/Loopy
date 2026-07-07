@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 멀티터치 녹화→동시재생 (재생을 playMulti로 통일, 절대 시각 보존)
+# Loopy: 테스트 코드 정리 (MT 버튼/playStroke/twoFingerTapTest 제거)
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -13,14 +13,7 @@ interface ILoopyService {
     void destroy() = 16777114;
     void exit() = 1;
 
-    // 하나의 스트로크(좌표 타임라인)를 주입. xs/ys = 픽셀 좌표, times = 시작기준 ms.
-    // DOWN(첫 샘플) → 각 샘플 시각에 MOVE → UP(마지막). 탭/홀드/스와이프/조이스틱 통합.
-    void playStroke(in int[] xs, in int[] ys, in long[] times, long durationMs) = 2;
-
-    // MT-0 검증: 두 지점 동시 탭. 각 단계 결과/예외를 문자열로 돌려준다(진단용).
-    String twoFingerTapTest(int x1, int y1, int x2, int y2) = 3;
-
-    // MT-1: 여러 스트로크를 시간축에 병합해 동시 재생(멀티터치).
+    // 여러 스트로크를 시간축에 병합해 동시 재생(멀티터치). 단일 손가락도 포함.
     // 각 스트로크의 샘플을 평탄 배열로 이어붙이고 sampleCounts 로 경계를 나눈다.
     //  fingerIds[s]    = 스트로크 s 의 손가락 id
     //  startMs[s]      = 스트로크 s 의 절대 시작 시각(전체 기준 ms)
@@ -29,7 +22,7 @@ interface ILoopyService {
     //  xsFlat/ysFlat   = 모든 샘플의 픽셀 좌표(순서대로)
     //  timesFlat       = 각 샘플의 "스트로크 시작 기준" ms
     void playMulti(in int[] fingerIds, in long[] startMs, in long[] durationsMs, in int[] sampleCounts,
-                   in int[] xsFlat, in int[] ysFlat, in long[] timesFlat) = 4;
+                   in int[] xsFlat, in int[] ysFlat, in long[] timesFlat) = 2;
 }
 LOOPY_EOF
 
@@ -1113,7 +1106,6 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
@@ -1132,9 +1124,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
  * 매크로/플레이리스트 컨트롤 오버레이.
@@ -1199,13 +1188,7 @@ class OverlayService : Service() {
 
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val listBtn = pillButton("📁 목록", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
-        val mtBtn = pillButton("✌ MT", 0xFFB5E2FA.toInt(), 0xFF2B2D42.toInt()) { mtTest() }
         row2.addView(listBtn)
-        row2.addView(mtBtn, marginLeft(dp(8)))
-
-        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val mt1Btn = pillButton("◎ MT1 (두 원)", 0xFFCDDAFD.toInt(), 0xFF2B2D42.toInt()) { mt1Test() }
-        row3.addView(mt1Btn)
 
         stopPlayBtn = TextView(this).apply {
             text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
@@ -1223,9 +1206,6 @@ class OverlayService : Service() {
         bar.addView(status)
         bar.addView(row1)
         bar.addView(row2, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
-        bar.addView(row3, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
         bar.addView(stopPlayBtn)
@@ -1257,63 +1237,6 @@ class OverlayService : Service() {
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
     // ── MT-0: 두 손가락 동시 탭 테스트 ──
-    private fun mtTest() {
-        Toast.makeText(this, "MT 테스트 시작", Toast.LENGTH_SHORT).show()
-        status.text = "✌ 시작…"
-        scope.launch {
-            val msg = try {
-                val m = DisplayMetrics()
-                displayObj.getRealMetrics(m)
-                val w = m.widthPixels
-                val h = m.heightPixels
-                val res = withContext(Dispatchers.IO) {
-                    LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
-                }
-                if (res == null) "서비스 미연결" else "MT: $res"
-            } catch (t: Throwable) {
-                "MT 예외: ${t.javaClass.simpleName}: ${(t.message ?: "").take(60)}"
-            }
-            status.text = msg
-            Toast.makeText(this@OverlayService, msg, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    // ── MT-1: 두 원을 동시에 그리기 (동시 재생 엔진 검증) ──
-    private fun mt1Test() {
-        Toast.makeText(this, "MT1: 두 원 동시 그리기", Toast.LENGTH_SHORT).show()
-        scope.launch {
-            val msg = try {
-                val m = DisplayMetrics()
-                displayObj.getRealMetrics(m)
-                val w = m.widthPixels
-                val h = m.heightPixels
-                val n = 40
-                val dur = 1600L
-                val r = (w * 0.12).toInt()
-                val cx0 = (w * 0.3).toInt(); val cy0 = h / 2
-                val cx1 = (w * 0.7).toInt(); val cy1 = h / 2
-                val xs = IntArray(n * 2); val ys = IntArray(n * 2); val times = LongArray(n * 2)
-                for (i in 0 until n) {
-                    val ang = 2 * PI * i / n
-                    val t = i.toLong() * dur / n
-                    xs[i] = (cx0 + r * cos(ang)).toInt(); ys[i] = (cy0 + r * sin(ang)).toInt(); times[i] = t
-                    xs[n + i] = (cx1 + r * cos(ang)).toInt(); ys[n + i] = (cy1 + r * sin(ang)).toInt(); times[n + i] = t
-                }
-                val ok = withContext(Dispatchers.IO) {
-                    LoopyService.playMulti(
-                        intArrayOf(0, 1), longArrayOf(0L, 0L), longArrayOf(dur, dur),
-                        intArrayOf(n, n), xs, ys, times,
-                    )
-                }
-                if (ok) "MT1 재생됨 — 십자선 2개가 각각 원을 그려야 함" else "서비스 미연결"
-            } catch (t: Throwable) {
-                "MT1 예외: ${t.javaClass.simpleName}: ${(t.message ?: "").take(50)}"
-            }
-            status.text = msg
-            Toast.makeText(this@OverlayService, msg, Toast.LENGTH_LONG).show()
-        }
-    }
-
     // ── 녹화 ──
     private fun toggleRecord() {
         if (!recording) startRecord() else stopRecord()
@@ -1609,12 +1532,6 @@ object LoopyService {
             .onFailure { binding = false }
     }
 
-    fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long): Boolean =
-        runCatching { svc?.playStroke(xs, ys, times, durationMs); svc != null }.getOrDefault(false)
-
-    fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String? =
-        runCatching { svc?.twoFingerTapTest(x1, y1, x2, y2) }.getOrNull()
-
     fun playMulti(
         fingerIds: IntArray, startMs: LongArray, durationsMs: LongArray, sampleCounts: IntArray,
         xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,
@@ -1636,11 +1553,11 @@ import java.lang.reflect.Method
 import kotlin.system.exitProcess
 
 /**
- * Shizuku UserService 본체. injectInputEvent 로 좌표 타임라인(스트로크)을 재생한다.
+ * Shizuku UserService 본체. injectInputEvent 로 좌표 타임라인(스트로크)들을 재생한다.
  * (scrcpy 방식: InputManagerGlobal → getInstance → injectInputEvent, source=TOUCHSCREEN)
  *
- * playStroke: 첫 샘플에서 DOWN, 각 샘플의 times[i](ms)에 맞춰 MOVE, 마지막에 UP.
- * 사용자가 그린 경로와 시간을 그대로 재현하므로 탭/홀드/스와이프/조이스틱이 모두 됨.
+ * playMulti: 여러 스트로크를 하나의 시간축에 병합해, 매 순간 활성 손가락 전부를 담은
+ * 멀티포인터 MotionEvent 를 주입한다. 단일 손가락(포인터 1개)부터 멀티터치까지 통합 처리.
  */
 class LoopyUserService : ILoopyService.Stub() {
 
@@ -1663,14 +1580,6 @@ class LoopyUserService : ILoopyService.Stub() {
         injectMethod.invoke(instance, ev, 0) // 0 = ASYNC
     }
 
-    private fun send(downTime: Long, action: Int, x: Int, y: Int) {
-        val ev = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x.toFloat(), y.toFloat(), 0)
-        ev.source = InputDevice.SOURCE_TOUCHSCREEN
-        inject(ev)
-        ev.recycle()
-    }
-
-    // ── 멀티포인터 주입 (MT-0) ──
     private fun props(id: Int) = MotionEvent.PointerProperties().apply {
         this.id = id
         toolType = MotionEvent.TOOL_TYPE_FINGER
@@ -1680,70 +1589,7 @@ class LoopyUserService : ILoopyService.Stub() {
         this.x = x.toFloat(); this.y = y.toFloat(); pressure = 1f; size = 1f
     }
 
-    /** 여러 포인터를 담은 MotionEvent 하나를 주입. ids/xs/ys 는 같은 길이. */
-    private fun injectMulti(downTime: Long, action: Int, ids: IntArray, xs: IntArray, ys: IntArray) {
-        val n = ids.size
-        val pp = Array(n) { props(ids[it]) }
-        val pc = Array(n) { coords(xs[it], ys[it]) }
-        val ev = MotionEvent.obtain(
-            downTime, SystemClock.uptimeMillis(), action, n, pp, pc,
-            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
-        )
-        inject(ev)
-        ev.recycle()
-    }
-
-    override fun twoFingerTapTest(x1: Int, y1: Int, x2: Int, y2: Int): String {
-        val sb = StringBuilder()
-        try {
-            val dt = SystemClock.uptimeMillis()
-            val idxShift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
-            injectMulti(dt, MotionEvent.ACTION_DOWN, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
-            sb.append("D0ok ")
-            Thread.sleep(8)
-            injectMulti(
-                dt, MotionEvent.ACTION_POINTER_DOWN or (1 shl idxShift),
-                intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
-            )
-            sb.append("D1ok ")
-            Thread.sleep(120)
-            injectMulti(
-                dt, MotionEvent.ACTION_POINTER_UP or (1 shl idxShift),
-                intArrayOf(0, 1), intArrayOf(x1, x2), intArrayOf(y1, y2),
-            )
-            sb.append("U1ok ")
-            Thread.sleep(8)
-            injectMulti(dt, MotionEvent.ACTION_UP, intArrayOf(0), intArrayOf(x1), intArrayOf(y1))
-            sb.append("U0ok")
-        } catch (t: Throwable) {
-            val cause = t.cause ?: t
-            sb.append("ERR:").append(cause.javaClass.simpleName)
-                .append(":").append((cause.message ?: "").take(70))
-        }
-        return sb.toString()
-    }
-
-    override fun playStroke(xs: IntArray, ys: IntArray, times: LongArray, durationMs: Long) {
-        runCatching {
-            val n = xs.size
-            if (n == 0) return
-            val downTime = SystemClock.uptimeMillis()
-            send(downTime, MotionEvent.ACTION_DOWN, xs[0], ys[0])
-            for (i in 1 until n) {
-                val wait = (downTime + times[i]) - SystemClock.uptimeMillis()
-                if (wait > 0) Thread.sleep(wait)
-                send(downTime, MotionEvent.ACTION_MOVE, xs[i], ys[i])
-            }
-            // 마지막 샘플 후, down→up 총 지속시간(durationMs)이 될 때까지 유지(홀드 재현).
-            // 최소 20ms 는 보장(순간탭 인식 실패 방지).
-            val upTarget = downTime + durationMs.coerceAtLeast(20L)
-            val remain = upTarget - SystemClock.uptimeMillis()
-            if (remain > 0) Thread.sleep(remain)
-            send(downTime, MotionEvent.ACTION_UP, xs[n - 1], ys[n - 1])
-        }
-    }
-
-    /** 현재 활성 포인터 전부를 담은 MotionEvent 하나 주입. action 은 인덱스 포함. */
+    /** 현재 활성 포인터 전부를 담은 MotionEvent 하나 주입. action 은 포인터 인덱스 포함. */
     private fun injectPointers(
         downTime: Long, action: Int, order: List<Int>,
         posX: Map<Int, Int>, posY: Map<Int, Int>,
@@ -1779,7 +1625,7 @@ class LoopyUserService : ILoopyService.Stub() {
                     events.add(MEv(t, kind, f, xsFlat[off + i], ysFlat[off + i]))
                 }
                 if (cnt > 0) {
-                    // UP 시각 = 시작 + 총 지속시간(홀드 유지 재현). 마지막 샘플 시각보다 이르지 않게.
+                    // UP 시각 = 시작 + 총 지속시간(홀드 유지). 마지막 샘플 시각보다 이르지 않게.
                     val lastT = timesFlat[off + cnt - 1]
                     val upT = startMs[s] + maxOf(durationsMs[s], lastT)
                     events.add(MEv(upT, 2, f, xsFlat[off + cnt - 1], ysFlat[off + cnt - 1]))
@@ -1787,7 +1633,7 @@ class LoopyUserService : ILoopyService.Stub() {
                 off += cnt
             }
             if (events.isEmpty()) return
-            events.sortWith(compareBy({ it.time }, { it.kind }))
+            events.sortWith(compareBy({ it.time }, { it.kind })) // 동시각: DOWN→MOVE→UP
 
             val order = ArrayList<Int>()
             val posX = HashMap<Int, Int>()
@@ -2114,7 +1960,7 @@ LOOPY_EOF
 
 echo "전체 소스 17개 동기화."
 git add -A
-git commit -m "멀티터치 녹화→동시재생: 재생 playMulti 통일 + Stroke 절대시각(startMs)"
+git commit -m "정리: 테스트 코드 제거(MT 버튼/playStroke/twoFingerTapTest), 재생은 playMulti로 통일"
 git push
 echo "푸시 완료!"
 
