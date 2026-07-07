@@ -135,7 +135,7 @@ class LoopyUserService : ILoopyService.Stub() {
     private class MEv(val time: Long, val kind: Int, val finger: Int, val x: Int, val y: Int)
 
     override fun playMulti(
-        fingerIds: IntArray, startMs: LongArray, sampleCounts: IntArray,
+        fingerIds: IntArray, startMs: LongArray, durationsMs: LongArray, sampleCounts: IntArray,
         xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,
     ) {
         runCatching {
@@ -151,13 +151,14 @@ class LoopyUserService : ILoopyService.Stub() {
                     events.add(MEv(t, kind, f, xsFlat[off + i], ysFlat[off + i]))
                 }
                 if (cnt > 0) {
-                    val lastT = startMs[s] + timesFlat[off + cnt - 1]
-                    events.add(MEv(lastT, 2, f, xsFlat[off + cnt - 1], ysFlat[off + cnt - 1])) // UP
+                    // UP 시각 = 시작 + 총 지속시간(홀드 유지 재현). 마지막 샘플 시각보다 이르지 않게.
+                    val lastT = timesFlat[off + cnt - 1]
+                    val upT = startMs[s] + maxOf(durationsMs[s], lastT)
+                    events.add(MEv(upT, 2, f, xsFlat[off + cnt - 1], ysFlat[off + cnt - 1]))
                 }
                 off += cnt
             }
             if (events.isEmpty()) return
-            // 시각순 정렬. 같은 시각이면 DOWN(0) → MOVE(1) → UP(2) 순.
             events.sortWith(compareBy({ it.time }, { it.kind }))
 
             val order = ArrayList<Int>()

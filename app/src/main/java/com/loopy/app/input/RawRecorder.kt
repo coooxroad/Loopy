@@ -59,12 +59,17 @@ class RawRecorder {
     /** 시작 시각 순 정렬 + 스트로크 사이 대기 계산. */
     fun snapshot(): List<Stroke> {
         val sorted = synchronized(done) { done.toList() }.sortedBy { it.startT }
+        if (sorted.isEmpty()) return emptyList()
+        val base = sorted.first().startT // 제일 이른 스트로크를 0 기준으로
         val out = ArrayList<Stroke>(sorted.size)
-        var prevEnd = 0L
-        for ((i, d) in sorted.withIndex()) {
-            val delay = if (i == 0) 0L else (d.startT - prevEnd).coerceAtLeast(0L)
-            out.add(Stroke(delay, (d.endT - d.startT).coerceAtLeast(0L), d.samples))
-            prevEnd = d.endT
+        for (d in sorted) {
+            out.add(
+                Stroke(
+                    startMs = (d.startT - base).coerceAtLeast(0L),
+                    durationMs = (d.endT - d.startT).coerceAtLeast(0L),
+                    samples = d.samples,
+                )
+            )
         }
         return out
     }

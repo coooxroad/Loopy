@@ -42,7 +42,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -212,7 +211,8 @@ class OverlayService : Service() {
                 }
                 val ok = withContext(Dispatchers.IO) {
                     LoopyService.playMulti(
-                        intArrayOf(0, 1), longArrayOf(0L, 0L), intArrayOf(n, n), xs, ys, times,
+                        intArrayOf(0, 1), longArrayOf(0L, 0L), longArrayOf(dur, dur),
+                        intArrayOf(n, n), xs, ys, times,
                     )
                 }
                 if (ok) "MT1 재생됨 — 십자선 2개가 각각 원을 그려야 함" else "서비스 미연결"
@@ -307,23 +307,51 @@ class OverlayService : Service() {
     }
 
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
+    /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
     private suspend fun runStrokes(strokes: List<Stroke>) {
-        for (s in strokes) {
-            if (!coroutineContext.isActive) return
-            delay(s.delayMs)
-            val m = DisplayMetrics()
-            displayObj.getRealMetrics(m)
-            val w = m.widthPixels
-            val h = m.heightPixels
-            val rot = displayObj.rotation
-            val n = s.samples.size
-            if (n == 0) continue
-            val xs = IntArray(n); val ys = IntArray(n); val times = LongArray(n)
-            for (i in 0 until n) {
-                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
-                xs[i] = px; ys[i] = py; times[i] = s.samples[i].t
+        if (strokes.isEmpty()) return
+        val m = DisplayMetrics()
+        displayObj.getRealMetrics(m)
+        val w = m.widthPixels
+        val h = m.heightPixels
+        val rot = displayObj.rotation
+
+        val nStroke = strokes.size
+        // 손가락 id 배정: 겹치지 않는 스트로크끼리는 같은 id 재사용(활성 포인터 수 최소화).
+        val fingerIds = IntArray(nStroke)
+        val idFreeAt = ArrayList<Long>()
+        for (k in strokes.indices) {
+            val s = strokes[k]
+            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
+            var assigned = -1
+            for (id in idFreeAt.indices) {
+                if (idFreeAt[id] <= s.startMs) { assigned = id; break }
             }
-            withContext(Dispatchers.IO) { LoopyService.playStroke(xs, ys, times, s.durationMs) }
+            if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
+            fingerIds[k] = assigned
+        }
+
+        val totalSamples = strokes.sumOf { it.samples.size }
+        val startArr = LongArray(nStroke)
+        val durArr = LongArray(nStroke)
+        val counts = IntArray(nStroke)
+        val xs = IntArray(totalSamples)
+        val ys = IntArray(totalSamples)
+        val times = LongArray(totalSamples)
+        var off = 0
+        for (k in strokes.indices) {
+            val s = strokes[k]
+            startArr[k] = s.startMs
+            durArr[k] = s.durationMs
+            counts[k] = s.samples.size
+            for (i in s.samples.indices) {
+                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
+                xs[off] = px; ys[off] = py; times[off] = s.samples[i].t
+                off++
+            }
+        }
+        withContext(Dispatchers.IO) {
+            LoopyService.playMulti(fingerIds, startArr, durArr, counts, xs, ys, times)
         }
     }
 

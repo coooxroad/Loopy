@@ -57,9 +57,9 @@ object LoopyService {
         runCatching { svc?.twoFingerTapTest(x1, y1, x2, y2) }.getOrNull()
 
     fun playMulti(
-        fingerIds: IntArray, startMs: LongArray, sampleCounts: IntArray,
+        fingerIds: IntArray, startMs: LongArray, durationsMs: LongArray, sampleCounts: IntArray,
         xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,
     ): Boolean = runCatching {
-        svc?.playMulti(fingerIds, startMs, sampleCounts, xsFlat, ysFlat, timesFlat); svc != null
+        svc?.playMulti(fingerIds, startMs, durationsMs, sampleCounts, xsFlat, ysFlat, timesFlat); svc != null
     }.getOrDefault(false)
 }

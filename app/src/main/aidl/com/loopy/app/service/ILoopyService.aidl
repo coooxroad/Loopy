@@ -16,9 +16,10 @@ interface ILoopyService {
     // 각 스트로크의 샘플을 평탄 배열로 이어붙이고 sampleCounts 로 경계를 나눈다.
     //  fingerIds[s]    = 스트로크 s 의 손가락 id
     //  startMs[s]      = 스트로크 s 의 절대 시작 시각(전체 기준 ms)
+    //  durationsMs[s]  = 스트로크 s 의 down→up 총 지속시간(홀드 유지 재현)
     //  sampleCounts[s] = 스트로크 s 의 샘플 수
     //  xsFlat/ysFlat   = 모든 샘플의 픽셀 좌표(순서대로)
     //  timesFlat       = 각 샘플의 "스트로크 시작 기준" ms
-    void playMulti(in int[] fingerIds, in long[] startMs, in int[] sampleCounts,
+    void playMulti(in int[] fingerIds, in long[] startMs, in long[] durationsMs, in int[] sampleCounts,
                    in int[] xsFlat, in int[] ysFlat, in long[] timesFlat) = 4;
 }
