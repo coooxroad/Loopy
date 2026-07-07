@@ -58,10 +58,12 @@ import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.CardStroke
-import com.loopy.app.ui.theme.GlassCard
+import com.loopy.app.ui.theme.GradientTitle
+import com.loopy.app.ui.theme.LineIcon
+import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.LoopyTheme
-import com.loopy.app.ui.theme.MeshGradientBackground
+import com.loopy.app.ui.theme.LoopyWhite
 import com.loopy.app.ui.theme.MeshLavender
 import com.loopy.app.ui.theme.MeshMint
 import com.loopy.app.ui.theme.MeshPeach
@@ -183,7 +185,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     NavigationBarItem(
                         selected = tab == t,
                         onClick = { tab = t },
-                        icon = { Text(t.icon, fontSize = 18.sp) },
+                        icon = { LineIcon(kind = t.name.lowercase(), color = if (tab == t) Accent else TextLo) },
                         label = { Text(t.label, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Accent, selectedTextColor = Accent,
@@ -195,8 +197,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            MeshGradientBackground(animate = true)
+        Box(Modifier.fillMaxSize().background(LoopyWhite).padding(padding)) {
 
             when (tab) {
                 Tab.HOME -> HomeTab(
@@ -311,10 +312,10 @@ private fun HomeTab(
     var overlayOn by remember { mutableStateOf(false) }
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
-        Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+        GradientTitle("Loopy", size = 34)
         Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(msg, color = TextLo, fontSize = 12.sp)
@@ -334,7 +335,7 @@ private fun HomeTab(
             }
         }
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
             if (recentPlaylist == null && recentMacro == null) {
@@ -367,16 +368,16 @@ private fun PlaylistTab(
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("플레이리스트", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            GradientTitle("플레이리스트", size = 28, modifier = Modifier.weight(1f))
             Text("+ 새로 만들기", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onNew() })
         }
         if (playlists.isEmpty()) {
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("매크로를 2개 이상 저장한 뒤 플레이리스트를 만들어봐.", color = TextLo, fontSize = 13.sp)
             }
         } else {
             playlists.forEach { pl ->
-                GlassCard(Modifier.fillMaxWidth()) {
+                SoftCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(pl.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -406,16 +407,16 @@ private fun LibraryTab(
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("라이브러리", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
             Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
         }
         if (macros.isEmpty()) {
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 13.sp)
             }
         } else {
             macros.forEach { m ->
-                GlassCard(Modifier.fillMaxWidth()) {
+                SoftCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -443,9 +444,9 @@ private fun SettingsTab(
 ) {
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
-        Text("설정", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        GradientTitle("설정", size = 28)
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -465,7 +466,7 @@ private fun SettingsTab(
             }
         }
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -495,16 +496,15 @@ private fun PlaylistEditor(
     onCancel: () -> Unit,
 ) {
     fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = false)
+    Box(Modifier.fillMaxSize().background(LoopyWhite)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Spacer(Modifier.height(24.dp))
-            Text("플레이리스트 편집", color = TextHi, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            GradientTitle("플레이리스트 편집", size = 26)
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("이름", color = TextLo, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -525,7 +525,7 @@ private fun PlaylistEditor(
                     placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
             }
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(2.dp))
                 Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
@@ -548,7 +548,7 @@ private fun PlaylistEditor(
                 }
             }
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 if (macros.isEmpty()) {
                     Spacer(Modifier.height(6.dp))

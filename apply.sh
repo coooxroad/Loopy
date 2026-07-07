@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 테스트 코드 정리 (MT 버튼/playStroke/twoFingerTapTest 제거)
+# Loopy: UI 리디자인(순백+그라데이션+라인아이콘) + 오버레이 접이식 FAB
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -88,10 +88,12 @@ import com.loopy.app.shizuku.ShizukuManager
 import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.CardStroke
-import com.loopy.app.ui.theme.GlassCard
+import com.loopy.app.ui.theme.GradientTitle
+import com.loopy.app.ui.theme.LineIcon
+import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.LoopyTheme
-import com.loopy.app.ui.theme.MeshGradientBackground
+import com.loopy.app.ui.theme.LoopyWhite
 import com.loopy.app.ui.theme.MeshLavender
 import com.loopy.app.ui.theme.MeshMint
 import com.loopy.app.ui.theme.MeshPeach
@@ -213,7 +215,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     NavigationBarItem(
                         selected = tab == t,
                         onClick = { tab = t },
-                        icon = { Text(t.icon, fontSize = 18.sp) },
+                        icon = { LineIcon(kind = t.name.lowercase(), color = if (tab == t) Accent else TextLo) },
                         label = { Text(t.label, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Accent, selectedTextColor = Accent,
@@ -225,8 +227,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            MeshGradientBackground(animate = true)
+        Box(Modifier.fillMaxSize().background(LoopyWhite).padding(padding)) {
 
             when (tab) {
                 Tab.HOME -> HomeTab(
@@ -341,10 +342,10 @@ private fun HomeTab(
     var overlayOn by remember { mutableStateOf(false) }
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
-        Text("Loopy", color = TextHi, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+        GradientTitle("Loopy", size = 34)
         Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(msg, color = TextLo, fontSize = 12.sp)
@@ -364,7 +365,7 @@ private fun HomeTab(
             }
         }
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
             if (recentPlaylist == null && recentMacro == null) {
@@ -397,16 +398,16 @@ private fun PlaylistTab(
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("플레이리스트", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            GradientTitle("플레이리스트", size = 28, modifier = Modifier.weight(1f))
             Text("+ 새로 만들기", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onNew() })
         }
         if (playlists.isEmpty()) {
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("매크로를 2개 이상 저장한 뒤 플레이리스트를 만들어봐.", color = TextLo, fontSize = 13.sp)
             }
         } else {
             playlists.forEach { pl ->
-                GlassCard(Modifier.fillMaxWidth()) {
+                SoftCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(pl.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -436,16 +437,16 @@ private fun LibraryTab(
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("라이브러리", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
             Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
         }
         if (macros.isEmpty()) {
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 13.sp)
             }
         } else {
             macros.forEach { m ->
-                GlassCard(Modifier.fillMaxWidth()) {
+                SoftCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -473,9 +474,9 @@ private fun SettingsTab(
 ) {
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
-        Text("설정", color = TextHi, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        GradientTitle("설정", size = 28)
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -495,7 +496,7 @@ private fun SettingsTab(
             }
         }
 
-        GlassCard(Modifier.fillMaxWidth()) {
+        SoftCard(Modifier.fillMaxWidth()) {
             Text("오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
             Text(
@@ -525,16 +526,15 @@ private fun PlaylistEditor(
     onCancel: () -> Unit,
 ) {
     fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize()) {
-        MeshGradientBackground(animate = false)
+    Box(Modifier.fillMaxSize().background(LoopyWhite)) {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Spacer(Modifier.height(24.dp))
-            Text("플레이리스트 편집", color = TextHi, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            GradientTitle("플레이리스트 편집", size = 26)
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("이름", color = TextLo, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
                 OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -555,7 +555,7 @@ private fun PlaylistEditor(
                     placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
             }
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(2.dp))
                 Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
@@ -578,7 +578,7 @@ private fun PlaylistEditor(
                 }
             }
 
-            GlassCard(Modifier.fillMaxWidth()) {
+            SoftCard(Modifier.fillMaxWidth()) {
                 Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 if (macros.isEmpty()) {
                     Spacer(Modifier.height(6.dp))
@@ -1079,6 +1079,63 @@ data class TouchSample(val t: Long, val nx: Float, val ny: Float)
 data class Stroke(val startMs: Long, val durationMs: Long, val samples: List<TouchSample>)
 LOOPY_EOF
 
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/overlay/FabLogoView.kt")"
+cat > "app/src/main/java/com/loopy/app/overlay/FabLogoView.kt" << 'LOOPY_EOF'
+package com.loopy.app.overlay
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Shader
+import android.view.View
+
+/**
+ * 접힌 상태의 오버레이 FAB. 페리윙클→민트 그라데이션 원 + 흰색 순환(loop) 글리프.
+ * 순수 Canvas 로 그려서 별도 리소스 없이 선명하다.
+ */
+class FabLogoView(context: Context) : View(context) {
+
+    private val circlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val loopPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = 0xFFFFFFFF.toInt()
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val arrow = Path()
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        circlePaint.shader = LinearGradient(
+            0f, 0f, w.toFloat(), h.toFloat(),
+            0xFF6C7BFF.toInt(), 0xFF5FD0E8.toInt(), Shader.TileMode.CLAMP,
+        )
+        loopPaint.strokeWidth = w * 0.07f
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val w = width.toFloat()
+        val cx = w / 2f
+        val cy = height / 2f
+        canvas.drawCircle(cx, cy, w / 2f, circlePaint)
+
+        val r = w * 0.24f
+        val oval = RectF(cx - r, cy - r, cx + r, cy + r)
+        canvas.drawArc(oval, -35f, 295f, false, loopPaint)
+
+        // 화살촉 (호 시작점 근처)
+        arrow.reset()
+        arrow.moveTo(cx + r * 0.5f, cy - r * 1.15f)
+        arrow.lineTo(cx + r * 1.15f, cy - r * 0.55f)
+        arrow.lineTo(cx + r * 0.35f, cy - r * 0.35f)
+        canvas.drawPath(arrow, loopPaint)
+    }
+}
+LOOPY_EOF
+
 mkdir -p "$(dirname "app/src/main/java/com/loopy/app/overlay/OverlayService.kt")"
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
 package com.loopy.app.overlay
@@ -1094,7 +1151,9 @@ import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Display
@@ -1102,6 +1161,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -1124,6 +1184,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 
 /**
  * 매크로/플레이리스트 컨트롤 오버레이.
@@ -1143,6 +1204,9 @@ class OverlayService : Service() {
 
     private lateinit var bar: LinearLayout
     private lateinit var barParams: WindowManager.LayoutParams
+    private lateinit var fab: FabLogoView
+    private lateinit var panel: LinearLayout
+    private var expanded = false
     private lateinit var status: TextView
     private lateinit var recordBtn: Button
     private lateinit var stopPlayBtn: TextView
@@ -1160,22 +1224,32 @@ class OverlayService : Service() {
         LoopyService.bind(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         recorder.shouldIgnore = { u, v -> barContains(u, v) }
-        addControlBar()
+        buildOverlay()
     }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun addControlBar() {
+    private fun buildOverlay() {
+        // 루트: FAB + (펼침) 패널을 세로로. 배경 투명.
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = pill(0xF2FFFFFF.toInt(), dp(18))
-            elevation = dp(6).toFloat()
+            gravity = Gravity.START
         }
-        val title = TextView(this).apply {
-            text = "Loopy"; setTextColor(0xFF2B2D42.toInt()); textSize = 15f
+
+        // 접힌 상태의 동그란 FAB
+        val fabSize = dp(54)
+        fab = FabLogoView(this)
+        fab.elevation = dp(6).toFloat()
+
+        // 펼침 패널 (흰 카드)
+        panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(12))
+            background = pill(0xFFFFFFFF.toInt(), dp(20))
+            elevation = dp(8).toFloat()
+            visibility = View.GONE
         }
         status = TextView(this).apply {
             setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
@@ -1196,24 +1270,87 @@ class OverlayService : Service() {
             visibility = View.GONE
             setOnClickListener { stopPlayback("정지됨") }
         }
-        val closeBtn = TextView(this).apply {
-            text = "닫기"; setTextColor(0xFF8A8DA0.toInt()); textSize = 11f
-            setPadding(0, dp(6), 0, 0)
-            setOnClickListener { stopSelf() }
+        val hintTv = TextView(this).apply {
+            text = "FAB 탭: 접기 · 길게 눌러 종료"
+            setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
+            setPadding(0, dp(8), 0, 0)
         }
 
-        bar.addView(title)
-        bar.addView(status)
-        bar.addView(row1)
-        bar.addView(row2, LinearLayout.LayoutParams(
+        panel.addView(status)
+        panel.addView(row1, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(10) })
+        panel.addView(row2, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
-        bar.addView(stopPlayBtn)
-        bar.addView(closeBtn)
+        panel.addView(stopPlayBtn)
+        panel.addView(hintTv)
 
-        barParams = baseParams().apply { x = dp(12); y = dp(60) }
-        makeDraggable(title)
+        bar.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
+        bar.addView(panel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
+
+        barParams = baseParams().apply { x = dp(12); y = dp(80) }
+        setupFabTouch()
         wm.addView(bar, barParams)
+    }
+
+    /** 접기/펼치기. */
+    private fun toggleExpand() {
+        expanded = !expanded
+        panel.visibility = if (expanded) View.VISIBLE else View.GONE
+        if (!expanded) { // 접으면 목록도 닫기
+            listPanel?.let { panel.removeView(it); listPanel = null }
+        }
+    }
+
+    /** FAB: 탭=접기/펼치기, 드래그=이동, 길게=종료. */
+    private fun setupFabTouch() {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        val handler = Handler(Looper.getMainLooper())
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        var dragged = false
+        var longFired = false
+        val longPress = Runnable { longFired = true; stopSelf() }
+
+        fab.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = e.rawX; downRawY = e.rawY
+                    startX = barParams.x; startY = barParams.y
+                    dragged = false; longFired = false
+                    handler.postDelayed(longPress, 600)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downRawX
+                    val dy = e.rawY - downRawY
+                    if (!dragged && hypot(dx, dy) > slop) {
+                        dragged = true
+                        handler.removeCallbacks(longPress)
+                    }
+                    if (dragged) {
+                        barParams.x = startX + dx.toInt()
+                        barParams.y = startY + dy.toInt()
+                        runCatching { wm.updateViewLayout(bar, barParams) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(longPress)
+                    if (!dragged && !longFired) toggleExpand()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress); true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun pillButton(label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit) =
@@ -1236,7 +1373,6 @@ class OverlayService : Service() {
             android.graphics.PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
-    // ── MT-0: 두 손가락 동시 탭 테스트 ──
     // ── 녹화 ──
     private fun toggleRecord() {
         if (!recording) startRecord() else stopRecord()
@@ -1370,34 +1506,34 @@ class OverlayService : Service() {
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
-        listPanel?.let { bar.removeView(it); listPanel = null; return }
+        listPanel?.let { panel.removeView(it); listPanel = null; return }
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
-        val panel = LinearLayout(this).apply {
+        val lp = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0)
         }
         if (playlists.isEmpty() && macros.isEmpty()) {
-            panel.addView(hint("저장된 게 없어"))
+            lp.addView(hint("저장된 게 없어"))
         } else {
             if (playlists.isNotEmpty()) {
-                panel.addView(hint("─ 플레이리스트 ─"))
+                lp.addView(hint("─ 플레이리스트 ─"))
                 for (pl in playlists) {
-                    panel.addView(listRow("▶▶ ${pl.name} (${pl.macroIds.size})", 0xFF6C7BFF.toInt()) {
+                    lp.addView(listRow("▶▶ ${pl.name} (${pl.macroIds.size})", 0xFF6C7BFF.toInt()) {
                         toggleList(); playPlaylist(pl)
                     })
                 }
             }
             if (macros.isNotEmpty()) {
-                panel.addView(hint("─ 매크로 ─"))
+                lp.addView(hint("─ 매크로 ─"))
                 for (mac in macros) {
-                    panel.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
+                    lp.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
                         toggleList(); startSingle(mac.strokes, mac.name)
                     })
                 }
             }
         }
-        bar.addView(panel)
-        listPanel = panel
+        panel.addView(lp)
+        listPanel = lp
     }
 
     private fun hint(t: String) = TextView(this).apply {
@@ -1427,22 +1563,6 @@ class OverlayService : Service() {
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
     }
 
-    private fun makeDraggable(handle: View) {
-        var startX = 0; var startY = 0; var touchX = 0f; var touchY = 0f
-        handle.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = barParams.x; startY = barParams.y; touchX = e.rawX; touchY = e.rawY; true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    barParams.x = startX + (e.rawX - touchX).toInt()
-                    barParams.y = startY + (e.rawY - touchY).toInt()
-                    runCatching { wm.updateViewLayout(bar, barParams) }; true
-                }
-                else -> false
-            }
-        }
-    }
 
     private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
         setColor(color); cornerRadius = radius.toFloat()
@@ -1938,6 +2058,12 @@ val MeshMint = Color(0xFFB5E2FA)     // 민트 브리즈 (재생/루프)
 
 val CardStroke = Color(0x142B2D42)   // 차콜 8% 테두리
 
+// 순백 베이스 (리디자인) + 헤더 타이틀 그라데이션(페리윙클→민트)
+val LoopyWhite = Color(0xFFFFFFFF)
+val LoopySubtle = Color(0xFFF6F7FB)  // 카드 미묘한 광채용
+val GradA = Color(0xFF6C7BFF)        // 페리윙클
+val GradB = Color(0xFF5FD0E8)        // 민트(살짝 채도↑ 시원하게)
+
 private val LoopyColors = lightColorScheme(
     primary = Accent,
     secondary = MeshMint,
@@ -1958,9 +2084,176 @@ fun LoopyTheme(content: @Composable () -> Unit) {
 }
 LOOPY_EOF
 
-echo "전체 소스 17개 동기화."
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/ui/theme/Ui.kt")"
+cat > "app/src/main/java/com/loopy/app/ui/theme/Ui.kt" << 'LOOPY_EOF'
+package com.loopy.app.ui.theme
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/** 헤더 타이틀용 그라데이션(페리윙클→민트). */
+val TitleBrush = Brush.linearGradient(listOf(GradA, GradB))
+
+/** 그라데이션 텍스트 타이틀. */
+@Composable
+fun GradientTitle(text: String, size: Int = 30, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        modifier = modifier,
+        style = TextStyle(brush = TitleBrush, fontSize = size.sp, fontWeight = FontWeight.Bold),
+    )
+}
+
+/**
+ * 아주 얇은 라인 아이콘(직접 path). kind: home / playlist / library / settings / loop.
+ */
+@Composable
+fun LineIcon(kind: String, color: Color, size: Dp = 24.dp, strokeWidth: Float = 2f) {
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        fun p(x: Float, y: Float) = Offset(x / 24f * s, y / 24f * s)
+        val stroke = Stroke(
+            width = strokeWidth / 24f * s,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round,
+        )
+        when (kind) {
+            "home" -> {
+                val roof = Path().apply {
+                    moveTo(p(3f, 11f).x, p(3f, 11f).y)
+                    lineTo(p(12f, 3.5f).x, p(12f, 3.5f).y)
+                    lineTo(p(21f, 11f).x, p(21f, 11f).y)
+                }
+                drawPath(roof, color, style = stroke)
+                val body = Path().apply {
+                    moveTo(p(5.5f, 9.5f).x, p(5.5f, 9.5f).y)
+                    lineTo(p(5.5f, 20f).x, p(5.5f, 20f).y)
+                    lineTo(p(18.5f, 20f).x, p(18.5f, 20f).y)
+                    lineTo(p(18.5f, 9.5f).x, p(18.5f, 9.5f).y)
+                }
+                drawPath(body, color, style = stroke)
+                // 문
+                val door = Path().apply {
+                    moveTo(p(10f, 20f).x, p(10f, 20f).y)
+                    lineTo(p(10f, 14f).x, p(10f, 14f).y)
+                    lineTo(p(14f, 14f).x, p(14f, 14f).y)
+                    lineTo(p(14f, 20f).x, p(14f, 20f).y)
+                }
+                drawPath(door, color, style = stroke)
+            }
+            "playlist" -> {
+                // 재생 목록: 세 줄 + 음표
+                drawLine(color, p(4f, 7f), p(15f, 7f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 12f), p(15f, 12f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 17f), p(11f, 17f), stroke.width, StrokeCap.Round)
+                // 음표 stem + head
+                drawLine(color, p(19f, 6f), p(19f, 16f), stroke.width, StrokeCap.Round)
+                drawCircle(color, radius = p(2.2f, 0f).x - p(0f, 0f).x, center = p(17f, 16.5f), style = stroke)
+            }
+            "library" -> {
+                // 폴더
+                val folder = Path().apply {
+                    moveTo(p(3.5f, 7f).x, p(3.5f, 7f).y)
+                    lineTo(p(9f, 7f).x, p(9f, 7f).y)
+                    lineTo(p(11f, 9f).x, p(11f, 9f).y)
+                    lineTo(p(20.5f, 9f).x, p(20.5f, 9f).y)
+                    lineTo(p(20.5f, 18.5f).x, p(20.5f, 18.5f).y)
+                    lineTo(p(3.5f, 18.5f).x, p(3.5f, 18.5f).y)
+                    close()
+                }
+                drawPath(folder, color, style = stroke)
+            }
+            "settings" -> {
+                // 슬라이더 3줄 + 노브
+                drawLine(color, p(4f, 7f), p(20f, 7f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 12f), p(20f, 12f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 17f), p(20f, 17f), stroke.width, StrokeCap.Round)
+                val r = p(2.6f, 0f).x - p(0f, 0f).x
+                drawCircle(LoopyWhite, r, p(15f, 7f))
+                drawCircle(color, r, p(15f, 7f), style = stroke)
+                drawCircle(LoopyWhite, r, p(9f, 12f))
+                drawCircle(color, r, p(9f, 12f), style = stroke)
+                drawCircle(LoopyWhite, r, p(16f, 17f))
+                drawCircle(color, r, p(16f, 17f), style = stroke)
+            }
+            "loop" -> {
+                // 순환 화살표(로고)
+                val arc = Path().apply {
+                    addArc(
+                        androidx.compose.ui.geometry.Rect(p(5f, 5f), p(19f, 19f)),
+                        -40f, 300f,
+                    )
+                }
+                drawPath(arc, color, style = stroke)
+                // 화살촉
+                val head = Path().apply {
+                    moveTo(p(15.5f, 4.5f).x, p(15.5f, 4.5f).y)
+                    lineTo(p(18.5f, 7f).x, p(18.5f, 7f).y)
+                    lineTo(p(15f, 8.5f).x, p(15f, 8.5f).y)
+                }
+                drawPath(head, color, style = stroke)
+            }
+        }
+    }
+}
+
+/**
+ * 순백 리디자인 카드 — 미묘한 상단 광채(subtle glow) + 얇은 테두리.
+ */
+@Composable
+fun SoftCard(
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 22.dp,
+    padding: Dp = 18.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(cornerRadius)
+    Surface(
+        modifier = modifier,
+        shape = shape,
+        color = LoopyWhite,
+        shadowElevation = 3.dp,
+        tonalElevation = 0.dp,
+        border = androidx.compose.foundation.BorderStroke(1.dp, CardStroke),
+    ) {
+        Column(
+            Modifier
+                .background(
+                    Brush.verticalGradient(
+                        0f to LoopySubtle, 0.35f to LoopyWhite,
+                    )
+                )
+                .padding(padding),
+            content = content,
+        )
+    }
+}
+LOOPY_EOF
+
+echo "전체 소스 19개 동기화."
 git add -A
-git commit -m "정리: 테스트 코드 제거(MT 버튼/playStroke/twoFingerTapTest), 재생은 playMulti로 통일"
+git commit -m "UI 리디자인: 순백+그라데이션 타이틀+라인아이콘, 오버레이 접이식 FAB"
 git push
 echo "푸시 완료!"
 

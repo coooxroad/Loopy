@@ -11,7 +11,9 @@ import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Display
@@ -19,6 +21,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -41,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 
 /**
  * 매크로/플레이리스트 컨트롤 오버레이.
@@ -60,6 +64,9 @@ class OverlayService : Service() {
 
     private lateinit var bar: LinearLayout
     private lateinit var barParams: WindowManager.LayoutParams
+    private lateinit var fab: FabLogoView
+    private lateinit var panel: LinearLayout
+    private var expanded = false
     private lateinit var status: TextView
     private lateinit var recordBtn: Button
     private lateinit var stopPlayBtn: TextView
@@ -77,22 +84,32 @@ class OverlayService : Service() {
         LoopyService.bind(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         recorder.shouldIgnore = { u, v -> barContains(u, v) }
-        addControlBar()
+        buildOverlay()
     }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
     ).toInt()
 
-    private fun addControlBar() {
+    private fun buildOverlay() {
+        // 루트: FAB + (펼침) 패널을 세로로. 배경 투명.
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = pill(0xF2FFFFFF.toInt(), dp(18))
-            elevation = dp(6).toFloat()
+            gravity = Gravity.START
         }
-        val title = TextView(this).apply {
-            text = "Loopy"; setTextColor(0xFF2B2D42.toInt()); textSize = 15f
+
+        // 접힌 상태의 동그란 FAB
+        val fabSize = dp(54)
+        fab = FabLogoView(this)
+        fab.elevation = dp(6).toFloat()
+
+        // 펼침 패널 (흰 카드)
+        panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(12))
+            background = pill(0xFFFFFFFF.toInt(), dp(20))
+            elevation = dp(8).toFloat()
+            visibility = View.GONE
         }
         status = TextView(this).apply {
             setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
@@ -113,24 +130,87 @@ class OverlayService : Service() {
             visibility = View.GONE
             setOnClickListener { stopPlayback("정지됨") }
         }
-        val closeBtn = TextView(this).apply {
-            text = "닫기"; setTextColor(0xFF8A8DA0.toInt()); textSize = 11f
-            setPadding(0, dp(6), 0, 0)
-            setOnClickListener { stopSelf() }
+        val hintTv = TextView(this).apply {
+            text = "FAB 탭: 접기 · 길게 눌러 종료"
+            setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
+            setPadding(0, dp(8), 0, 0)
         }
 
-        bar.addView(title)
-        bar.addView(status)
-        bar.addView(row1)
-        bar.addView(row2, LinearLayout.LayoutParams(
+        panel.addView(status)
+        panel.addView(row1, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(10) })
+        panel.addView(row2, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
-        bar.addView(stopPlayBtn)
-        bar.addView(closeBtn)
+        panel.addView(stopPlayBtn)
+        panel.addView(hintTv)
 
-        barParams = baseParams().apply { x = dp(12); y = dp(60) }
-        makeDraggable(title)
+        bar.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
+        bar.addView(panel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
+
+        barParams = baseParams().apply { x = dp(12); y = dp(80) }
+        setupFabTouch()
         wm.addView(bar, barParams)
+    }
+
+    /** 접기/펼치기. */
+    private fun toggleExpand() {
+        expanded = !expanded
+        panel.visibility = if (expanded) View.VISIBLE else View.GONE
+        if (!expanded) { // 접으면 목록도 닫기
+            listPanel?.let { panel.removeView(it); listPanel = null }
+        }
+    }
+
+    /** FAB: 탭=접기/펼치기, 드래그=이동, 길게=종료. */
+    private fun setupFabTouch() {
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        val handler = Handler(Looper.getMainLooper())
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        var dragged = false
+        var longFired = false
+        val longPress = Runnable { longFired = true; stopSelf() }
+
+        fab.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = e.rawX; downRawY = e.rawY
+                    startX = barParams.x; startY = barParams.y
+                    dragged = false; longFired = false
+                    handler.postDelayed(longPress, 600)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downRawX
+                    val dy = e.rawY - downRawY
+                    if (!dragged && hypot(dx, dy) > slop) {
+                        dragged = true
+                        handler.removeCallbacks(longPress)
+                    }
+                    if (dragged) {
+                        barParams.x = startX + dx.toInt()
+                        barParams.y = startY + dy.toInt()
+                        runCatching { wm.updateViewLayout(bar, barParams) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    handler.removeCallbacks(longPress)
+                    if (!dragged && !longFired) toggleExpand()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(longPress); true
+                }
+                else -> false
+            }
+        }
     }
 
     private fun pillButton(label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit) =
@@ -153,7 +233,6 @@ class OverlayService : Service() {
             android.graphics.PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
-    // ── MT-0: 두 손가락 동시 탭 테스트 ──
     // ── 녹화 ──
     private fun toggleRecord() {
         if (!recording) startRecord() else stopRecord()
@@ -287,34 +366,34 @@ class OverlayService : Service() {
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
-        listPanel?.let { bar.removeView(it); listPanel = null; return }
+        listPanel?.let { panel.removeView(it); listPanel = null; return }
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
-        val panel = LinearLayout(this).apply {
+        val lp = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0)
         }
         if (playlists.isEmpty() && macros.isEmpty()) {
-            panel.addView(hint("저장된 게 없어"))
+            lp.addView(hint("저장된 게 없어"))
         } else {
             if (playlists.isNotEmpty()) {
-                panel.addView(hint("─ 플레이리스트 ─"))
+                lp.addView(hint("─ 플레이리스트 ─"))
                 for (pl in playlists) {
-                    panel.addView(listRow("▶▶ ${pl.name} (${pl.macroIds.size})", 0xFF6C7BFF.toInt()) {
+                    lp.addView(listRow("▶▶ ${pl.name} (${pl.macroIds.size})", 0xFF6C7BFF.toInt()) {
                         toggleList(); playPlaylist(pl)
                     })
                 }
             }
             if (macros.isNotEmpty()) {
-                panel.addView(hint("─ 매크로 ─"))
+                lp.addView(hint("─ 매크로 ─"))
                 for (mac in macros) {
-                    panel.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
+                    lp.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
                         toggleList(); startSingle(mac.strokes, mac.name)
                     })
                 }
             }
         }
-        bar.addView(panel)
-        listPanel = panel
+        panel.addView(lp)
+        listPanel = lp
     }
 
     private fun hint(t: String) = TextView(this).apply {
@@ -344,22 +423,6 @@ class OverlayService : Service() {
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
     }
 
-    private fun makeDraggable(handle: View) {
-        var startX = 0; var startY = 0; var touchX = 0f; var touchY = 0f
-        handle.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = barParams.x; startY = barParams.y; touchX = e.rawX; touchY = e.rawY; true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    barParams.x = startX + (e.rawX - touchX).toInt()
-                    barParams.y = startY + (e.rawY - touchY).toInt()
-                    runCatching { wm.updateViewLayout(bar, barParams) }; true
-                }
-                else -> false
-            }
-        }
-    }
 
     private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
         setColor(color); cornerRadius = radius.toFloat()

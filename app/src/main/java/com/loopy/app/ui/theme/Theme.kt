@@ -22,6 +22,12 @@ val MeshMint = Color(0xFFB5E2FA)     // 민트 브리즈 (재생/루프)
 
 val CardStroke = Color(0x142B2D42)   // 차콜 8% 테두리
 
+// 순백 베이스 (리디자인) + 헤더 타이틀 그라데이션(페리윙클→민트)
+val LoopyWhite = Color(0xFFFFFFFF)
+val LoopySubtle = Color(0xFFF6F7FB)  // 카드 미묘한 광채용
+val GradA = Color(0xFF6C7BFF)        // 페리윙클
+val GradB = Color(0xFF5FD0E8)        // 민트(살짝 채도↑ 시원하게)
+
 private val LoopyColors = lightColorScheme(
     primary = Accent,
     secondary = MeshMint,
