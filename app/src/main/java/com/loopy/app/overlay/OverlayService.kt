@@ -67,6 +67,7 @@ class OverlayService : Service() {
     private lateinit var fab: FabLogoView
     private lateinit var panel: LinearLayout
     private var expanded = false
+    private var hintView: TextView? = null
     private lateinit var status: TextView
     private lateinit var recordBtn: Button
     private lateinit var stopPlayBtn: TextView
@@ -92,76 +93,90 @@ class OverlayService : Service() {
     ).toInt()
 
     private fun buildOverlay() {
-        // 루트: FAB + (펼침) 패널을 세로로. 배경 투명.
+        // 루트: 세로. 위=[FAB + 가로 슬림 패널], 아래=상태/힌트/목록.
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
         }
 
         // 접힌 상태의 동그란 FAB
-        val fabSize = dp(54)
+        val fabSize = dp(46)
         fab = FabLogoView(this)
         fab.elevation = dp(6).toFloat()
 
-        // 펼침 패널 (흰 카드)
+        // 펼치면 FAB 옆으로 길게 나오는 슬림 가로 pill
         panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(12))
-            background = pill(0xFFFFFFFF.toInt(), dp(20))
-            elevation = dp(8).toFloat()
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = pill(0xFFFFFFFF.toInt(), dp(22))
+            elevation = dp(6).toFloat()
             visibility = View.GONE
         }
+        recordBtn = slimBtn("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
+        val playBtn = slimBtn("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
+        val listBtn = slimBtn("📁", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
+        panel.addView(recordBtn)
+        panel.addView(playBtn, marginLeft(dp(6)))
+        panel.addView(listBtn, marginLeft(dp(6)))
+
+        val hRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
+        hRow.addView(panel, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { leftMargin = dp(8) })
+
         status = TextView(this).apply {
             setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
+            setPadding(dp(6), dp(6), 0, 0)
+            visibility = View.GONE
         }
-        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        recordBtn = pillButton("● 녹화", 0xFFFF7A6E.toInt()) { toggleRecord() }
-        val playBtn = pillButton("▶ 재생", 0xFF6C7BFF.toInt()) { playRecorded() }
-        row1.addView(recordBtn)
-        row1.addView(playBtn, marginLeft(dp(8)))
-
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val listBtn = pillButton("📁 목록", 0xFFECECF2.toInt(), 0xFF2B2D42.toInt()) { toggleList() }
-        row2.addView(listBtn)
-
         stopPlayBtn = TextView(this).apply {
             text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
-            setPadding(0, dp(8), 0, 0)
+            setPadding(dp(6), dp(6), 0, 0)
             visibility = View.GONE
             setOnClickListener { stopPlayback("정지됨") }
         }
         val hintTv = TextView(this).apply {
-            text = "FAB 탭: 접기 · 길게 눌러 종료"
+            text = "탭: 접기 · 길게 눌러 종료"
             setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
-            setPadding(0, dp(8), 0, 0)
+            setPadding(dp(6), dp(4), 0, 0)
+            visibility = View.GONE
         }
+        hintView = hintTv
 
-        panel.addView(status)
-        panel.addView(row1, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(10) })
-        panel.addView(row2, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
-        panel.addView(stopPlayBtn)
-        panel.addView(hintTv)
-
-        bar.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
-        bar.addView(panel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
+        bar.addView(hRow)
+        bar.addView(status)
+        bar.addView(stopPlayBtn)
+        bar.addView(hintTv)
 
         barParams = baseParams().apply { x = dp(12); y = dp(80) }
         setupFabTouch()
         wm.addView(bar, barParams)
     }
 
-    /** 접기/펼치기. */
+    private fun slimBtn(label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit) =
+        Button(this).apply {
+            text = label; setTextColor(fg); textSize = 12f
+            background = pill(bg, dp(14))
+            minWidth = 0; minHeight = 0
+            setPadding(dp(12), dp(5), dp(12), dp(5))
+            setOnClickListener { onClick() }
+        }
+
+    /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
     private fun toggleExpand() {
         expanded = !expanded
-        panel.visibility = if (expanded) View.VISIBLE else View.GONE
-        if (!expanded) { // 접으면 목록도 닫기
-            listPanel?.let { panel.removeView(it); listPanel = null }
+        val vis = if (expanded) View.VISIBLE else View.GONE
+        panel.visibility = vis
+        status.visibility = vis
+        hintView?.visibility = vis
+        if (!expanded) {
+            stopPlayBtn.visibility = View.GONE
+            listPanel?.let { bar.removeView(it); listPanel = null }
         }
     }
 
@@ -212,12 +227,6 @@ class OverlayService : Service() {
             }
         }
     }
-
-    private fun pillButton(label: String, bg: Int, fg: Int = 0xFFFFFFFF.toInt(), onClick: () -> Unit) =
-        Button(this).apply {
-            text = label; setTextColor(fg); background = pill(bg, dp(12))
-            setOnClickListener { onClick() }
-        }
 
     private fun marginLeft(px: Int) = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -366,7 +375,7 @@ class OverlayService : Service() {
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
-        listPanel?.let { panel.removeView(it); listPanel = null; return }
+        listPanel?.let { bar.removeView(it); listPanel = null; return }
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
@@ -392,7 +401,7 @@ class OverlayService : Service() {
                 }
             }
         }
-        panel.addView(lp)
+        bar.addView(lp)
         listPanel = lp
     }
 

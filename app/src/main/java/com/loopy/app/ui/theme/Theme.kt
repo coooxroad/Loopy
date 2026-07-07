@@ -28,6 +28,11 @@ val LoopySubtle = Color(0xFFF6F7FB)  // 카드 미묘한 광채용
 val GradA = Color(0xFF6C7BFF)        // 페리윙클
 val GradB = Color(0xFF5FD0E8)        // 민트(살짝 채도↑ 시원하게)
 
+// 뉴모피즘 — 살짝 쿨한 오프화이트 베이스 + 밝은/어두운 이중 그림자
+val NeuBase = Color(0xFFEEF1F7)      // 카드/배경 공통 베이스(그림자가 보이도록 순백보다 살짝 회색)
+val NeuLight = Color(0xFFFFFFFF)     // 좌상단 하이라이트
+val NeuDark = Color(0xFFC9D0E0)      // 우하단 그림자
+
 private val LoopyColors = lightColorScheme(
     primary = Accent,
     secondary = MeshMint,

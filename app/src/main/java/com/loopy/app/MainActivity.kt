@@ -63,7 +63,8 @@ import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.LoopyTheme
-import com.loopy.app.ui.theme.LoopyWhite
+import com.loopy.app.ui.theme.NeuBase
+import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.MeshLavender
 import com.loopy.app.ui.theme.MeshMint
 import com.loopy.app.ui.theme.MeshPeach
@@ -180,7 +181,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     Scaffold(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,
         bottomBar = {
-            NavigationBar(containerColor = LoopyCard) {
+            NavigationBar(containerColor = NeuBase) {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
                         selected = tab == t,
@@ -197,7 +198,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().background(LoopyWhite).padding(padding)) {
+        Box(Modifier.fillMaxSize().background(NeuBase).padding(padding)) {
+            AnimatedBottomGradient()
 
             when (tab) {
                 Tab.HOME -> HomeTab(
@@ -496,7 +498,8 @@ private fun PlaylistEditor(
     onCancel: () -> Unit,
 ) {
     fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize().background(LoopyWhite)) {
+    Box(Modifier.fillMaxSize().background(NeuBase)) {
+        AnimatedBottomGradient()
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
