@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
@@ -153,16 +154,23 @@ class OverlayService : Service() {
 
     // ── MT-0: 두 손가락 동시 탭 테스트 ──
     private fun mtTest() {
+        Toast.makeText(this, "MT 테스트 시작", Toast.LENGTH_SHORT).show()
+        status.text = "✌ 시작…"
         scope.launch {
-            val m = DisplayMetrics()
-            displayObj.getRealMetrics(m)
-            val w = m.widthPixels
-            val h = m.heightPixels
-            status.text = "✌ 두 지점 동시 탭 주입 중…"
-            val res = withContext(Dispatchers.IO) {
-                LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
+            val msg = try {
+                val m = DisplayMetrics()
+                displayObj.getRealMetrics(m)
+                val w = m.widthPixels
+                val h = m.heightPixels
+                val res = withContext(Dispatchers.IO) {
+                    LoopyService.twoFingerTapTest((w * 0.3).toInt(), h / 2, (w * 0.7).toInt(), h / 2)
+                }
+                if (res == null) "서비스 미연결" else "MT: $res"
+            } catch (t: Throwable) {
+                "MT 예외: ${t.javaClass.simpleName}: ${(t.message ?: "").take(60)}"
             }
-            status.text = if (res == null) "서비스 미연결" else "MT: $res"
+            status.text = msg
+            Toast.makeText(this@OverlayService, msg, Toast.LENGTH_LONG).show()
         }
     }
 
