@@ -87,7 +87,11 @@ class GeteventReader {
         for (dev in devices) jobs += scope.launch(Dispatchers.IO) { streamOne(myGen, dev, onPoint) }
     }
 
-    private class Slot(var x: Int = -1, var y: Int = -1, var down: Boolean = false)
+    private class Slot(
+        var x: Int = -1, var y: Int = -1, var down: Boolean = false,
+        var id: Int = -1,
+        var needUp: Boolean = false, var upX: Int = -1, var upY: Int = -1,
+    )
 
     private fun streamOne(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
         val proc = try {
@@ -107,8 +111,15 @@ class GeteventReader {
                 when (ev.code) {
                     "ABS_MT_SLOT" -> { curSlot = ev.value; touched.add(curSlot) }
                     "ABS_MT_TRACKING_ID" -> {
-                        slots.getOrPut(curSlot) { Slot() }.down =
-                            ev.value != 0xffffffff.toInt() && ev.value != -1
+                        val s = slots.getOrPut(curSlot) { Slot() }
+                        val newId = if (ev.value == 0xffffffff.toInt() || ev.value == -1) -1 else ev.value
+                        // 손가락 교체/뗌 감지: 이전 접촉이 down 이었는데 id 가 바뀌거나 -1 이면,
+                        // 이번 SYN 에서 "이전 접촉의 up"을 반드시 먼저 방출(배칭돼도 안 놓침).
+                        if (s.down && s.id != newId) {
+                            s.needUp = true; s.upX = s.x; s.upY = s.y
+                        }
+                        s.id = newId
+                        s.down = newId != -1
                         touched.add(curSlot)
                     }
                     "ABS_MT_POSITION_X" -> { slots.getOrPut(curSlot) { Slot() }.x = ev.value; touched.add(curSlot) }
@@ -116,11 +127,22 @@ class GeteventReader {
                     "SYN_REPORT" -> {
                         for (sl in touched) {
                             val s = slots[sl] ?: continue
-                            if (myGen == gen && s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
-                                onPoint(
-                                    dev,
-                                    TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, s.down),
-                                )
+                            if (myGen != gen) break
+                            var upSent = false
+                            // 1) 밀린 up 먼저(이전 접촉 종료) — 옛 좌표로.
+                            if (s.needUp) {
+                                if (s.upX in 0..dev.maxX && s.upY in 0..dev.maxY) {
+                                    onPoint(dev, TouchPoint(sl, s.upX.toFloat() / dev.maxX, s.upY.toFloat() / dev.maxY, s.upX, s.upY, false))
+                                }
+                                s.needUp = false; upSent = true
+                            }
+                            // 2) 현재 상태 방출: down 이면 down, 아니면(이미 up 안 냈을 때만) up.
+                            if (s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
+                                if (s.down) {
+                                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, true))
+                                } else if (!upSent) {
+                                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, false))
+                                }
                             }
                         }
                         touched.clear()

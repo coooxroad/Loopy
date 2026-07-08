@@ -4,6 +4,7 @@ import android.os.SystemClock
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
 import java.util.Collections
+import kotlin.math.hypot
 
 /**
  * getevent 포인트를 슬롯(손가락)별로 보고 "좌표 타임라인 스트로크"를 통째로 기록한다.
@@ -14,6 +15,12 @@ import java.util.Collections
  * 재생은 시작 시각 순으로 순차 실행한다. 동시 멀티터치는 다음 단계.
  */
 class RawRecorder {
+
+    companion object {
+        // 정규화(0~1) 거리. 근본적인 손 뗌 감지는 GeteventReader가 처리하고,
+        // 이건 드라이버가 접촉 교체를 아예 안 알리는 극단 케이스용 안전망(넉넉히).
+        private const val JUMP_SPLIT = 0.30
+    }
 
     /** panel 좌표(u,v)가 무시 대상(컨트롤 바 위)인지. */
     var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
@@ -44,7 +51,21 @@ class RawRecorder {
                 tracks[p.slot] = nb
             }
             p.down && b != null -> {
-                b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
+                // 순간이동 감지: 한 샘플 만에 화면의 큰 거리를 점프하면 물리적으로 불가능 →
+                // 실은 별개의 두 터치(놓친 up)로 보고 스트로크를 강제 분리한다.
+                val last = b.samples.last()
+                val jump = hypot((p.nx - last.nx).toDouble(), (p.ny - last.ny).toDouble())
+                if (jump > JUMP_SPLIT) {
+                    tracks.remove(p.slot)
+                    if (!shouldIgnore(b.downX, b.downY) && b.samples.isNotEmpty()) {
+                        done.add(Done(b.startT, now, b.downX, b.downY, b.samples.toList()))
+                    }
+                    val nb = Builder(now, p.nx, p.ny)
+                    nb.samples.add(TouchSample(0L, p.nx, p.ny))
+                    tracks[p.slot] = nb
+                } else {
+                    b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
+                }
             }
             !p.down && b != null -> {
                 tracks.remove(p.slot)
