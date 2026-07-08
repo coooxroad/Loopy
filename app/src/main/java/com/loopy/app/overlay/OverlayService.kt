@@ -428,7 +428,11 @@ class OverlayService : Service() {
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0)
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = pill(0xFFFFFFFF.toInt(), dp(18))
+            elevation = dp(8).toFloat()
+            minimumWidth = dp(210)
         }
         if (playlists.isEmpty() && macros.isEmpty()) {
             lp.addView(hint("저장된 게 없어"))
@@ -436,7 +440,7 @@ class OverlayService : Service() {
             if (playlists.isNotEmpty()) {
                 lp.addView(hint("─ 플레이리스트 ─"))
                 for (pl in playlists) {
-                    lp.addView(listRow("▶▶ ${pl.name} (${pl.macroIds.size})", 0xFF6C7BFF.toInt()) {
+                    lp.addView(listRow("${pl.name}  ·  ${pl.macroIds.size}스텝", 0xFF6C7BFF.toInt()) {
                         toggleList(); playPlaylist(pl)
                     })
                 }
@@ -444,24 +448,40 @@ class OverlayService : Service() {
             if (macros.isNotEmpty()) {
                 lp.addView(hint("─ 매크로 ─"))
                 for (mac in macros) {
-                    lp.addView(listRow("▶ ${mac.name} (${mac.strokes.size})", 0xFF2B2D42.toInt()) {
+                    lp.addView(listRow("${mac.name}  ·  ${mac.strokes.size}", 0xFF2B2D42.toInt()) {
                         toggleList(); startSingle(mac.strokes, mac.name)
                     })
                 }
             }
         }
-        bar.addView(lp)
+        bar.addView(lp, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ).apply { topMargin = dp(8) })
         listPanel = lp
     }
 
     private fun hint(t: String) = TextView(this).apply {
-        text = t; setTextColor(0xFF8A8DA0.toInt()); textSize = 10f
-        setPadding(0, dp(6), 0, dp(2))
+        text = t; setTextColor(0xFF9AA0B4.toInt()); textSize = 10f
+        setPadding(dp(2), dp(8), 0, dp(4))
+        letterSpacing = 0.06f
     }
 
-    private fun listRow(t: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
-        text = t; setTextColor(color); textSize = 12f
-        setPadding(0, dp(7), 0, dp(7))
+    private fun listRow(t: String, color: Int, onClick: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(8), dp(9), dp(10), dp(9))
+        background = pill(0x0A000000, dp(12)) // 아주 옅은 행 배경
+        val dot = View(this@OverlayService).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(color)
+            }
+        }
+        addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)))
+        addView(TextView(this@OverlayService).apply {
+            text = t; setTextColor(0xFF2B2D42.toInt()); textSize = 13f
+            setPadding(dp(10), 0, 0, 0)
+        })
         setOnClickListener { onClick() }
     }
 
