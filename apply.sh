@@ -1,9 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 터치 리더를 /dev/input 바이너리 직접 읽기로 전환(텍스트 폴백 포함)
+# Loopy 복구: GeteventReader(바이너리)+Macro/MacroStore 복구
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/input/GeteventReader.kt")"
 cat > "app/src/main/java/com/loopy/app/input/GeteventReader.kt" << 'LOOPY_EOF'
 package com.loopy.app.input
 
@@ -266,9 +267,107 @@ class GeteventReader {
 }
 LOOPY_EOF
 
-echo "반영."
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/Macro.kt")"
+cat > "app/src/main/java/com/loopy/app/macro/Macro.kt" << 'LOOPY_EOF'
+package com.loopy.app.macro
+
+/** 저장되는 매크로. strokes = 원본 좌표 타임라인들(탭/홀드/스와이프/조이스틱 통합). */
+data class Macro(
+    val id: String,
+    val name: String,
+    val createdAt: Long,
+    val strokes: List<Stroke>,
+)
+LOOPY_EOF
+
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/macro/MacroStore.kt")"
+cat > "app/src/main/java/com/loopy/app/macro/MacroStore.kt" << 'LOOPY_EOF'
+package com.loopy.app.macro
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+/** 매크로를 filesDir/macros/{id}.json 로 저장/관리. org.json 사용(의존성 없음). */
+object MacroStore {
+
+    private fun dir(ctx: Context): File = File(ctx.filesDir, "macros").apply { mkdirs() }
+
+    fun autoName(time: Long = System.currentTimeMillis()): String =
+        SimpleDateFormat("MMM d a h:mm", Locale.ENGLISH).format(Date(time))
+
+    fun saveNew(ctx: Context, strokes: List<Stroke>): Macro {
+        val now = System.currentTimeMillis()
+        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes)
+        write(ctx, macro)
+        return macro
+    }
+
+    fun rename(ctx: Context, id: String, newName: String) {
+        val m = read(ctx, id) ?: return
+        write(ctx, m.copy(name = newName))
+    }
+
+    fun delete(ctx: Context, id: String) {
+        File(dir(ctx), "$id.json").delete()
+    }
+
+    fun list(ctx: Context): List<Macro> =
+        (dir(ctx).listFiles { f -> f.extension == "json" } ?: emptyArray())
+            .mapNotNull { runCatching { fromJson(it.readText()) }.getOrNull() }
+            .sortedByDescending { it.createdAt }
+
+    fun read(ctx: Context, id: String): Macro? =
+        runCatching { fromJson(File(dir(ctx), "$id.json").readText()) }.getOrNull()
+
+    private fun write(ctx: Context, macro: Macro) {
+        File(dir(ctx), "${macro.id}.json").writeText(toJson(macro))
+    }
+
+    private fun toJson(m: Macro): String {
+        val strokes = JSONArray()
+        for (s in m.strokes) {
+            val samples = JSONArray()
+            for (p in s.samples) {
+                samples.put(
+                    JSONObject().put("t", p.t).put("x", p.nx.toDouble()).put("y", p.ny.toDouble())
+                )
+            }
+            strokes.put(JSONObject().put("startMs", s.startMs).put("durationMs", s.durationMs).put("samples", samples))
+        }
+        return JSONObject()
+            .put("id", m.id).put("name", m.name).put("createdAt", m.createdAt)
+            .put("strokes", strokes)
+            .toString()
+    }
+
+    private fun fromJson(text: String): Macro {
+        val o = JSONObject(text)
+        val strokesArr = o.getJSONArray("strokes")
+        val strokes = ArrayList<Stroke>(strokesArr.length())
+        for (i in 0 until strokesArr.length()) {
+            val so = strokesArr.getJSONObject(i)
+            val sampArr = so.getJSONArray("samples")
+            val samples = ArrayList<TouchSample>(sampArr.length())
+            for (j in 0 until sampArr.length()) {
+                val p = sampArr.getJSONObject(j)
+                samples.add(TouchSample(p.getLong("t"), p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+            }
+            strokes.add(Stroke(so.optLong("startMs", 0L), so.optLong("durationMs", 0L), samples))
+        }
+        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes)
+    }
+}
+LOOPY_EOF
+
+echo "fix3_rest.sh 반영 완료."
 git add -A
-git commit -m "바이너리 전환: /dev/input/eventX 직접 읽기(struct input_event) + 텍스트 폴백"
+git commit -m "복구: 손상된 apply_video 롤백 + 바이너리 전환 정합"
 git push
 echo "푸시 완료!"
 

@@ -83,4 +83,102 @@ fun AnimatedBottomGradient(modifier: Modifier = Modifier) {
 }
 
 /** 뉴모피즘 이중 그림자(좌상단 밝게 / 우하단 어둡게). */
-private fun Modifier.neumorph(corner: Dp) = this.drawB
+private fun Modifier.neumorph(corner: Dp) = this.drawBehind {
+    val r = corner.toPx()
+    val off = 5.dp.toPx()
+    val blur = 11.dp.toPx()
+    drawIntoCanvas { canvas ->
+        val fw = canvas.nativeCanvas
+        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+        val dark = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, off, off, 0xFFC9D0E0.toInt())
+        }
+        fw.drawRoundRect(rect, r, r, dark)
+        val light = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, -off, -off, 0xFFFFFFFF.toInt())
+        }
+        fw.drawRoundRect(rect, r, r, light)
+    }
+}
+
+/** 정통 뉴모피즘 카드 — 배경과 같은 톤 + 이중 그림자로 은은하게 떠 보인다. */
+@Composable
+fun SoftCard(
+    modifier: Modifier = Modifier,
+    cornerRadius: Dp = 22.dp,
+    padding: Dp = 18.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(cornerRadius)
+    Box(
+        modifier
+            .neumorph(cornerRadius)
+            .clip(shape)
+            .background(NeuBase)
+            .padding(padding),
+    ) {
+        Column(content = content)
+    }
+}
+
+/** 아주 얇은 라인 아이콘. kind: home / playlist / library / settings. */
+@Composable
+fun LineIcon(kind: String, color: Color, size: Dp = 24.dp, strokeWidth: Float = 2f) {
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        fun p(x: Float, y: Float) = Offset(x / 24f * s, y / 24f * s)
+        val stroke = Stroke(width = strokeWidth / 24f * s, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        when (kind) {
+            "home" -> {
+                drawPath(Path().apply {
+                    moveTo(p(3f, 11f).x, p(3f, 11f).y)
+                    lineTo(p(12f, 3.5f).x, p(12f, 3.5f).y)
+                    lineTo(p(21f, 11f).x, p(21f, 11f).y)
+                }, color, style = stroke)
+                drawPath(Path().apply {
+                    moveTo(p(5.5f, 9.5f).x, p(5.5f, 9.5f).y)
+                    lineTo(p(5.5f, 20f).x, p(5.5f, 20f).y)
+                    lineTo(p(18.5f, 20f).x, p(18.5f, 20f).y)
+                    lineTo(p(18.5f, 9.5f).x, p(18.5f, 9.5f).y)
+                }, color, style = stroke)
+                drawPath(Path().apply {
+                    moveTo(p(10f, 20f).x, p(10f, 20f).y)
+                    lineTo(p(10f, 14f).x, p(10f, 14f).y)
+                    lineTo(p(14f, 14f).x, p(14f, 14f).y)
+                    lineTo(p(14f, 20f).x, p(14f, 20f).y)
+                }, color, style = stroke)
+            }
+            "playlist" -> {
+                drawLine(color, p(4f, 7f), p(15f, 7f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 12f), p(15f, 12f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 17f), p(11f, 17f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(19f, 6f), p(19f, 16f), stroke.width, StrokeCap.Round)
+                drawCircle(color, p(2.2f, 0f).x - p(0f, 0f).x, p(17f, 16.5f), style = stroke)
+            }
+            "library" -> {
+                drawPath(Path().apply {
+                    moveTo(p(3.5f, 7f).x, p(3.5f, 7f).y)
+                    lineTo(p(9f, 7f).x, p(9f, 7f).y)
+                    lineTo(p(11f, 9f).x, p(11f, 9f).y)
+                    lineTo(p(20.5f, 9f).x, p(20.5f, 9f).y)
+                    lineTo(p(20.5f, 18.5f).x, p(20.5f, 18.5f).y)
+                    lineTo(p(3.5f, 18.5f).x, p(3.5f, 18.5f).y)
+                    close()
+                }, color, style = stroke)
+            }
+            "settings" -> {
+                drawLine(color, p(4f, 7f), p(20f, 7f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 12f), p(20f, 12f), stroke.width, StrokeCap.Round)
+                drawLine(color, p(4f, 17f), p(20f, 17f), stroke.width, StrokeCap.Round)
+                val r = p(2.6f, 0f).x - p(0f, 0f).x
+                drawCircle(NeuBase, r, p(15f, 7f)); drawCircle(color, r, p(15f, 7f), style = stroke)
+                drawCircle(NeuBase, r, p(9f, 12f)); drawCircle(color, r, p(9f, 12f), style = stroke)
+                drawCircle(NeuBase, r, p(16f, 17f)); drawCircle(color, r, p(16f, 17f), style = stroke)
+            }
+        }
+    }
+}

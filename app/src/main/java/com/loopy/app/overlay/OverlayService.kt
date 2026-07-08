@@ -1,6 +1,5 @@
 package com.loopy.app.overlay
 
-import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,8 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Rect
-import android.media.projection.MediaProjectionManager
-import java.io.File
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -66,17 +63,6 @@ class OverlayService : Service() {
     private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
-    private var videoEnabled = false
-    private var currentVideoPath: String? = null
-    private val screenRecorder by lazy { ScreenRecorder(this) }
-    private var videoBtn: ImageButton? = null
-
-    companion object {
-        const val ACTION_START_VIDEO = "com.loopy.app.START_VIDEO"
-        const val ACTION_START_MACRO_ONLY = "com.loopy.app.START_MACRO_ONLY"
-        const val EX_CODE = "code"
-        const val EX_DATA = "data"
-    }
     private var playJob: Job? = null
 
     private lateinit var bar: LinearLayout
@@ -98,14 +84,6 @@ class OverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START_VIDEO -> beginVideoThenRecord(intent)
-            ACTION_START_MACRO_ONLY -> startRecord(null)
-        }
-        return START_STICKY
-    }
 
     override fun onCreate() {
         super.onCreate()
@@ -152,11 +130,8 @@ class OverlayService : Service() {
             setDeepSLock(true)
             if (expanded) toggleExpand()
         }
-        val vBtn = iconBtn(R.drawable.ic_ov_video, videoTint(), videoBg()) { toggleVideo() }
-        videoBtn = vBtn
         panel.addView(recordBtn)
         panel.addView(playBtn, marginLeft(dp(8)))
-        panel.addView(vBtn, marginLeft(dp(8)))
         panel.addView(listBtn, marginLeft(dp(8)))
         panel.addView(moonBtn, marginLeft(dp(8)))
 
@@ -336,68 +311,20 @@ class OverlayService : Service() {
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
     // ── 녹화 ──
-    private fun videoTint() = if (videoEnabled) 0xFF6C7BFF.toInt() else 0xFF9AA0B4.toInt()
-    private fun videoBg() = if (videoEnabled) 0x226C7BFF else 0x14000000
-
-    private fun toggleVideo() {
-        videoEnabled = !videoEnabled
-        videoBtn?.apply {
-            setColorFilter(videoTint())
-            background = circleBg(videoBg())
-        }
-        status.visibility = View.VISIBLE
-        status.text = if (videoEnabled) "영상 녹화 ON (녹화 시 화면도 저장)" else "영상 녹화 OFF"
-    }
-
     private fun toggleRecord() {
-        if (recording) { stopRecord(); return }
-        if (videoEnabled) {
-            // 권한 팝업 → 허용 즉시 서비스가 녹화 시작(버튼/허용 탭은 안 찍힘)
-            val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
-        } else {
-            startRecord(null)
-        }
+        if (!recording) startRecord() else stopRecord()
     }
 
-    private fun beginVideoThenRecord(intent: Intent) {
-        val code = intent.getIntExtra(EX_CODE, Activity.RESULT_CANCELED)
-        @Suppress("DEPRECATION")
-        val data = intent.getParcelableExtra<Intent>(EX_DATA)
-        if (code != Activity.RESULT_OK || data == null) { startRecord(null); return }
-        runCatching { promoteForegroundForProjection() }
-        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
-        if (proj == null) { startRecord(null); return }
-        val dir = File(getExternalFilesDir(null), "videos").apply { mkdirs() }
-        val out = File(dir, "rec_${System.currentTimeMillis()}.mp4")
-        val ok = screenRecorder.start(proj, out)
-        startRecord(if (ok) out.absolutePath else null)
-    }
-
-    private fun promoteForegroundForProjection() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                1, buildNotif(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
-        }
-    }
-
-    private fun startRecord(videoPath: String?) {
+    private fun startRecord() {
         stopPlayback(null)
         val devs = reader.probe()
         val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
         if (dev == null) { status.text = "터치 디바이스를 못 찾음"; return }
         device = dev
-        currentVideoPath = videoPath
         recorder.reset()
         recording = true
         recordBtn.setImageResource(R.drawable.ic_ov_stop)
-        status.visibility = View.VISIBLE
-        status.text = if (videoPath != null) "● 녹화중 (영상 포함)" else "● 녹화중 — 평소처럼 플레이해"
+        status.text = "● 녹화중 — 평소처럼 플레이해"
         reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
     }
 
@@ -405,16 +332,10 @@ class OverlayService : Service() {
         reader.stop()
         recording = false
         recordBtn.setImageResource(R.drawable.ic_ov_record)
-        val vpath = if (screenRecorder.active) screenRecorder.stop() else currentVideoPath
-        currentVideoPath = null
         val snap = recorder.snapshot()
-        if (snap.isEmpty()) {
-            if (vpath != null) runCatching { File(vpath).delete() }
-            status.text = "행동 없음 (저장 안 함)"
-            return
-        }
-        val m = MacroStore.saveNew(this, snap, vpath)
-        status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
+        if (snap.isEmpty()) { status.text = "행동 없음 (저장 안 함)"; return }
+        val m = MacroStore.saveNew(this, snap)
+        status.text = "저장됨: ${m.name} · ${snap.size}개"
     }
 
     // ── 재생 ──
@@ -621,7 +542,7 @@ class OverlayService : Service() {
         setColor(color); cornerRadius = radius.toFloat()
     }
 
-    private fun buildNotif(): Notification {
+    private fun startAsForeground() {
         val channelId = "loopy_overlay"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -629,16 +550,12 @@ class OverlayService : Service() {
                 NotificationChannel(channelId, "Loopy 오버레이", NotificationManager.IMPORTANCE_LOW)
             )
         }
-        return Notification.Builder(this, channelId)
+        val notif: Notification = Notification.Builder(this, channelId)
             .setContentTitle("Loopy 실행 중")
             .setContentText("매크로 컨트롤이 화면에 떠 있어요")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setOngoing(true)
             .build()
-    }
-
-    private fun startAsForeground() {
-        val notif = buildNotif()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -649,7 +566,6 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         reader.stop()
-        runCatching { if (screenRecorder.active) screenRecorder.stop() }
         scope.cancel()
         dimView?.let { runCatching { wm.removeView(it) } }
         runCatching { wm.removeView(bar) }
