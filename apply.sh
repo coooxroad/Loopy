@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: Deep SLock(검은 레이어+최소밝기, 달 버튼 토글) + 녹화 아이콘 수정
+# Loopy: Deep SLock 더 어둡게+달아이콘 교체(노랑) + 빠른 탭 스와이프 오녹화 수정
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -791,6 +791,7 @@ import android.os.SystemClock
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
 import java.util.Collections
+import kotlin.math.hypot
 
 /**
  * getevent 포인트를 슬롯(손가락)별로 보고 "좌표 타임라인 스트로크"를 통째로 기록한다.
@@ -801,6 +802,12 @@ import java.util.Collections
  * 재생은 시작 시각 순으로 순차 실행한다. 동시 멀티터치는 다음 단계.
  */
 class RawRecorder {
+
+    companion object {
+        // 정규화(0~1) 거리. 한 샘플 만에 이 이상 점프하면 별개 터치로 분리.
+        // 진짜 빠른 스와이프도 100~200Hz 샘플링이라 샘플당 이동은 이보다 훨씬 작다.
+        private const val JUMP_SPLIT = 0.22
+    }
 
     /** panel 좌표(u,v)가 무시 대상(컨트롤 바 위)인지. */
     var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
@@ -831,7 +838,21 @@ class RawRecorder {
                 tracks[p.slot] = nb
             }
             p.down && b != null -> {
-                b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
+                // 순간이동 감지: 한 샘플 만에 화면의 큰 거리를 점프하면 물리적으로 불가능 →
+                // 실은 별개의 두 터치(놓친 up)로 보고 스트로크를 강제 분리한다.
+                val last = b.samples.last()
+                val jump = hypot((p.nx - last.nx).toDouble(), (p.ny - last.ny).toDouble())
+                if (jump > JUMP_SPLIT) {
+                    tracks.remove(p.slot)
+                    if (!shouldIgnore(b.downX, b.downY) && b.samples.isNotEmpty()) {
+                        done.add(Done(b.startT, now, b.downX, b.downY, b.samples.toList()))
+                    }
+                    val nb = Builder(now, p.nx, p.ny)
+                    nb.samples.add(TouchSample(0L, p.nx, p.ny))
+                    tracks[p.slot] = nb
+                } else {
+                    b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
+                }
             }
             !p.down && b != null -> {
                 tracks.remove(p.slot)
@@ -1093,11 +1114,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.drawable.Drawable
 import android.view.View
+import androidx.core.content.ContextCompat
+import com.loopy.app.R
 
 /**
- * 접힌 상태의 오버레이 FAB. 페리윙클→민트 그라데이션 원 + 흰색 순환(loop) 글리프.
- * 순수 Canvas 로 그려서 별도 리소스 없이 선명하다.
+ * 오버레이 FAB. 기본은 그라데이션 원 + 흰 루프(loop) 글리프.
+ * Deep SLock 시엔 setMoon(true)로 노란 달 아이콘으로 교체된다.
  */
 class FabLogoView(context: Context) : View(context) {
 
@@ -1109,6 +1133,15 @@ class FabLogoView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val arrow = Path()
+    private var moonMode = false
+    private val moon: Drawable? = ContextCompat.getDrawable(context, R.drawable.ic_ov_moon)
+        ?.mutate()?.apply { setTint(0xFFFFD166.toInt()) } // 노란 달
+
+    fun setMoon(on: Boolean) {
+        if (moonMode == on) return
+        moonMode = on
+        invalidate()
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -1125,11 +1158,16 @@ class FabLogoView(context: Context) : View(context) {
         val cy = height / 2f
         canvas.drawCircle(cx, cy, w / 2f, circlePaint)
 
+        if (moonMode && moon != null) {
+            val inset = (w * 0.26f).toInt()
+            moon.setBounds(inset, inset, width - inset, height - inset)
+            moon.draw(canvas)
+            return
+        }
+
         val r = w * 0.24f
         val oval = RectF(cx - r, cy - r, cx + r, cy + r)
         canvas.drawArc(oval, -35f, 295f, false, loopPaint)
-
-        // 화살촉 (호 시작점 근처)
         arrow.reset()
         arrow.moveTo(cx + r * 0.5f, cy - r * 1.15f)
         arrow.lineTo(cx + r * 1.15f, cy - r * 0.55f)
@@ -1263,7 +1301,7 @@ class OverlayService : Service() {
         recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
         val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
         val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
-        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFF6C7BFF.toInt(), 0x226C7BFF) {
+        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
             setDeepSLock(true)
             if (expanded) toggleExpand()
         }
@@ -1332,7 +1370,7 @@ class OverlayService : Service() {
     private fun setDeepSLock(on: Boolean) {
         if (on) {
             if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xDB000000.toInt()) } // ~86% 블랙
+            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
             val p = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -1342,17 +1380,17 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(권한 불필요)
+            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
             runCatching { wm.addView(v, p) }
             dimView = v
-            // FAB(달 버튼)를 검은 레이어 위로 올려 다시 누를 수 있게
+            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
             runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.alpha = 0.4f // 희미하게
+            fab.setMoon(true)
             deepLocked = true
         } else {
             dimView?.let { runCatching { wm.removeView(it) } }
             dimView = null
-            fab.alpha = 1f
+            fab.setMoon(false)
             deepLocked = false
         }
     }
@@ -2444,7 +2482,7 @@ LOOPY_EOF
 
 echo "소스+리소스 28개 동기화."
 git add -A
-git commit -m "Deep SLock: 검은 레이어+최소밝기 토글(달 버튼) + 녹화 아이콘 수정"
+git commit -m "Deep SLock 더 어둡게+FAB 달아이콘(노랑) / 빠른 연속탭 스와이프 오녹화 분리 수정"
 git push
 echo "푸시 완료!"
 

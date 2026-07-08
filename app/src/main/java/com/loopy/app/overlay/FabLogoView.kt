@@ -7,11 +7,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.drawable.Drawable
 import android.view.View
+import androidx.core.content.ContextCompat
+import com.loopy.app.R
 
 /**
- * 접힌 상태의 오버레이 FAB. 페리윙클→민트 그라데이션 원 + 흰색 순환(loop) 글리프.
- * 순수 Canvas 로 그려서 별도 리소스 없이 선명하다.
+ * 오버레이 FAB. 기본은 그라데이션 원 + 흰 루프(loop) 글리프.
+ * Deep SLock 시엔 setMoon(true)로 노란 달 아이콘으로 교체된다.
  */
 class FabLogoView(context: Context) : View(context) {
 
@@ -23,6 +26,15 @@ class FabLogoView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val arrow = Path()
+    private var moonMode = false
+    private val moon: Drawable? = ContextCompat.getDrawable(context, R.drawable.ic_ov_moon)
+        ?.mutate()?.apply { setTint(0xFFFFD166.toInt()) } // 노란 달
+
+    fun setMoon(on: Boolean) {
+        if (moonMode == on) return
+        moonMode = on
+        invalidate()
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -39,11 +51,16 @@ class FabLogoView(context: Context) : View(context) {
         val cy = height / 2f
         canvas.drawCircle(cx, cy, w / 2f, circlePaint)
 
+        if (moonMode && moon != null) {
+            val inset = (w * 0.26f).toInt()
+            moon.setBounds(inset, inset, width - inset, height - inset)
+            moon.draw(canvas)
+            return
+        }
+
         val r = w * 0.24f
         val oval = RectF(cx - r, cy - r, cx + r, cy + r)
         canvas.drawArc(oval, -35f, 295f, false, loopPaint)
-
-        // 화살촉 (호 시작점 근처)
         arrow.reset()
         arrow.moveTo(cx + r * 0.5f, cy - r * 1.15f)
         arrow.lineTo(cx + r * 1.15f, cy - r * 0.55f)
