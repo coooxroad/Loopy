@@ -68,6 +68,7 @@ class OverlayService : Service() {
     private lateinit var barParams: WindowManager.LayoutParams
     private lateinit var fab: FabLogoView
     private lateinit var panel: LinearLayout
+    private lateinit var listHolder: LinearLayout
     private var expanded = false
     private var hintView: TextView? = null
     private var dimView: View? = null
@@ -157,7 +158,11 @@ class OverlayService : Service() {
         }
         hintView = hintTv
 
+        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래
+        listHolder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
         bar.addView(hRow)
+        bar.addView(listHolder)
         bar.addView(status)
         bar.addView(stopPlayBtn)
         bar.addView(hintTv)
@@ -223,7 +228,7 @@ class OverlayService : Service() {
         hintView?.visibility = vis
         if (!expanded) {
             stopPlayBtn.visibility = View.GONE
-            listPanel?.let { bar.removeView(it); listPanel = null }
+            listPanel?.let { listHolder.removeView(it); listPanel = null }
         }
     }
 
@@ -424,7 +429,7 @@ class OverlayService : Service() {
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
-        listPanel?.let { bar.removeView(it); listPanel = null; return }
+        listPanel?.let { listHolder.removeView(it); listPanel = null; return }
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
@@ -454,7 +459,7 @@ class OverlayService : Service() {
                 }
             }
         }
-        bar.addView(lp, LinearLayout.LayoutParams(
+        listHolder.addView(lp, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
         listPanel = lp

@@ -1,116 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy: 시간간격 분리(빠른연타 99%) + 목록 드롭다운 카드 UI
+# Loopy fix: 목록을 패널 바로 아래로 + 뭉개짐 해결(전용 홀더)
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
-
-cat > "app/src/main/java/com/loopy/app/input/RawRecorder.kt" << 'LOOPY_EOF'
-package com.loopy.app.input
-
-import android.os.SystemClock
-import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.TouchSample
-import java.util.Collections
-import kotlin.math.hypot
-
-/**
- * getevent 포인트를 슬롯(손가락)별로 보고 "좌표 타임라인 스트로크"를 통째로 기록한다.
- * 제스처 분류 없음 — 손가락이 그린 모든 미세 이동을 그대로 담으므로 탭/홀드/스와이프/
- * 조이스틱이 전부 자연히 재현된다.
- *
- * (A1=단일 손가락 재현) 여러 손가락이 겹치면 각 슬롯의 스트로크를 따로 기록하고
- * 재생은 시작 시각 순으로 순차 실행한다. 동시 멀티터치는 다음 단계.
- */
-class RawRecorder {
-
-    companion object {
-        // 정규화(0~1) 거리. 근본적인 손 뗌 감지는 GeteventReader가 처리하고,
-        // 이건 드라이버가 접촉 교체를 아예 안 알리는 극단 케이스용 안전망(넉넉히).
-        private const val JUMP_SPLIT = 0.30
-        // 같은 슬롯에서 좌표 갱신 사이 공백이 이 이상이면 손가락이 떴다 다시 눌린 것으로
-        // 보고 분리(자판 빠른 연타 대응). 정상 스와이프는 촘촘히 샘플이 와서 안 걸린다.
-        private const val GAP_SPLIT_MS = 45L
-    }
-
-    /** panel 좌표(u,v)가 무시 대상(컨트롤 바 위)인지. */
-    var shouldIgnore: (Float, Float) -> Boolean = { _, _ -> false }
-
-    private class Builder(val startT: Long, val downX: Float, val downY: Float) {
-        val samples = ArrayList<TouchSample>()
-        var lastT: Long = startT
-    }
-
-    private data class Done(val startT: Long, val endT: Long, val downX: Float, val downY: Float, val samples: List<TouchSample>)
-
-    private val tracks = HashMap<Int, Builder>()
-    private val done = Collections.synchronizedList(mutableListOf<Done>())
-
-    fun reset() {
-        tracks.clear()
-        done.clear()
-    }
-
-    fun count(): Int = done.size
-
-    fun onPoint(p: TouchPoint) {
-        val now = SystemClock.uptimeMillis()
-        val b = tracks[p.slot]
-        when {
-            p.down && b == null -> {
-                val nb = Builder(now, p.nx, p.ny)
-                nb.samples.add(TouchSample(0L, p.nx, p.ny))
-                nb.lastT = now
-                tracks[p.slot] = nb
-            }
-            p.down && b != null -> {
-                // 분리 조건: (1) 한 샘플 만에 큰 순간이동(놓친 접촉교체) 또는
-                //          (2) 좌표 갱신 사이 시간 공백이 큼(손이 떴다 다시 눌림 = 빠른 연타).
-                val last = b.samples.last()
-                val jump = hypot((p.nx - last.nx).toDouble(), (p.ny - last.ny).toDouble())
-                val gap = now - b.lastT
-                if (jump > JUMP_SPLIT || gap > GAP_SPLIT_MS) {
-                    tracks.remove(p.slot)
-                    if (!shouldIgnore(b.downX, b.downY) && b.samples.isNotEmpty()) {
-                        done.add(Done(b.startT, b.lastT, b.downX, b.downY, b.samples.toList()))
-                    }
-                    val nb = Builder(now, p.nx, p.ny)
-                    nb.samples.add(TouchSample(0L, p.nx, p.ny))
-                    nb.lastT = now
-                    tracks[p.slot] = nb
-                } else {
-                    b.samples.add(TouchSample(now - b.startT, p.nx, p.ny))
-                    b.lastT = now
-                }
-            }
-            !p.down && b != null -> {
-                tracks.remove(p.slot)
-                if (shouldIgnore(b.downX, b.downY)) return
-                if (b.samples.isNotEmpty()) {
-                    done.add(Done(b.startT, now, b.downX, b.downY, b.samples.toList()))
-                }
-            }
-        }
-    }
-
-    /** 시작 시각 순 정렬 + 스트로크 사이 대기 계산. */
-    fun snapshot(): List<Stroke> {
-        val sorted = synchronized(done) { done.toList() }.sortedBy { it.startT }
-        if (sorted.isEmpty()) return emptyList()
-        val base = sorted.first().startT // 제일 이른 스트로크를 0 기준으로
-        val out = ArrayList<Stroke>(sorted.size)
-        for (d in sorted) {
-            out.add(
-                Stroke(
-                    startMs = (d.startT - base).coerceAtLeast(0L),
-                    durationMs = (d.endT - d.startT).coerceAtLeast(0L),
-                    samples = d.samples,
-                )
-            )
-        }
-        return out
-    }
-}
-LOOPY_EOF
 
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
 package com.loopy.app.overlay
@@ -183,6 +75,7 @@ class OverlayService : Service() {
     private lateinit var barParams: WindowManager.LayoutParams
     private lateinit var fab: FabLogoView
     private lateinit var panel: LinearLayout
+    private lateinit var listHolder: LinearLayout
     private var expanded = false
     private var hintView: TextView? = null
     private var dimView: View? = null
@@ -272,7 +165,11 @@ class OverlayService : Service() {
         }
         hintView = hintTv
 
+        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래
+        listHolder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
         bar.addView(hRow)
+        bar.addView(listHolder)
         bar.addView(status)
         bar.addView(stopPlayBtn)
         bar.addView(hintTv)
@@ -338,7 +235,7 @@ class OverlayService : Service() {
         hintView?.visibility = vis
         if (!expanded) {
             stopPlayBtn.visibility = View.GONE
-            listPanel?.let { bar.removeView(it); listPanel = null }
+            listPanel?.let { listHolder.removeView(it); listPanel = null }
         }
     }
 
@@ -539,7 +436,7 @@ class OverlayService : Service() {
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
-        listPanel?.let { bar.removeView(it); listPanel = null; return }
+        listPanel?.let { listHolder.removeView(it); listPanel = null; return }
         val playlists = PlaylistStore.list(this)
         val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
@@ -569,7 +466,7 @@ class OverlayService : Service() {
                 }
             }
         }
-        bar.addView(lp, LinearLayout.LayoutParams(
+        listHolder.addView(lp, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { topMargin = dp(8) })
         listPanel = lp
@@ -654,7 +551,7 @@ LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "녹화: 시간간격 분리(빠른연타) + 목록 드롭다운 카드 UI"
+git commit -m "fix: 목록 드롭다운을 패널 바로 아래 전용 홀더로(뭉개짐 해결)"
 git push
 echo "푸시 완료!"
 
