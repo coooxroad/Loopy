@@ -102,6 +102,10 @@ class OverlayService : Service() {
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
+            // 그림자가 창 밖으로 안 짤리게 여백 + clip 해제
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(16), dp(16), dp(16), dp(16))
         }
 
         // 접힌 상태의 동그란 FAB
@@ -133,6 +137,8 @@ class OverlayService : Service() {
         val hRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
         hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
         hRow.addView(panel, LinearLayout.LayoutParams(
@@ -158,16 +164,23 @@ class OverlayService : Service() {
         }
         hintView = hintTv
 
-        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래
-        listHolder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래, 오른쪽 정렬
+        listHolder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            clipChildren = false
+            clipToPadding = false
+        }
 
         bar.addView(hRow)
-        bar.addView(listHolder)
+        bar.addView(listHolder, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
         bar.addView(status)
         bar.addView(stopPlayBtn)
         bar.addView(hintTv)
 
-        barParams = baseParams().apply { x = dp(12); y = dp(80) }
+        barParams = baseParams().apply { x = dp(-4); y = dp(64) }
         setupFabTouch()
         wm.addView(bar, barParams)
     }

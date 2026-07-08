@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy fix: 목록을 패널 바로 아래로 + 뭉개짐 해결(전용 홀더)
+# Loopy fix: 오버레이/목록 그림자 짤림 수정 + 목록 오른쪽 정렬
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
@@ -109,6 +109,10 @@ class OverlayService : Service() {
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.START
+            // 그림자가 창 밖으로 안 짤리게 여백 + clip 해제
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(16), dp(16), dp(16), dp(16))
         }
 
         // 접힌 상태의 동그란 FAB
@@ -140,6 +144,8 @@ class OverlayService : Service() {
         val hRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
         hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
         hRow.addView(panel, LinearLayout.LayoutParams(
@@ -165,16 +171,23 @@ class OverlayService : Service() {
         }
         hintView = hintTv
 
-        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래
-        listHolder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래, 오른쪽 정렬
+        listHolder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            clipChildren = false
+            clipToPadding = false
+        }
 
         bar.addView(hRow)
-        bar.addView(listHolder)
+        bar.addView(listHolder, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
+        ))
         bar.addView(status)
         bar.addView(stopPlayBtn)
         bar.addView(hintTv)
 
-        barParams = baseParams().apply { x = dp(12); y = dp(80) }
+        barParams = baseParams().apply { x = dp(-4); y = dp(64) }
         setupFabTouch()
         wm.addView(bar, barParams)
     }
@@ -551,7 +564,7 @@ LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "fix: 목록 드롭다운을 패널 바로 아래 전용 홀더로(뭉개짐 해결)"
+git commit -m "fix: 오버레이 그림자 짤림(여백+clip해제) + 목록 오른쪽 정렬"
 git push
 echo "푸시 완료!"
 
