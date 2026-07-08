@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /** 정규화된 터치 한 점 (0.0~1.0). slot = 손가락 번호(멀티터치 구분). */
 data class TouchPoint(
@@ -25,19 +27,31 @@ data class TouchDevice(
 )
 
 /**
- * getevent 로 물리 터치를 실시간 파싱한다. 멀티터치 프로토콜 B(슬롯) 처리.
+ * 터치를 실시간으로 읽는다.
  *
- * 정지 신뢰성: readLine() 은 블로킹이라 코루틴 cancel 만으론 안 멈춘다. 그래서
- *  1) 프로세스를 destroy 해 읽기를 끊고,
- *  2) "세대(gen)" 토큰으로 옛 스트림의 방출을 원천 차단한다.
- * stop() 이 gen 을 올리면, 그 이전에 시작된 스트림은 gen 불일치로 다시는 방출하지 못한다
- * (프로세스가 좀비로 남아도 무해). 새 녹화가 옛 스트림을 되살리는 일이 없다.
+ * 기본: /dev/input/eventX 를 **바이너리로 직접** 읽어 struct input_event 를 파싱한다
+ * (64비트 = 24바이트/이벤트). getevent 텍스트 파싱과 달리 배칭·손실이 없어 정확도 100%에 가깝다.
+ * 폴백: 바이너리가 즉시 실패(권한/EOF)하면 기존 getevent 텍스트 파싱으로 자동 전환.
+ *
+ * 정지 신뢰성: 프로세스를 destroy 하고 "세대(gen)" 토큰으로 옛 스트림 방출을 원천 차단한다.
  */
 class GeteventReader {
 
     private val jobs = mutableListOf<Job>()
     private val procs = mutableListOf<Process>()
     @Volatile private var gen = 0
+
+    // ── struct input_event (64bit) ──
+    private companion object {
+        const val EV_SIZE = 24        // timeval(16) + type(2) + code(2) + value(4)
+        const val EV_SYN = 0x00
+        const val EV_ABS = 0x03
+        const val SYN_REPORT = 0x00
+        const val ABS_MT_SLOT = 0x2f
+        const val ABS_MT_POSITION_X = 0x35
+        const val ABS_MT_POSITION_Y = 0x36
+        const val ABS_MT_TRACKING_ID = 0x39
+    }
 
     fun probe(): List<TouchDevice> {
         val out = Shell.run("getevent -pl") ?: return emptyList()
@@ -93,7 +107,100 @@ class GeteventReader {
         var needUp: Boolean = false, var upX: Int = -1, var upY: Int = -1,
     )
 
+    /** 바이너리 리더(우선). 즉시 실패 시 텍스트 폴백. */
     private fun streamOne(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
+        val proc = try {
+            Shell.newProcess(arrayOf("sh", "-c", "cat ${dev.path}"))
+        } catch (t: Throwable) {
+            streamOneText(myGen, dev, onPoint); return
+        }
+        synchronized(procs) { procs.add(proc) }
+        val slots = HashMap<Int, Slot>()
+        val touched = HashSet<Int>()
+        var curSlot = 0
+        var anyEvent = false
+        val buf = ByteArray(EV_SIZE)
+        val bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
+        try {
+            val input = proc.inputStream
+            while (myGen == gen) {
+                // 정확히 24바이트(부분 읽기 처리)
+                var off = 0
+                while (off < EV_SIZE) {
+                    val n = input.read(buf, off, EV_SIZE - off)
+                    if (n < 0) {
+                        // EOF: 이벤트를 하나도 못 읽었으면 텍스트로 폴백
+                        if (!anyEvent) { cleanup(proc); streamOneText(myGen, dev, onPoint); return }
+                        return
+                    }
+                    off += n
+                }
+                anyEvent = true
+                bb.clear()
+                bb.position(16) // timeval 건너뜀
+                val type = bb.short.toInt() and 0xFFFF
+                val code = bb.short.toInt() and 0xFFFF
+                val value = bb.int
+                if (myGen != gen) break
+                if (type == EV_ABS) {
+                    when (code) {
+                        ABS_MT_SLOT -> { curSlot = value; touched.add(curSlot) }
+                        ABS_MT_TRACKING_ID -> {
+                            val s = slots.getOrPut(curSlot) { Slot() }
+                            val newId = if (value == -1) -1 else value
+                            if (s.down && s.id != newId) { s.needUp = true; s.upX = s.x; s.upY = s.y }
+                            s.id = newId
+                            s.down = newId != -1
+                            touched.add(curSlot)
+                        }
+                        ABS_MT_POSITION_X -> { slots.getOrPut(curSlot) { Slot() }.x = value; touched.add(curSlot) }
+                        ABS_MT_POSITION_Y -> { slots.getOrPut(curSlot) { Slot() }.y = value; touched.add(curSlot) }
+                    }
+                } else if (type == EV_SYN && code == SYN_REPORT) {
+                    emit(dev, myGen, slots, touched, onPoint)
+                    touched.clear()
+                }
+            }
+        } catch (_: Throwable) {
+            if (!anyEvent) { cleanup(proc); streamOneText(myGen, dev, onPoint); return }
+        } finally {
+            cleanup(proc)
+        }
+    }
+
+    /** 공통 방출 로직(밀린 up 먼저 → 현재 상태). */
+    private fun emit(
+        dev: TouchDevice, myGen: Int,
+        slots: HashMap<Int, Slot>, touched: HashSet<Int>,
+        onPoint: (TouchDevice, TouchPoint) -> Unit,
+    ) {
+        for (sl in touched) {
+            val s = slots[sl] ?: continue
+            if (myGen != gen) break
+            var upSent = false
+            if (s.needUp) {
+                if (s.upX in 0..dev.maxX && s.upY in 0..dev.maxY) {
+                    onPoint(dev, TouchPoint(sl, s.upX.toFloat() / dev.maxX, s.upY.toFloat() / dev.maxY, s.upX, s.upY, false))
+                }
+                s.needUp = false; upSent = true
+            }
+            if (s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
+                if (s.down) {
+                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, true))
+                } else if (!upSent) {
+                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, false))
+                }
+            }
+        }
+    }
+
+    private fun cleanup(proc: Process) {
+        synchronized(procs) { procs.remove(proc) }
+        runCatching { proc.destroy() }
+    }
+
+    /** 폴백: 기존 getevent -lt 텍스트 파싱. */
+    private fun streamOneText(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
         val proc = try {
             Shell.newProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
         } catch (t: Throwable) {
@@ -113,51 +220,24 @@ class GeteventReader {
                     "ABS_MT_TRACKING_ID" -> {
                         val s = slots.getOrPut(curSlot) { Slot() }
                         val newId = if (ev.value == 0xffffffff.toInt() || ev.value == -1) -1 else ev.value
-                        // 손가락 교체/뗌 감지: 이전 접촉이 down 이었는데 id 가 바뀌거나 -1 이면,
-                        // 이번 SYN 에서 "이전 접촉의 up"을 반드시 먼저 방출(배칭돼도 안 놓침).
-                        if (s.down && s.id != newId) {
-                            s.needUp = true; s.upX = s.x; s.upY = s.y
-                        }
+                        if (s.down && s.id != newId) { s.needUp = true; s.upX = s.x; s.upY = s.y }
                         s.id = newId
                         s.down = newId != -1
                         touched.add(curSlot)
                     }
                     "ABS_MT_POSITION_X" -> { slots.getOrPut(curSlot) { Slot() }.x = ev.value; touched.add(curSlot) }
                     "ABS_MT_POSITION_Y" -> { slots.getOrPut(curSlot) { Slot() }.y = ev.value; touched.add(curSlot) }
-                    "SYN_REPORT" -> {
-                        for (sl in touched) {
-                            val s = slots[sl] ?: continue
-                            if (myGen != gen) break
-                            var upSent = false
-                            // 1) 밀린 up 먼저(이전 접촉 종료) — 옛 좌표로.
-                            if (s.needUp) {
-                                if (s.upX in 0..dev.maxX && s.upY in 0..dev.maxY) {
-                                    onPoint(dev, TouchPoint(sl, s.upX.toFloat() / dev.maxX, s.upY.toFloat() / dev.maxY, s.upX, s.upY, false))
-                                }
-                                s.needUp = false; upSent = true
-                            }
-                            // 2) 현재 상태 방출: down 이면 down, 아니면(이미 up 안 냈을 때만) up.
-                            if (s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
-                                if (s.down) {
-                                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, true))
-                                } else if (!upSent) {
-                                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, false))
-                                }
-                            }
-                        }
-                        touched.clear()
-                    }
+                    "SYN_REPORT" -> { emit(dev, myGen, slots, touched, onPoint); touched.clear() }
                 }
             }
         } catch (_: Throwable) {
         } finally {
-            synchronized(procs) { procs.remove(proc) }
-            runCatching { proc.destroy() }
+            cleanup(proc)
         }
     }
 
     fun stop() {
-        gen++ // 이 시점 이전에 시작된 모든 스트림의 방출을 무효화
+        gen++
         synchronized(procs) {
             procs.forEach { runCatching { it.destroy() } }
             procs.clear()

@@ -1,570 +1,274 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy fix: 오버레이/목록 그림자 짤림 수정 + 목록 오른쪽 정렬
+# Loopy: 터치 리더를 /dev/input 바이너리 직접 읽기로 전환(텍스트 폴백 포함)
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
-cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
-package com.loopy.app.overlay
+cat > "app/src/main/java/com/loopy/app/input/GeteventReader.kt" << 'LOOPY_EOF'
+package com.loopy.app.input
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.Rect
-import android.graphics.drawable.GradientDrawable
-import android.hardware.display.DisplayManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.util.DisplayMetrics
-import android.util.TypedValue
-import android.view.Display
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.Surface
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
-import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
-import com.loopy.app.R
-import com.loopy.app.input.RawRecorder
-import com.loopy.app.input.GeteventReader
-import com.loopy.app.input.TouchDevice
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.Playlist
-import com.loopy.app.macro.PlaylistStore
-import com.loopy.app.service.LoopyService
+import com.loopy.app.shizuku.Shell
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.hypot
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/** 정규화된 터치 한 점 (0.0~1.0). slot = 손가락 번호(멀티터치 구분). */
+data class TouchPoint(
+    val slot: Int,
+    val nx: Float,
+    val ny: Float,
+    val rawX: Int,
+    val rawY: Int,
+    val down: Boolean,
+)
+
+/** getevent -pl 로 찾아낸 터치 가능 디바이스. */
+data class TouchDevice(
+    val path: String,
+    val name: String,
+    val maxX: Int,
+    val maxY: Int,
+)
 
 /**
- * 매크로/플레이리스트 컨트롤 오버레이.
- *  - 녹화: getevent → RawRecorder(좌표 타임라인). 정지 시 자동 저장.
- *  - 재생: 저장 매크로 하나, 또는 플레이리스트(셔플백 + N회/무한)를 injectInputEvent 로 주입.
+ * 터치를 실시간으로 읽는다.
+ *
+ * 기본: /dev/input/eventX 를 **바이너리로 직접** 읽어 struct input_event 를 파싱한다
+ * (64비트 = 24바이트/이벤트). getevent 텍스트 파싱과 달리 배칭·손실이 없어 정확도 100%에 가깝다.
+ * 폴백: 바이너리가 즉시 실패(권한/EOF)하면 기존 getevent 텍스트 파싱으로 자동 전환.
+ *
+ * 정지 신뢰성: 프로세스를 destroy 하고 "세대(gen)" 토큰으로 옛 스트림 방출을 원천 차단한다.
  */
-class OverlayService : Service() {
+class GeteventReader {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private lateinit var wm: WindowManager
+    private val jobs = mutableListOf<Job>()
+    private val procs = mutableListOf<Process>()
+    @Volatile private var gen = 0
 
-    private val reader = GeteventReader()
-    private val recorder = RawRecorder()
-    private var device: TouchDevice? = null
-    private var recording = false
-    private var playJob: Job? = null
-
-    private lateinit var bar: LinearLayout
-    private lateinit var barParams: WindowManager.LayoutParams
-    private lateinit var fab: FabLogoView
-    private lateinit var panel: LinearLayout
-    private lateinit var listHolder: LinearLayout
-    private var expanded = false
-    private var hintView: TextView? = null
-    private var dimView: View? = null
-    private var deepLocked = false
-    private lateinit var status: TextView
-    private lateinit var recordBtn: ImageButton
-    private lateinit var stopPlayBtn: TextView
-    private var listPanel: LinearLayout? = null
-
-    private val displayObj by lazy {
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
+    // ── struct input_event (64bit) ──
+    private companion object {
+        const val EV_SIZE = 24        // timeval(16) + type(2) + code(2) + value(4)
+        const val EV_SYN = 0x00
+        const val EV_ABS = 0x03
+        const val SYN_REPORT = 0x00
+        const val ABS_MT_SLOT = 0x2f
+        const val ABS_MT_POSITION_X = 0x35
+        const val ABS_MT_POSITION_Y = 0x36
+        const val ABS_MT_TRACKING_ID = 0x39
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    fun probe(): List<TouchDevice> {
+        val out = Shell.run("getevent -pl") ?: return emptyList()
+        var curPath: String? = null
+        var curName = ""
+        var maxX = -1
+        var maxY = -1
+        val found = mutableListOf<TouchDevice>()
 
-    override fun onCreate() {
-        super.onCreate()
-        startAsForeground()
-        LoopyService.bind(this)
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        recorder.shouldIgnore = { u, v -> barContains(u, v) }
-        buildOverlay()
-    }
-
-    private fun dp(v: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
-    ).toInt()
-
-    private fun buildOverlay() {
-        // 루트: 세로. 위=[FAB + 가로 슬림 패널], 아래=상태/힌트/목록.
-        bar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-            // 그림자가 창 밖으로 안 짤리게 여백 + clip 해제
-            clipChildren = false
-            clipToPadding = false
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+        fun flush() {
+            val p = curPath
+            if (p != null && maxX > 0 && maxY > 0) found += TouchDevice(p, curName, maxX, maxY)
         }
 
-        // 접힌 상태의 동그란 FAB
-        val fabSize = dp(46)
-        fab = FabLogoView(this)
-        fab.elevation = dp(6).toFloat()
-
-        // 펼치면 FAB 옆으로 길게 나오는 슬림 가로 pill
-        panel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            background = pill(0xFFFFFFFF.toInt(), dp(22))
-            elevation = dp(6).toFloat()
-            visibility = View.GONE
-        }
-        recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
-        val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
-        val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
-        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
-            setDeepSLock(true)
-            if (expanded) toggleExpand()
-        }
-        panel.addView(recordBtn)
-        panel.addView(playBtn, marginLeft(dp(8)))
-        panel.addView(listBtn, marginLeft(dp(8)))
-        panel.addView(moonBtn, marginLeft(dp(8)))
-
-        val hRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-        hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
-        hRow.addView(panel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { leftMargin = dp(8) })
-
-        status = TextView(this).apply {
-            setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-        }
-        stopPlayBtn = TextView(this).apply {
-            text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-            setOnClickListener { stopPlayback("정지됨") }
-        }
-        val hintTv = TextView(this).apply {
-            text = "탭: 접기 · 길게 눌러 종료"
-            setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
-            setPadding(dp(6), dp(4), 0, 0)
-            visibility = View.GONE
-        }
-        hintView = hintTv
-
-        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래, 오른쪽 정렬
-        listHolder = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        bar.addView(hRow)
-        bar.addView(listHolder, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ))
-        bar.addView(status)
-        bar.addView(stopPlayBtn)
-        bar.addView(hintTv)
-
-        barParams = baseParams().apply { x = dp(-4); y = dp(64) }
-        setupFabTouch()
-        wm.addView(bar, barParams)
-    }
-
-    /** 원형 아이콘 버튼 — 아이콘 tint + 옅은 원형 배경으로 airy 하게. */
-    private fun iconBtn(iconRes: Int, tint: Int, bgTint: Int, onClick: () -> Unit) =
-        ImageButton(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(tint)
-            background = circleBg(bgTint)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val sz = dp(42)
-            layoutParams = LinearLayout.LayoutParams(sz, sz)
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            setOnClickListener { onClick() }
-        }
-
-    private fun circleBg(color: Int) = android.graphics.drawable.GradientDrawable().apply {
-        shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(color)
-    }
-
-    /** Deep SLock: 검은 레이어(non-touchable, 매크로 통과) + 최소 밝기. 달 버튼/FAB 재탭으로 토글. */
-    private fun setDeepSLock(on: Boolean) {
-        if (on) {
-            if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
-            val p = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
-            runCatching { wm.addView(v, p) }
-            dimView = v
-            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
-            runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.setMoon(true)
-            deepLocked = true
-        } else {
-            dimView?.let { runCatching { wm.removeView(it) } }
-            dimView = null
-            fab.setMoon(false)
-            deepLocked = false
-        }
-    }
-
-    /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
-    private fun toggleExpand() {
-        expanded = !expanded
-        val vis = if (expanded) View.VISIBLE else View.GONE
-        panel.visibility = vis
-        status.visibility = vis
-        hintView?.visibility = vis
-        if (!expanded) {
-            stopPlayBtn.visibility = View.GONE
-            listPanel?.let { listHolder.removeView(it); listPanel = null }
-        }
-    }
-
-    /** FAB: 탭=접기/펼치기, 드래그=이동, 길게=종료. */
-    private fun setupFabTouch() {
-        val slop = ViewConfiguration.get(this).scaledTouchSlop
-        val handler = Handler(Looper.getMainLooper())
-        var downRawX = 0f
-        var downRawY = 0f
-        var startX = 0
-        var startY = 0
-        var dragged = false
-        var longFired = false
-        val longPress = Runnable { longFired = true; stopSelf() }
-
-        fab.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downRawX = e.rawX; downRawY = e.rawY
-                    startX = barParams.x; startY = barParams.y
-                    dragged = false; longFired = false
-                    handler.postDelayed(longPress, 600)
-                    true
+        for (raw in out.lineSequence()) {
+            val line = raw.trim()
+            when {
+                line.startsWith("add device") -> {
+                    flush()
+                    curPath = line.substringAfter(": ", "").trim().ifEmpty { null }
+                    curName = ""; maxX = -1; maxY = -1
                 }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downRawX
-                    val dy = e.rawY - downRawY
-                    if (!dragged && hypot(dx, dy) > slop) {
-                        dragged = true
-                        handler.removeCallbacks(longPress)
+                line.startsWith("name:") -> curName = line.substringAfter("name:").trim().trim('"')
+                line.contains("ABS_MT_POSITION_X") -> maxX = extractMax(line).coerceAtLeast(maxX)
+                line.contains("ABS_MT_POSITION_Y") -> maxY = extractMax(line).coerceAtLeast(maxY)
+            }
+        }
+        flush()
+        return found.sortedByDescending { it.name.contains("touchscreen", ignoreCase = true) }
+    }
+
+    private fun extractMax(line: String): Int {
+        val i = line.indexOf("max")
+        if (i < 0) return -1
+        val rest = line.substring(i + 3)
+        val num = rest.dropWhile { !it.isDigit() && it != '-' }.takeWhile { it.isDigit() || it == '-' }
+        return num.toIntOrNull() ?: -1
+    }
+
+    fun stream(
+        scope: CoroutineScope,
+        devices: List<TouchDevice>,
+        onPoint: (TouchDevice, TouchPoint) -> Unit,
+    ) {
+        stop()
+        val myGen = gen
+        for (dev in devices) jobs += scope.launch(Dispatchers.IO) { streamOne(myGen, dev, onPoint) }
+    }
+
+    private class Slot(
+        var x: Int = -1, var y: Int = -1, var down: Boolean = false,
+        var id: Int = -1,
+        var needUp: Boolean = false, var upX: Int = -1, var upY: Int = -1,
+    )
+
+    /** 바이너리 리더(우선). 즉시 실패 시 텍스트 폴백. */
+    private fun streamOne(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
+        val proc = try {
+            Shell.newProcess(arrayOf("sh", "-c", "cat ${dev.path}"))
+        } catch (t: Throwable) {
+            streamOneText(myGen, dev, onPoint); return
+        }
+        synchronized(procs) { procs.add(proc) }
+        val slots = HashMap<Int, Slot>()
+        val touched = HashSet<Int>()
+        var curSlot = 0
+        var anyEvent = false
+        val buf = ByteArray(EV_SIZE)
+        val bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
+        try {
+            val input = proc.inputStream
+            while (myGen == gen) {
+                // 정확히 24바이트(부분 읽기 처리)
+                var off = 0
+                while (off < EV_SIZE) {
+                    val n = input.read(buf, off, EV_SIZE - off)
+                    if (n < 0) {
+                        // EOF: 이벤트를 하나도 못 읽었으면 텍스트로 폴백
+                        if (!anyEvent) { cleanup(proc); streamOneText(myGen, dev, onPoint); return }
+                        return
                     }
-                    if (dragged) {
-                        barParams.x = startX + dx.toInt()
-                        barParams.y = startY + dy.toInt()
-                        runCatching { wm.updateViewLayout(bar, barParams) }
+                    off += n
+                }
+                anyEvent = true
+                bb.clear()
+                bb.position(16) // timeval 건너뜀
+                val type = bb.short.toInt() and 0xFFFF
+                val code = bb.short.toInt() and 0xFFFF
+                val value = bb.int
+                if (myGen != gen) break
+                if (type == EV_ABS) {
+                    when (code) {
+                        ABS_MT_SLOT -> { curSlot = value; touched.add(curSlot) }
+                        ABS_MT_TRACKING_ID -> {
+                            val s = slots.getOrPut(curSlot) { Slot() }
+                            val newId = if (value == -1) -1 else value
+                            if (s.down && s.id != newId) { s.needUp = true; s.upX = s.x; s.upY = s.y }
+                            s.id = newId
+                            s.down = newId != -1
+                            touched.add(curSlot)
+                        }
+                        ABS_MT_POSITION_X -> { slots.getOrPut(curSlot) { Slot() }.x = value; touched.add(curSlot) }
+                        ABS_MT_POSITION_Y -> { slots.getOrPut(curSlot) { Slot() }.y = value; touched.add(curSlot) }
                     }
-                    true
+                } else if (type == EV_SYN && code == SYN_REPORT) {
+                    emit(dev, myGen, slots, touched, onPoint)
+                    touched.clear()
                 }
-                MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(longPress)
-                    if (!dragged && !longFired) {
-                        if (deepLocked) setDeepSLock(false) else toggleExpand()
+            }
+        } catch (_: Throwable) {
+            if (!anyEvent) { cleanup(proc); streamOneText(myGen, dev, onPoint); return }
+        } finally {
+            cleanup(proc)
+        }
+    }
+
+    /** 공통 방출 로직(밀린 up 먼저 → 현재 상태). */
+    private fun emit(
+        dev: TouchDevice, myGen: Int,
+        slots: HashMap<Int, Slot>, touched: HashSet<Int>,
+        onPoint: (TouchDevice, TouchPoint) -> Unit,
+    ) {
+        for (sl in touched) {
+            val s = slots[sl] ?: continue
+            if (myGen != gen) break
+            var upSent = false
+            if (s.needUp) {
+                if (s.upX in 0..dev.maxX && s.upY in 0..dev.maxY) {
+                    onPoint(dev, TouchPoint(sl, s.upX.toFloat() / dev.maxX, s.upY.toFloat() / dev.maxY, s.upX, s.upY, false))
+                }
+                s.needUp = false; upSent = true
+            }
+            if (s.x in 0..dev.maxX && s.y in 0..dev.maxY) {
+                if (s.down) {
+                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, true))
+                } else if (!upSent) {
+                    onPoint(dev, TouchPoint(sl, s.x.toFloat() / dev.maxX, s.y.toFloat() / dev.maxY, s.x, s.y, false))
+                }
+            }
+        }
+    }
+
+    private fun cleanup(proc: Process) {
+        synchronized(procs) { procs.remove(proc) }
+        runCatching { proc.destroy() }
+    }
+
+    /** 폴백: 기존 getevent -lt 텍스트 파싱. */
+    private fun streamOneText(myGen: Int, dev: TouchDevice, onPoint: (TouchDevice, TouchPoint) -> Unit) {
+        val proc = try {
+            Shell.newProcess(arrayOf("sh", "-c", "getevent -lt ${dev.path}"))
+        } catch (t: Throwable) {
+            return
+        }
+        synchronized(procs) { procs.add(proc) }
+        val slots = HashMap<Int, Slot>()
+        val touched = HashSet<Int>()
+        var curSlot = 0
+        try {
+            val br = proc.inputStream.bufferedReader()
+            while (myGen == gen) {
+                val line = br.readLine() ?: break
+                val ev = parseLine(line) ?: continue
+                when (ev.code) {
+                    "ABS_MT_SLOT" -> { curSlot = ev.value; touched.add(curSlot) }
+                    "ABS_MT_TRACKING_ID" -> {
+                        val s = slots.getOrPut(curSlot) { Slot() }
+                        val newId = if (ev.value == 0xffffffff.toInt() || ev.value == -1) -1 else ev.value
+                        if (s.down && s.id != newId) { s.needUp = true; s.upX = s.x; s.upY = s.y }
+                        s.id = newId
+                        s.down = newId != -1
+                        touched.add(curSlot)
                     }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    handler.removeCallbacks(longPress); true
-                }
-                else -> false
-            }
-        }
-    }
-
-    private fun marginLeft(px: Int) = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-    ).apply { leftMargin = px }
-
-    private fun baseParams(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            android.graphics.PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-
-    // ── 녹화 ──
-    private fun toggleRecord() {
-        if (!recording) startRecord() else stopRecord()
-    }
-
-    private fun startRecord() {
-        stopPlayback(null)
-        val devs = reader.probe()
-        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { status.text = "터치 디바이스를 못 찾음"; return }
-        device = dev
-        recorder.reset()
-        recording = true
-        recordBtn.setImageResource(R.drawable.ic_ov_stop)
-        status.text = "● 녹화중 — 평소처럼 플레이해"
-        reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
-    }
-
-    private fun stopRecord() {
-        reader.stop()
-        recording = false
-        recordBtn.setImageResource(R.drawable.ic_ov_record)
-        val snap = recorder.snapshot()
-        if (snap.isEmpty()) { status.text = "행동 없음 (저장 안 함)"; return }
-        val m = MacroStore.saveNew(this, snap)
-        status.text = "저장됨: ${m.name} · ${snap.size}개"
-    }
-
-    // ── 재생 ──
-    private fun playRecorded() {
-        if (recording) stopRecord()
-        startSingle(recorder.snapshot(), "지금 녹화")
-    }
-
-    private fun startSingle(strokes: List<Stroke>, label: String) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        if (strokes.isEmpty()) { status.text = "재생할 게 없어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        status.text = "▶ 재생중… $label"
-        playJob = scope.launch {
-            runStrokes(strokes)
-            status.text = "재생 끝 · $label"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun playPlaylist(pl: Playlist) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        val macros = HashMap<String, Macro>()
-        pl.macroIds.toSet().forEach { id -> MacroStore.read(this, id)?.let { macros[id] = it } }
-        if (macros.isEmpty()) { status.text = "매크로가 비어있어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        playJob = scope.launch {
-            var cycle = 0
-            while (isActive && (pl.cycles == 0 || cycle < pl.cycles)) {
-                val order = if (pl.shuffle) pl.macroIds.shuffled() else pl.macroIds
-                for (id in order) {
-                    if (!isActive) break
-                    val m = macros[id] ?: continue
-                    val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
-                    status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
-                    runStrokes(m.strokes)
-                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
-                }
-                cycle++
-            }
-            status.text = "플레이리스트 끝 · ${pl.name}"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun stopPlayback(msg: String?) {
-        playJob?.cancel()
-        playJob = null
-        stopPlayBtn.visibility = View.GONE
-        if (msg != null) status.text = msg
-    }
-
-    /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
-    /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
-    private suspend fun runStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val w = m.widthPixels
-        val h = m.heightPixels
-        val rot = displayObj.rotation
-
-        val nStroke = strokes.size
-        // 손가락 id 배정: 겹치지 않는 스트로크끼리는 같은 id 재사용(활성 포인터 수 최소화).
-        val fingerIds = IntArray(nStroke)
-        val idFreeAt = ArrayList<Long>()
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
-            var assigned = -1
-            for (id in idFreeAt.indices) {
-                if (idFreeAt[id] <= s.startMs) { assigned = id; break }
-            }
-            if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
-            fingerIds[k] = assigned
-        }
-
-        val totalSamples = strokes.sumOf { it.samples.size }
-        val startArr = LongArray(nStroke)
-        val durArr = LongArray(nStroke)
-        val counts = IntArray(nStroke)
-        val xs = IntArray(totalSamples)
-        val ys = IntArray(totalSamples)
-        val times = LongArray(totalSamples)
-        var off = 0
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            startArr[k] = s.startMs
-            durArr[k] = s.durationMs
-            counts[k] = s.samples.size
-            for (i in s.samples.indices) {
-                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
-                xs[off] = px; ys[off] = py; times[off] = s.samples[i].t
-                off++
-            }
-        }
-        withContext(Dispatchers.IO) {
-            LoopyService.playMulti(fingerIds, startArr, durArr, counts, xs, ys, times)
-        }
-    }
-
-    // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
-    private fun toggleList() {
-        listPanel?.let { listHolder.removeView(it); listPanel = null; return }
-        val playlists = PlaylistStore.list(this)
-        val macros = MacroStore.list(this)
-        val lp = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = pill(0xFFFFFFFF.toInt(), dp(18))
-            elevation = dp(8).toFloat()
-            minimumWidth = dp(210)
-        }
-        if (playlists.isEmpty() && macros.isEmpty()) {
-            lp.addView(hint("저장된 게 없어"))
-        } else {
-            if (playlists.isNotEmpty()) {
-                lp.addView(hint("─ 플레이리스트 ─"))
-                for (pl in playlists) {
-                    lp.addView(listRow("${pl.name}  ·  ${pl.macroIds.size}스텝", 0xFF6C7BFF.toInt()) {
-                        toggleList(); playPlaylist(pl)
-                    })
+                    "ABS_MT_POSITION_X" -> { slots.getOrPut(curSlot) { Slot() }.x = ev.value; touched.add(curSlot) }
+                    "ABS_MT_POSITION_Y" -> { slots.getOrPut(curSlot) { Slot() }.y = ev.value; touched.add(curSlot) }
+                    "SYN_REPORT" -> { emit(dev, myGen, slots, touched, onPoint); touched.clear() }
                 }
             }
-            if (macros.isNotEmpty()) {
-                lp.addView(hint("─ 매크로 ─"))
-                for (mac in macros) {
-                    lp.addView(listRow("${mac.name}  ·  ${mac.strokes.size}", 0xFF2B2D42.toInt()) {
-                        toggleList(); startSingle(mac.strokes, mac.name)
-                    })
-                }
-            }
-        }
-        listHolder.addView(lp, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
-        listPanel = lp
-    }
-
-    private fun hint(t: String) = TextView(this).apply {
-        text = t; setTextColor(0xFF9AA0B4.toInt()); textSize = 10f
-        setPadding(dp(2), dp(8), 0, dp(4))
-        letterSpacing = 0.06f
-    }
-
-    private fun listRow(t: String, color: Int, onClick: () -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(9), dp(10), dp(9))
-        background = pill(0x0A000000, dp(12)) // 아주 옅은 행 배경
-        val dot = View(this@OverlayService).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(color)
-            }
-        }
-        addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)))
-        addView(TextView(this@OverlayService).apply {
-            text = t; setTextColor(0xFF2B2D42.toInt()); textSize = 13f
-            setPadding(dp(10), 0, 0, 0)
-        })
-        setOnClickListener { onClick() }
-    }
-
-    private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
-        Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
-        Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
-        Surface.ROTATION_270 -> ((1 - v) * w).toInt() to (u * h).toInt()
-        else -> (u * w).toInt() to (v * h).toInt()
-    }
-
-    private fun barContains(u: Float, v: Float): Boolean {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
-        val loc = IntArray(2)
-        bar.getLocationOnScreen(loc)
-        return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
-    }
-
-
-    private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = radius.toFloat()
-    }
-
-    private fun startAsForeground() {
-        val channelId = "loopy_overlay"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                NotificationChannel(channelId, "Loopy 오버레이", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-        val notif: Notification = Notification.Builder(this, channelId)
-            .setContentTitle("Loopy 실행 중")
-            .setContentText("매크로 컨트롤이 화면에 떠 있어요")
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .setOngoing(true)
-            .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1, notif)
+        } catch (_: Throwable) {
+        } finally {
+            cleanup(proc)
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        reader.stop()
-        scope.cancel()
-        dimView?.let { runCatching { wm.removeView(it) } }
-        runCatching { wm.removeView(bar) }
+    fun stop() {
+        gen++
+        synchronized(procs) {
+            procs.forEach { runCatching { it.destroy() } }
+            procs.clear()
+        }
+        jobs.forEach { it.cancel() }
+        jobs.clear()
+    }
+
+    private data class Ev(val type: String, val code: String, val value: Int)
+
+    private fun parseLine(line: String): Ev? {
+        val body = if (line.startsWith("[")) line.substringAfter("]").trim() else line.trim()
+        val toks = body.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        if (toks.size < 3) return null
+        if (!toks[0].startsWith("EV_")) return null
+        val value = toks[2].toLongOrNull(16)?.toInt() ?: return null
+        return Ev(toks[0], toks[1], value)
     }
 }
 LOOPY_EOF
 
 echo "반영."
 git add -A
-git commit -m "fix: 오버레이 그림자 짤림(여백+clip해제) + 목록 오른쪽 정렬"
+git commit -m "바이너리 전환: /dev/input/eventX 직접 읽기(struct input_event) + 텍스트 폴백"
 git push
 echo "푸시 완료!"
 
