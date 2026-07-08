@@ -7,13 +7,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 // Loopy 팔레트 — 오프화이트 베이스 + 파스텔 메쉬 (Soft Flow)
-val LoopyBg = Color(0xFFF8F9FA)      // 소프트 스노우 배경
 val LoopyCard = Color(0xFFFFFFFF)    // 퓨어 화이트 카드
 val TextHi = Color(0xFF2B2D42)       // 딥 차콜 (주요 텍스트)
 val TextLo = Color(0xFF8A8DA0)       // 뮤트 그레이 (보조 텍스트)
 
 val Accent = Color(0xFF6C7BFF)       // 페리윙클 (강조/버튼 텍스트)
-val LoopyViolet = Accent             // 기존 참조 호환용 별칭
 
 // 파스텔 메쉬 3색
 val MeshPeach = Color(0xFFFFB8B1)    // 피치 오로라 (녹화/액션)
@@ -23,20 +21,16 @@ val MeshMint = Color(0xFFB5E2FA)     // 민트 브리즈 (재생/루프)
 val CardStroke = Color(0x142B2D42)   // 차콜 8% 테두리
 
 // 순백 베이스 (리디자인) + 헤더 타이틀 그라데이션(페리윙클→민트)
-val LoopyWhite = Color(0xFFFFFFFF)
-val LoopySubtle = Color(0xFFF6F7FB)  // 카드 미묘한 광채용
 val GradA = Color(0xFF6C7BFF)        // 페리윙클
 val GradB = Color(0xFF5FD0E8)        // 민트(살짝 채도↑ 시원하게)
 
 // 뉴모피즘 — 살짝 쿨한 오프화이트 베이스 + 밝은/어두운 이중 그림자
 val NeuBase = Color(0xFFEEF1F7)      // 카드/배경 공통 베이스(그림자가 보이도록 순백보다 살짝 회색)
-val NeuLight = Color(0xFFFFFFFF)     // 좌상단 하이라이트
-val NeuDark = Color(0xFFC9D0E0)      // 우하단 그림자
 
 private val LoopyColors = lightColorScheme(
     primary = Accent,
     secondary = MeshMint,
-    background = LoopyBg,
+    background = NeuBase,
     surface = LoopyCard,
     onPrimary = Color.White,
     onBackground = TextHi,
