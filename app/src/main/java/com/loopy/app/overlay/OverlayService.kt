@@ -120,7 +120,7 @@ class OverlayService : Service() {
         recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
         val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
         val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
-        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFF6C7BFF.toInt(), 0x226C7BFF) {
+        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
             setDeepSLock(true)
             if (expanded) toggleExpand()
         }
@@ -189,7 +189,7 @@ class OverlayService : Service() {
     private fun setDeepSLock(on: Boolean) {
         if (on) {
             if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xDB000000.toInt()) } // ~86% 블랙
+            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
             val p = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -199,17 +199,17 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(권한 불필요)
+            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
             runCatching { wm.addView(v, p) }
             dimView = v
-            // FAB(달 버튼)를 검은 레이어 위로 올려 다시 누를 수 있게
+            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
             runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.alpha = 0.4f // 희미하게
+            fab.setMoon(true)
             deepLocked = true
         } else {
             dimView?.let { runCatching { wm.removeView(it) } }
             dimView = null
-            fab.alpha = 1f
+            fab.setMoon(false)
             deepLocked = false
         }
     }
