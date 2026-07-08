@@ -63,6 +63,9 @@ class LoopyUserService : ILoopyService.Stub() {
 
     private class MEv(val time: Long, val kind: Int, val finger: Int, val x: Int, val y: Int)
 
+    // 같은 시각 처리 우선순위: UP(2)→0, DOWN(0)→1, MOVE(1)→2
+    private fun orderKey(kind: Int): Int = when (kind) { 2 -> 0; 0 -> 1; else -> 2 }
+
     override fun playMulti(
         fingerIds: IntArray, startMs: LongArray, durationsMs: LongArray, sampleCounts: IntArray,
         xsFlat: IntArray, ysFlat: IntArray, timesFlat: LongArray,
@@ -88,7 +91,8 @@ class LoopyUserService : ILoopyService.Stub() {
                 off += cnt
             }
             if (events.isEmpty()) return
-            events.sortWith(compareBy({ it.time }, { it.kind })) // 동시각: DOWN→MOVE→UP
+            // 같은 시각이면 UP → DOWN → MOVE 순(앞 탭을 떼고 다음 탭을 눌러 뭉갬 방지).
+            events.sortWith(compareBy({ it.time }, { orderKey(it.kind) }))
 
             val order = ArrayList<Int>()
             val posX = HashMap<Int, Int>()
@@ -102,13 +106,19 @@ class LoopyUserService : ILoopyService.Stub() {
                 if (wait > 0) Thread.sleep(wait)
                 when (ev.kind) {
                     0 -> { // DOWN
-                        if (order.isEmpty()) downTime = SystemClock.uptimeMillis()
-                        order.add(ev.finger)
-                        posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
-                        val idx = order.indexOf(ev.finger)
-                        val action = if (order.size == 1) MotionEvent.ACTION_DOWN
-                        else MotionEvent.ACTION_POINTER_DOWN or (idx shl shift)
-                        injectPointers(downTime, action, order, posX, posY)
+                        if (order.contains(ev.finger)) {
+                            // 이미 눌린 id(중복) → 이동으로 처리(중복 포인터 방지)
+                            posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
+                            injectPointers(downTime, MotionEvent.ACTION_MOVE, order, posX, posY)
+                        } else {
+                            if (order.isEmpty()) downTime = SystemClock.uptimeMillis()
+                            order.add(ev.finger)
+                            posX[ev.finger] = ev.x; posY[ev.finger] = ev.y
+                            val idx = order.indexOf(ev.finger)
+                            val action = if (order.size == 1) MotionEvent.ACTION_DOWN
+                            else MotionEvent.ACTION_POINTER_DOWN or (idx shl shift)
+                            injectPointers(downTime, action, order, posX, posY)
+                        }
                     }
                     1 -> { // MOVE
                         posX[ev.finger] = ev.x; posY[ev.finger] = ev.y

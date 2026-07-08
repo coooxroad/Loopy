@@ -411,7 +411,7 @@ class OverlayService : Service() {
             val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
             var assigned = -1
             for (id in idFreeAt.indices) {
-                if (idFreeAt[id] <= s.startMs) { assigned = id; break }
+                if (idFreeAt[id] + 12L <= s.startMs) { assigned = id; break }
             }
             if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
             fingerIds[k] = assigned
