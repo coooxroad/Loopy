@@ -1,674 +1,667 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy 영상 4/4: OverlayService 배선(영상 토글+싱크)
+# Loopy 세션 3/3: MainActivity(홈+설정 세션 토글)
 set -e
 
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
 
-cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
-package com.loopy.app.overlay
+mkdir -p "$(dirname "app/src/main/java/com/loopy/app/MainActivity.kt")"
+cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
+package com.loopy.app
 
-import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.Rect
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.app.Activity
 import android.media.projection.MediaProjectionManager
-import java.io.File
-import android.graphics.drawable.GradientDrawable
-import android.hardware.display.DisplayManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.util.DisplayMetrics
-import android.util.TypedValue
-import android.view.Display
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.Surface
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
-import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.ScrollView
-import android.widget.LinearLayout
-import android.widget.TextView
-import com.loopy.app.R
-import com.loopy.app.input.RawRecorder
-import com.loopy.app.input.GeteventReader
-import com.loopy.app.input.TouchDevice
+import com.loopy.app.overlay.VideoSession
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.loopy.app.macro.Macro
 import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.Playlist
 import com.loopy.app.macro.PlaylistStore
+import com.loopy.app.overlay.OverlayService
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
 import com.loopy.app.service.LoopyService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.hypot
+import com.loopy.app.shizuku.ShizukuManager
+import com.loopy.app.shizuku.ShizukuState
+import com.loopy.app.ui.theme.Accent
+import com.loopy.app.ui.theme.CardStroke
+import com.loopy.app.ui.theme.GradientTitle
+import com.loopy.app.ui.theme.LineIcon
+import com.loopy.app.ui.theme.SoftCard
+import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.ui.theme.LoopyTheme
+import com.loopy.app.ui.theme.NeuBase
+import com.loopy.app.ui.theme.AnimatedBottomGradient
+import com.loopy.app.ui.theme.MeshLavender
+import com.loopy.app.ui.theme.MeshMint
+import com.loopy.app.ui.theme.MeshPeach
+import com.loopy.app.ui.theme.TextHi
+import com.loopy.app.ui.theme.TextLo
+import rikka.shizuku.Shizuku
 
-/**
- * 매크로/플레이리스트 컨트롤 오버레이.
- *  - 녹화: getevent → RawRecorder(좌표 타임라인). 정지 시 자동 저장.
- *  - 재생: 저장 매크로 하나, 또는 플레이리스트(셔플백 + N회/무한)를 injectInputEvent 로 주입.
- */
-class OverlayService : Service() {
+class MainActivity : ComponentActivity() {
+    private val binderListener = Shizuku.OnBinderReceivedListener { onShizukuChanged?.invoke() }
+    private val deadListener = Shizuku.OnBinderDeadListener { onShizukuChanged?.invoke() }
+    private var onShizukuChanged: (() -> Unit)? = null
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private lateinit var wm: WindowManager
-
-    private val reader = GeteventReader()
-    private val recorder = RawRecorder()
-    private var device: TouchDevice? = null
-    private var recording = false
-    private var videoEnabled = false
-    private var currentVideoPath: String? = null
-    private val screenRecorder by lazy { ScreenRecorder(this) }
-    private var videoBtn: ImageButton? = null
-
-    companion object {
-        const val ACTION_START_VIDEO = "com.loopy.app.START_VIDEO"
-        const val ACTION_START_MACRO_ONLY = "com.loopy.app.START_MACRO_ONLY"
-        const val EX_CODE = "code"
-        const val EX_DATA = "data"
-    }
-    private var playJob: Job? = null
-
-    private lateinit var bar: LinearLayout
-    private lateinit var barParams: WindowManager.LayoutParams
-    private lateinit var fab: FabLogoView
-    private lateinit var panel: LinearLayout
-    private lateinit var listHolder: LinearLayout
-    private var expanded = false
-    private var hintView: TextView? = null
-    private var dimView: View? = null
-    private var deepLocked = false
-    private lateinit var status: TextView
-    private lateinit var recordBtn: ImageButton
-    private lateinit var stopPlayBtn: TextView
-    private var listPanel: LinearLayout? = null
-
-    private val displayObj by lazy {
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
-    }
-
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START_VIDEO -> beginVideoThenRecord(intent)
-            ACTION_START_MACRO_ONLY -> startRecord(null)
-        }
-        return START_STICKY
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        startAsForeground()
-        LoopyService.bind(this)
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        recorder.shouldIgnore = { u, v -> barContains(u, v) }
-        buildOverlay()
-    }
-
-    private fun dp(v: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
-    ).toInt()
-
-    private fun buildOverlay() {
-        // 루트: 세로. 위=[FAB + 가로 슬림 패널], 아래=상태/힌트/목록.
-        bar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-            // 그림자가 창 밖으로 안 짤리게 여백 + clip 해제
-            clipChildren = false
-            clipToPadding = false
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-
-        // 접힌 상태의 동그란 FAB
-        val fabSize = dp(46)
-        fab = FabLogoView(this)
-        fab.elevation = dp(6).toFloat()
-
-        // 펼치면 FAB 옆으로 길게 나오는 슬림 가로 pill
-        panel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            background = pill(0xFFFFFFFF.toInt(), dp(22))
-            elevation = dp(6).toFloat()
-            visibility = View.GONE
-        }
-        recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
-        val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
-        val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
-        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
-            setDeepSLock(true)
-            if (expanded) toggleExpand()
-        }
-        val vBtn = iconBtn(R.drawable.ic_ov_video, videoTint(), videoBg()) { toggleVideo() }
-        videoBtn = vBtn
-        panel.addView(recordBtn)
-        panel.addView(playBtn, marginLeft(dp(8)))
-        panel.addView(vBtn, marginLeft(dp(8)))
-        panel.addView(listBtn, marginLeft(dp(8)))
-        panel.addView(moonBtn, marginLeft(dp(8)))
-
-        val hRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-        hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
-        hRow.addView(panel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { leftMargin = dp(8) })
-
-        status = TextView(this).apply {
-            setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-        }
-        stopPlayBtn = TextView(this).apply {
-            text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-            setOnClickListener { stopPlayback("정지됨") }
-        }
-        val hintTv = TextView(this).apply {
-            text = "탭: 접기 · 길게 눌러 종료"
-            setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
-            setPadding(dp(6), dp(4), 0, 0)
-            visibility = View.GONE
-        }
-        hintView = hintTv
-
-        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래, 오른쪽 정렬
-        listHolder = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        bar.addView(hRow)
-        bar.addView(listHolder, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ))
-        bar.addView(status)
-        bar.addView(stopPlayBtn)
-        bar.addView(hintTv)
-
-        barParams = baseParams().apply { x = dp(-4); y = dp(64) }
-        setupFabTouch()
-        wm.addView(bar, barParams)
-    }
-
-    /** 원형 아이콘 버튼 — 아이콘 tint + 옅은 원형 배경으로 airy 하게. */
-    private fun iconBtn(iconRes: Int, tint: Int, bgTint: Int, onClick: () -> Unit) =
-        ImageButton(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(tint)
-            background = circleBg(bgTint)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val sz = dp(42)
-            layoutParams = LinearLayout.LayoutParams(sz, sz)
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            setOnClickListener { onClick() }
-        }
-
-    private fun circleBg(color: Int) = android.graphics.drawable.GradientDrawable().apply {
-        shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(color)
-    }
-
-    /** Deep SLock: 검은 레이어(non-touchable, 매크로 통과) + 최소 밝기. 달 버튼/FAB 재탭으로 토글. */
-    private fun setDeepSLock(on: Boolean) {
-        if (on) {
-            if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
-            val p = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
-            runCatching { wm.addView(v, p) }
-            dimView = v
-            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
-            runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.setMoon(true)
-            deepLocked = true
-        } else {
-            dimView?.let { runCatching { wm.removeView(it) } }
-            dimView = null
-            fab.setMoon(false)
-            deepLocked = false
-        }
-    }
-
-    /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
-    private fun toggleExpand() {
-        expanded = !expanded
-        val vis = if (expanded) View.VISIBLE else View.GONE
-        panel.visibility = vis
-        status.visibility = vis
-        hintView?.visibility = vis
-        if (!expanded) {
-            stopPlayBtn.visibility = View.GONE
-            listPanel?.let { listHolder.removeView(it); listPanel = null }
-        }
-    }
-
-    /** FAB: 탭=접기/펼치기, 드래그=이동, 길게=종료. */
-    private fun setupFabTouch() {
-        val slop = ViewConfiguration.get(this).scaledTouchSlop
-        val handler = Handler(Looper.getMainLooper())
-        var downRawX = 0f
-        var downRawY = 0f
-        var startX = 0
-        var startY = 0
-        var dragged = false
-        var longFired = false
-        val longPress = Runnable { longFired = true; stopSelf() }
-
-        fab.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downRawX = e.rawX; downRawY = e.rawY
-                    startX = barParams.x; startY = barParams.y
-                    dragged = false; longFired = false
-                    handler.postDelayed(longPress, 600)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downRawX
-                    val dy = e.rawY - downRawY
-                    if (!dragged && hypot(dx, dy) > slop) {
-                        dragged = true
-                        handler.removeCallbacks(longPress)
-                    }
-                    if (dragged) {
-                        barParams.x = startX + dx.toInt()
-                        barParams.y = startY + dy.toInt()
-                        runCatching { wm.updateViewLayout(bar, barParams) }
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(longPress)
-                    if (!dragged && !longFired) {
-                        if (deepLocked) setDeepSLock(false) else toggleExpand()
-                    }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    handler.removeCallbacks(longPress); true
-                }
-                else -> false
-            }
-        }
-    }
-
-    private fun marginLeft(px: Int) = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-    ).apply { leftMargin = px }
-
-    private fun baseParams(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            android.graphics.PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-
-    // ── 녹화 ──
-    private fun videoTint() = if (videoEnabled) 0xFF6C7BFF.toInt() else 0xFF9AA0B4.toInt()
-    private fun videoBg() = if (videoEnabled) 0x226C7BFF else 0x14000000
-
-    private fun toggleVideo() {
-        videoEnabled = !videoEnabled
-        videoBtn?.apply {
-            setColorFilter(videoTint())
-            background = circleBg(videoBg())
-        }
-        status.visibility = View.VISIBLE
-        status.text = if (videoEnabled) "영상 녹화 ON (녹화 시 화면도 저장)" else "영상 녹화 OFF"
-    }
-
-    private fun toggleRecord() {
-        if (recording) { stopRecord(); return }
-        if (videoEnabled) {
-            val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
-        } else {
-            startRecord(null)
-        }
-    }
-
-    private fun beginVideoThenRecord(intent: Intent) {
-        val code = intent.getIntExtra(EX_CODE, Activity.RESULT_CANCELED)
-        @Suppress("DEPRECATION")
-        val data = intent.getParcelableExtra<Intent>(EX_DATA)
-        if (code != Activity.RESULT_OK || data == null) { startRecord(null); return }
-        runCatching { promoteForegroundForProjection() }
-        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
-        if (proj == null) { startRecord(null); return }
-        val dir = File(getExternalFilesDir(null), "videos").apply { mkdirs() }
-        val out = File(dir, "rec_${System.currentTimeMillis()}.mp4")
-        val ok = screenRecorder.start(proj, out)
-        startRecord(if (ok) out.absolutePath else null)
-    }
-
-    private fun promoteForegroundForProjection() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                1, buildNotif(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
-        }
-    }
-
-    private fun startRecord(videoPath: String?) {
-        stopPlayback(null)
-        val devs = reader.probe()
-        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { status.text = "터치 디바이스를 못 찾음"; return }
-        device = dev
-        currentVideoPath = videoPath
-        recorder.reset()
-        recording = true
-        recordBtn.setImageResource(R.drawable.ic_ov_stop)
-        status.visibility = View.VISIBLE
-        status.text = if (videoPath != null) "● 녹화중 (영상 포함)" else "● 녹화중 — 평소처럼 플레이해"
-        reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
-    }
-
-    private fun stopRecord() {
-        reader.stop()
-        recording = false
-        recordBtn.setImageResource(R.drawable.ic_ov_record)
-        val videoStart = if (screenRecorder.active) screenRecorder.startUptime else 0L
-        val vpath = if (screenRecorder.active) screenRecorder.stop() else currentVideoPath
-        currentVideoPath = null
-        val snap = recorder.snapshot()
-        if (snap.isEmpty()) {
-            if (vpath != null) runCatching { File(vpath).delete() }
-            status.text = "행동 없음 (저장 안 함)"
-            return
-        }
-        val offset = if (vpath != null && videoStart > 0 && recorder.baseUptime > 0)
-            (recorder.baseUptime - videoStart).coerceAtLeast(0L) else 0L
-        val m = MacroStore.saveNew(this, snap, vpath, offset)
-        status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
-    }
-
-    // ── 재생 ──
-    private fun playRecorded() {
-        if (recording) stopRecord()
-        startSingle(recorder.snapshot(), "지금 녹화")
-    }
-
-    private fun startSingle(strokes: List<Stroke>, label: String) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        if (strokes.isEmpty()) { status.text = "재생할 게 없어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        status.text = "▶ 재생중… $label"
-        playJob = scope.launch {
-            runStrokes(strokes)
-            status.text = "재생 끝 · $label"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun playPlaylist(pl: Playlist) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        val macros = HashMap<String, Macro>()
-        pl.macroIds.toSet().forEach { id -> MacroStore.read(this, id)?.let { macros[id] = it } }
-        if (macros.isEmpty()) { status.text = "매크로가 비어있어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        playJob = scope.launch {
-            var cycle = 0
-            while (isActive && (pl.cycles == 0 || cycle < pl.cycles)) {
-                val order = if (pl.shuffle) pl.macroIds.shuffled() else pl.macroIds
-                for (id in order) {
-                    if (!isActive) break
-                    val m = macros[id] ?: continue
-                    val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
-                    status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
-                    runStrokes(m.strokes)
-                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
-                }
-                cycle++
-            }
-            status.text = "플레이리스트 끝 · ${pl.name}"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun stopPlayback(msg: String?) {
-        playJob?.cancel()
-        playJob = null
-        stopPlayBtn.visibility = View.GONE
-        if (msg != null) status.text = msg
-    }
-
-    /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
-    /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
-    private suspend fun runStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val w = m.widthPixels
-        val h = m.heightPixels
-        val rot = displayObj.rotation
-
-        val nStroke = strokes.size
-        // 손가락 id 배정: 겹치지 않는 스트로크끼리는 같은 id 재사용(활성 포인터 수 최소화).
-        val fingerIds = IntArray(nStroke)
-        val idFreeAt = ArrayList<Long>()
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
-            var assigned = -1
-            for (id in idFreeAt.indices) {
-                if (idFreeAt[id] + 12L <= s.startMs) { assigned = id; break }
-            }
-            if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
-            fingerIds[k] = assigned
-        }
-
-        val totalSamples = strokes.sumOf { it.samples.size }
-        val startArr = LongArray(nStroke)
-        val durArr = LongArray(nStroke)
-        val counts = IntArray(nStroke)
-        val xs = IntArray(totalSamples)
-        val ys = IntArray(totalSamples)
-        val times = LongArray(totalSamples)
-        var off = 0
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            startArr[k] = s.startMs
-            durArr[k] = s.durationMs
-            counts[k] = s.samples.size
-            for (i in s.samples.indices) {
-                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
-                xs[off] = px; ys[off] = py; times[off] = s.samples[i].t
-                off++
-            }
-        }
-        withContext(Dispatchers.IO) {
-            LoopyService.playMulti(fingerIds, startArr, durArr, counts, xs, ys, times)
-        }
-    }
-
-    // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
-    private fun toggleList() {
-        listPanel?.let { listHolder.removeView(it); listPanel = null; return }
-        val playlists = PlaylistStore.list(this)
-        val macros = MacroStore.list(this)
-        val lp = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = pill(0xFFFFFFFF.toInt(), dp(18))
-            elevation = dp(8).toFloat()
-            minimumWidth = dp(210)
-        }
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (playlists.isEmpty() && macros.isEmpty()) {
-            content.addView(hint("저장된 게 없어"))
-        } else {
-            if (playlists.isNotEmpty()) {
-                content.addView(hint("─ 플레이리스트 ─"))
-                for (pl in playlists) {
-                    content.addView(listRow("${pl.name}  ·  ${pl.macroIds.size}스텝", 0xFF6C7BFF.toInt()) {
-                        toggleList(); playPlaylist(pl)
-                    })
-                }
-            }
-            if (macros.isNotEmpty()) {
-                content.addView(hint("─ 매크로 ─"))
-                for (mac in macros) {
-                    content.addView(listRow("${mac.name}  ·  ${mac.strokes.size}", 0xFF2B2D42.toInt()) {
-                        toggleList(); startSingle(mac.strokes, mac.name)
-                    })
-                }
-            }
-        }
-        // 화면 절반 넘으면 스크롤
-        val maxH = (resources.displayMetrics.heightPixels * 0.5f).toInt()
-        val sv = MaxHeightScrollView(this, maxH).apply {
-            overScrollMode = View.OVER_SCROLL_NEVER
-            isVerticalScrollBarEnabled = false
-        }
-        sv.addView(content)
-        lp.addView(sv)
-        listHolder.addView(lp, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
-        listPanel = lp
-    }
-
-    /** 최대 높이를 넘으면 스크롤되는 ScrollView. */
-    private class MaxHeightScrollView(context: Context, private val maxH: Int) : ScrollView(context) {
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            val h = MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST)
-            super.onMeasure(widthMeasureSpec, h)
-        }
-    }
-
-    private fun hint(t: String) = TextView(this).apply {
-        text = t; setTextColor(0xFF9AA0B4.toInt()); textSize = 10f
-        setPadding(dp(2), dp(8), 0, dp(4))
-        letterSpacing = 0.06f
-    }
-
-    private fun listRow(t: String, color: Int, onClick: () -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(9), dp(10), dp(9))
-        background = pill(0x0A000000, dp(12)) // 아주 옅은 행 배경
-        val dot = View(this@OverlayService).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(color)
-            }
-        }
-        addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)))
-        addView(TextView(this@OverlayService).apply {
-            text = t; setTextColor(0xFF2B2D42.toInt()); textSize = 13f
-            setPadding(dp(10), 0, 0, 0)
-        })
-        setOnClickListener { onClick() }
-    }
-
-    private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
-        Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
-        Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
-        Surface.ROTATION_270 -> ((1 - v) * w).toInt() to (u * h).toInt()
-        else -> (u * w).toInt() to (v * h).toInt()
-    }
-
-    private fun barContains(u: Float, v: Float): Boolean {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
-        val loc = IntArray(2)
-        bar.getLocationOnScreen(loc)
-        return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
-    }
-
-
-    private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = radius.toFloat()
-    }
-
-    private fun buildNotif(): Notification {
-        val channelId = "loopy_overlay"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                NotificationChannel(channelId, "Loopy 오버레이", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-        return Notification.Builder(this, channelId)
-            .setContentTitle("Loopy 실행 중")
-            .setContentText("매크로 컨트롤이 화면에 떠 있어요")
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun startAsForeground() {
-        val notif = buildNotif()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1, notif)
-        }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        Shizuku.addBinderReceivedListenerSticky(binderListener)
+        Shizuku.addBinderDeadListener(deadListener)
+        setContent { LoopyTheme { RootScreen(registerRefresh = { cb -> onShizukuChanged = cb }) } }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        reader.stop()
-        runCatching { if (screenRecorder.active) screenRecorder.stop() }
-        scope.cancel()
-        dimView?.let { runCatching { wm.removeView(it) } }
-        runCatching { wm.removeView(bar) }
+        Shizuku.removeBinderReceivedListener(binderListener)
+        Shizuku.removeBinderDeadListener(deadListener)
+    }
+}
+
+private enum class Tab(val label: String, val icon: String) {
+    HOME("홈", "🏠"), PLAYLIST("플레이리스트", "🎵"), LIBRARY("라이브러리", "📁"), SETTINGS("설정", "⚙️"),
+}
+
+@Composable
+private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
+    val context = LocalContext.current
+    val mpm = remember { context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager }
+    val sessionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            VideoSession.code = result.resultCode
+            VideoSession.data = result.data
+            context.startForegroundService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_SET_SESSION }
+            )
+        }
+    }
+    fun toggleSession(on: Boolean) {
+        if (on) {
+            runCatching { sessionLauncher.launch(mpm.createScreenCaptureIntent()) }
+        } else {
+            context.startService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_END_SESSION }
+            )
+            VideoSession.active = false
+        }
+    }
+
+    var state by remember { mutableStateOf(ShizukuManager.state()) }
+    var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var overlayMsg by remember { mutableStateOf("오버레이를 켜고 게임으로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
+    var macros by remember { mutableStateOf(MacroStore.list(context)) }
+    var playlists by remember { mutableStateOf(PlaylistStore.list(context)) }
+    var renaming by remember { mutableStateOf<Macro?>(null) }
+    var nameField by remember { mutableStateOf("") }
+    var tab by remember { mutableStateOf(Tab.HOME) }
+
+    // 앱 시작 시 권한 안내 팝업 (Shizuku 우선, 그다음 오버레이)
+    var showShizukuDialog by remember { mutableStateOf(state != ShizukuState.READY) }
+    var showOverlayDialog by remember { mutableStateOf(false) }
+
+    // 편집기 상태
+    var editorOpen by remember { mutableStateOf(false) }
+    var editId by remember { mutableStateOf<String?>(null) }
+    var plName by remember { mutableStateOf("") }
+    var plShuffle by remember { mutableStateOf(false) }
+    var plCycles by remember { mutableStateOf("") }
+    var plGap by remember { mutableStateOf("") }
+    val pattern = remember { mutableStateListOf<String>() }
+    var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
+
+    fun refresh() {
+        macros = MacroStore.list(context)
+        playlists = PlaylistStore.list(context)
+    }
+
+    fun openEditor(pl: Playlist?) {
+        editorMacros = MacroStore.list(context)
+        editId = pl?.id
+        plName = pl?.name ?: ""
+        plShuffle = pl?.shuffle ?: false
+        plCycles = pl?.cycles?.takeIf { it > 0 }?.toString() ?: ""
+        plGap = pl?.gapMs?.takeIf { it > 0 }?.let { (it / 1000.0).toString() } ?: ""
+        pattern.clear()
+        pl?.macroIds?.let { pattern.addAll(it) }
+        editorOpen = true
+    }
+
+    LaunchedEffect(Unit) {
+        registerRefresh {
+            state = ShizukuManager.state()
+            canOverlay = Settings.canDrawOverlays(context)
+            refresh()
+        }
+    }
+    LaunchedEffect(state) {
+        if (state == ShizukuState.READY) {
+            LoopyService.bind(context)
+            if (!canOverlay) showOverlayDialog = true
+        }
+    }
+
+    if (editorOpen) {
+        PlaylistEditor(
+            name = plName, onName = { plName = it },
+            shuffle = plShuffle, onShuffle = { plShuffle = it },
+            cycles = plCycles, onCycles = { plCycles = it.filter { c -> c.isDigit() } },
+            gap = plGap, onGap = { plGap = it.filter { c -> c.isDigit() || c == '.' } },
+            pattern = pattern,
+            macros = editorMacros,
+            onSave = {
+                if (plName.isNotBlank() && pattern.isNotEmpty()) {
+                    PlaylistStore.save(
+                        context, plName.trim(), pattern.toList(),
+                        plShuffle, plCycles.toIntOrNull() ?: 0,
+                        ((plGap.toDoubleOrNull() ?: 0.0) * 1000).toInt(), editId,
+                    )
+                    refresh()
+                    editorOpen = false
+                }
+            },
+            onCancel = { editorOpen = false },
+        )
+        return
+    }
+
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        bottomBar = {
+            NavigationBar(containerColor = NeuBase) {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = { LineIcon(kind = t.name.lowercase(), color = if (tab == t) Accent else TextLo) },
+                        label = { Text(t.label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Accent, selectedTextColor = Accent,
+                            unselectedIconColor = TextLo, unselectedTextColor = TextLo,
+                            indicatorColor = Accent.copy(alpha = 0.12f),
+                        ),
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().background(NeuBase).padding(padding)) {
+            AnimatedBottomGradient()
+
+            when (tab) {
+                Tab.HOME -> HomeTab(
+                    state = state, canOverlay = canOverlay, msg = overlayMsg,
+                    recentMacro = macros.firstOrNull(), recentPlaylist = playlists.firstOrNull(),
+                    onToggleOverlay = { turningOn ->
+                        if (turningOn) {
+                            context.startForegroundService(Intent(context, OverlayService::class.java))
+                            overlayMsg = "켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록."
+                        } else {
+                            context.stopService(Intent(context, OverlayService::class.java))
+                            overlayMsg = "오버레이를 껐어."
+                        }
+                    },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
+                )
+                Tab.PLAYLIST -> PlaylistTab(
+                    playlists = playlists,
+                    onNew = { openEditor(null) },
+                    onEdit = { openEditor(it) },
+                    onDelete = { PlaylistStore.delete(context, it.id); refresh() },
+                )
+                Tab.LIBRARY -> LibraryTab(
+                    macros = macros,
+                    onRefresh = { refresh() },
+                    onRename = { renaming = it; nameField = it.name },
+                    onDelete = { MacroStore.delete(context, it.id); refresh() },
+                )
+                Tab.SETTINGS -> SettingsTab(
+                    state = state, canOverlay = canOverlay,
+                    onRequestShizuku = {
+                        ShizukuManager.requestPermission { g ->
+                            state = if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION
+                        }
+                    },
+                    onRecheckShizuku = { state = ShizukuManager.state() },
+                    onOpenOverlaySettings = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        )
+                    },
+                    onRecheckOverlay = { canOverlay = Settings.canDrawOverlays(context) },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
+                )
+            }
+        }
+    }
+
+    // ── 권한 안내 팝업 ──
+    if (showShizukuDialog && state != ShizukuState.READY) {
+        AlertDialog(
+            onDismissRequest = { showShizukuDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showShizukuDialog = false; tab = Tab.SETTINGS }) {
+                    Text("설정으로 이동", color = Accent)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showShizukuDialog = false }) { Text("나중에", color = TextLo) } },
+            title = { Text("Shizuku 연결 필요", color = TextHi) },
+            text = { Text("Loopy가 터치를 읽고 재현하려면 Shizuku 권한이 필요해. 설정 탭에서 허용해줘.", color = TextLo, fontSize = 13.sp) },
+            containerColor = LoopyCard,
+        )
+    } else if (showOverlayDialog && !canOverlay) {
+        AlertDialog(
+            onDismissRequest = { showOverlayDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showOverlayDialog = false; tab = Tab.SETTINGS }) {
+                    Text("설정으로 이동", color = Accent)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showOverlayDialog = false }) { Text("나중에", color = TextLo) } },
+            title = { Text("오버레이 권한 필요", color = TextHi) },
+            text = { Text("게임 위에 컨트롤 바를 띄우려면 '다른 앱 위에 표시' 권한이 필요해.", color = TextLo, fontSize = 13.sp) },
+            containerColor = LoopyCard,
+        )
+    }
+
+    val editing = renaming
+    if (editing != null) {
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (nameField.isNotBlank()) MacroStore.rename(context, editing.id, nameField.trim())
+                    renaming = null; refresh()
+                }) { Text("저장", color = Accent) }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("취소", color = TextLo) } },
+            title = { Text("이름 변경", color = TextHi) },
+            text = { OutlinedTextField(value = nameField, onValueChange = { nameField = it }, singleLine = true) },
+            containerColor = LoopyCard,
+        )
+    }
+}
+
+@Composable
+private fun ScreenColumn(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun HomeTab(
+    state: ShizukuState,
+    canOverlay: Boolean,
+    msg: String,
+    recentMacro: Macro?,
+    recentPlaylist: Playlist?,
+    onToggleOverlay: (Boolean) -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
+) {
+    var overlayOn by remember { mutableStateOf(false) }
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        GradientTitle("Loopy", size = 34)
+        Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(msg, color = TextLo, fontSize = 12.sp)
+            Spacer(Modifier.height(14.dp))
+            val ready = state == ShizukuState.READY && canOverlay
+            LoopyButton(
+                text = if (overlayOn) "오버레이 끄기" else "오버레이 켜기",
+                filled = !overlayOn,
+                enabled = ready,
+            ) {
+                overlayOn = !overlayOn
+                onToggleOverlay(overlayOn)
+            }
+            if (!ready) {
+                Spacer(Modifier.height(8.dp))
+                Text("설정 탭에서 Shizuku·오버레이 권한을 먼저 허용해줘.", color = TextLo, fontSize = 11.sp)
+            }
+        }
+
+        VideoSessionCard(sessionActive, onToggleSession)
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            if (recentPlaylist == null && recentMacro == null) {
+                Text("아직 없어. 오버레이에서 녹화해봐.", color = TextLo, fontSize = 12.sp)
+            } else {
+                recentPlaylist?.let {
+                    Text("🎵 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("${it.macroIds.size}스텝 플레이리스트", color = TextLo, fontSize = 11.sp)
+                    Spacer(Modifier.height(10.dp))
+                }
+                recentMacro?.let {
+                    Text("📄 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("${it.strokes.size} 스트로크", color = TextLo, fontSize = 11.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("편집은 라이브러리·플레이리스트 탭에서 (곧 지원 예정).", color = TextLo, fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun PlaylistTab(
+    playlists: List<Playlist>,
+    onNew: () -> Unit,
+    onEdit: (Playlist) -> Unit,
+    onDelete: (Playlist) -> Unit,
+) {
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GradientTitle("플레이리스트", size = 28, modifier = Modifier.weight(1f))
+            Text("+ 새로 만들기", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onNew() })
+        }
+        if (playlists.isEmpty()) {
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("매크로를 2개 이상 저장한 뒤 플레이리스트를 만들어봐.", color = TextLo, fontSize = 13.sp)
+            }
+        } else {
+            playlists.forEach { pl ->
+                SoftCard(Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(pl.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                            val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
+                            val sh = if (pl.shuffle) " · 셔플" else ""
+                            val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
+                            Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 12.sp)
+                        }
+                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(pl) })
+                        Spacer(Modifier.width(14.dp))
+                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(pl) })
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun LibraryTab(
+    macros: List<Macro>,
+    onRefresh: () -> Unit,
+    onRename: (Macro) -> Unit,
+    onDelete: (Macro) -> Unit,
+) {
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
+            Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
+        }
+        if (macros.isEmpty()) {
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 13.sp)
+            }
+        } else {
+            macros.forEach { m ->
+                SoftCard(Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                            Text("${m.strokes.size} 스트로크", color = TextLo, fontSize = 12.sp)
+                        }
+                        Text("이름변경", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRename(m) })
+                        Spacer(Modifier.width(14.dp))
+                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(m) })
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun SettingsTab(
+    state: ShizukuState,
+    canOverlay: Boolean,
+    onRequestShizuku: () -> Unit,
+    onRecheckShizuku: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
+    onRecheckOverlay: () -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
+) {
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        GradientTitle("설정", size = 28)
+
+        VideoSessionCard(sessionActive, onToggleSession)
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                when (state) {
+                    ShizukuState.NOT_INSTALLED -> "연결 안 됨 · Shizuku 앱 실행 필요"
+                    ShizukuState.NEEDS_PERMISSION -> "설치됨 · 권한 허용 필요"
+                    ShizukuState.READY -> "준비 완료"
+                },
+                color = if (state == ShizukuState.READY) Accent else TextLo, fontSize = 13.sp,
+            )
+            if (state == ShizukuState.NEEDS_PERMISSION) {
+                Spacer(Modifier.height(12.dp))
+                LoopyButton("권한 허용", onClick = onRequestShizuku)
+            } else if (state == ShizukuState.NOT_INSTALLED) {
+                Spacer(Modifier.height(12.dp))
+                LoopyButton("다시 확인", onClick = onRecheckShizuku)
+            }
+        }
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (canOverlay) "허용됨" else "다른 앱 위에 표시 권한 필요",
+                color = if (canOverlay) Accent else TextLo, fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (!canOverlay) {
+                LoopyButton("권한 설정 열기", onClick = onOpenOverlaySettings)
+                Spacer(Modifier.height(8.dp))
+            }
+            LoopyButton("권한 상태 새로고침", filled = false, onClick = onRecheckOverlay)
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun PlaylistEditor(
+    name: String, onName: (String) -> Unit,
+    shuffle: Boolean, onShuffle: (Boolean) -> Unit,
+    cycles: String, onCycles: (String) -> Unit,
+    gap: String, onGap: (String) -> Unit,
+    pattern: MutableList<String>,
+    macros: List<Macro>,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
+    Box(Modifier.fillMaxSize().background(NeuBase)) {
+        AnimatedBottomGradient()
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Spacer(Modifier.height(24.dp))
+            GradientTitle("플레이리스트 편집", size = 26)
+
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("이름", color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("셔플 (매 사이클 섞기)", color = TextHi, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = shuffle, onCheckedChange = onShuffle)
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("반복 횟수 (비우면 무한)", color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
+                    placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
+                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
+            }
+
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
+                if (pattern.isEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("아래에서 매크로를 탭해 추가해.", color = TextLo, fontSize = 12.sp)
+                } else {
+                    pattern.forEachIndexed { i, id ->
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(MeshLavender.copy(alpha = 0.35f)).padding(12.dp)
+                                .clickable { pattern.removeAt(i) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${i + 1}. ${macroName(id)}", color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("✕", color = TextLo, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                if (macros.isEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("저장된 매크로가 없어.", color = TextLo, fontSize = 12.sp)
+                } else {
+                    macros.forEach { m ->
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth().clickable { pattern.add(m.id) },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(m.name, color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("+ 추가", color = Accent, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.weight(1f)) { LoopyButton("저장", onClick = onSave) }
+                Box(Modifier.weight(1f)) { LoopyButton("취소", filled = false, onClick = onCancel) }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
+    SoftCard(Modifier.fillMaxWidth()) {
+        Text("화면 녹화 세션", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (active) "세션 켜짐 · 오버레이 영상 버튼(초록)을 켜고 녹화하면 팝업 없이 화면도 저장돼."
+            else "켜면 화면 녹화 권한을 한 번만 받아둬. 이후 오버레이 녹화 시 팝업·앱전환 없이 영상이 저장돼.",
+            color = TextLo, fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        LoopyButton(text = if (active) "세션 끄기" else "세션 켜기", filled = !active) { onToggle(!active) }
+        if (active) {
+            Spacer(Modifier.height(8.dp))
+            Text("상태바에 화면 녹화(캐스트) 아이콘이 떠 있는 건 정상이야.", color = TextLo, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val base = Modifier.fillMaxWidth().height(50.dp).clip(shape).alpha(if (enabled) 1f else 0.45f)
+    val styled = if (filled) base.background(Brush.horizontalGradient(listOf(MeshPeach, MeshLavender, MeshMint)))
+    else base.background(LoopyCard).border(1.dp, CardStroke, shape)
+    val clickMod = if (enabled) styled.clickable { onClick() } else styled
+    Box(clickMod, contentAlignment = Alignment.Center) {
+        Text(text, color = if (filled) TextHi else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 LOOPY_EOF
 
-echo "vid4(오버레이) 반영."
+echo "sess3_main.sh 반영 완료."
 git add -A
-git commit -m "영상 녹화 토글(MediaProjection)+싱크 오프셋: 매크로+화면 동시녹화"
+git commit -m "화면녹화 세션화: 앱 토글로 권한 1회, 오버레이는 저장여부만(팝업 최소화)+초록버튼+Movies저장"
 git push
-echo "푸시 완료! 이제 빌드하세요."
+echo "푸시 완료! vid1~4 위에 적용된 상태여야 함. 이제 빌드하세요."
 

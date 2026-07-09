@@ -10,7 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Rect
 import android.media.projection.MediaProjectionManager
-import java.io.File
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -74,6 +73,8 @@ class OverlayService : Service() {
     companion object {
         const val ACTION_START_VIDEO = "com.loopy.app.START_VIDEO"
         const val ACTION_START_MACRO_ONLY = "com.loopy.app.START_MACRO_ONLY"
+        const val ACTION_SET_SESSION = "com.loopy.app.SET_SESSION"
+        const val ACTION_END_SESSION = "com.loopy.app.END_SESSION"
         const val EX_CODE = "code"
         const val EX_DATA = "data"
     }
@@ -101,10 +102,32 @@ class OverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_VIDEO -> beginVideoThenRecord(intent)
+            ACTION_SET_SESSION -> setupSession()
+            ACTION_END_SESSION -> {
+                screenRecorder.endSession()
+                VideoSession.active = false
+            }
+            ACTION_START_VIDEO -> beginVideoThenRecord(intent) // 세션 없을 때 팝업 폴백
             ACTION_START_MACRO_ONLY -> startRecord(null)
         }
         return START_STICKY
+    }
+
+    /** 앱에서 받은 권한으로 MediaProjection 세션을 시작해 보관(재사용). */
+    private fun setupSession() {
+        runCatching { promoteForegroundForProjection() }
+        val code = VideoSession.code
+        val data = VideoSession.data
+        if (code == Activity.RESULT_OK && data != null) {
+            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
+            if (proj != null) {
+                screenRecorder.setSession(proj)
+                VideoSession.active = true
+                return
+            }
+        }
+        VideoSession.active = false
     }
 
     override fun onCreate() {
@@ -336,8 +359,8 @@ class OverlayService : Service() {
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
     // ── 녹화 ──
-    private fun videoTint() = if (videoEnabled) 0xFF6C7BFF.toInt() else 0xFF9AA0B4.toInt()
-    private fun videoBg() = if (videoEnabled) 0x226C7BFF else 0x14000000
+    private fun videoTint() = if (videoEnabled) 0xFF20C997.toInt() else 0xFF9AA0B4.toInt()
+    private fun videoBg() = if (videoEnabled) 0x2220C997 else 0x14000000
 
     private fun toggleVideo() {
         videoEnabled = !videoEnabled
@@ -352,14 +375,22 @@ class OverlayService : Service() {
     private fun toggleRecord() {
         if (recording) { stopRecord(); return }
         if (videoEnabled) {
-            val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
+            if (screenRecorder.hasSession()) {
+                // 세션 재사용 — 팝업/앱전환 없이 즉시
+                val ok = screenRecorder.startRecording()
+                startRecord(if (ok) screenRecorder.currentUri else null)
+            } else {
+                // 세션 없음 → 예외적으로 팝업 1회(이후 세션으로 유지됨)
+                val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+            }
         } else {
             startRecord(null)
         }
     }
 
+    /** 세션 없을 때 팝업 폴백: 받은 권한을 세션으로 승격 후 녹화(다음부턴 팝업 없음). */
     private fun beginVideoThenRecord(intent: Intent) {
         val code = intent.getIntExtra(EX_CODE, Activity.RESULT_CANCELED)
         @Suppress("DEPRECATION")
@@ -369,10 +400,10 @@ class OverlayService : Service() {
         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
         if (proj == null) { startRecord(null); return }
-        val dir = File(getExternalFilesDir(null), "videos").apply { mkdirs() }
-        val out = File(dir, "rec_${System.currentTimeMillis()}.mp4")
-        val ok = screenRecorder.start(proj, out)
-        startRecord(if (ok) out.absolutePath else null)
+        screenRecorder.setSession(proj)
+        VideoSession.active = true
+        val ok = screenRecorder.startRecording()
+        startRecord(if (ok) screenRecorder.currentUri else null)
     }
 
     private fun promoteForegroundForProjection() {
@@ -405,11 +436,10 @@ class OverlayService : Service() {
         recording = false
         recordBtn.setImageResource(R.drawable.ic_ov_record)
         val videoStart = if (screenRecorder.active) screenRecorder.startUptime else 0L
-        val vpath = if (screenRecorder.active) screenRecorder.stop() else currentVideoPath
+        val vpath = if (screenRecorder.active) screenRecorder.stopRecording() else currentVideoPath
         currentVideoPath = null
         val snap = recorder.snapshot()
         if (snap.isEmpty()) {
-            if (vpath != null) runCatching { File(vpath).delete() }
             status.text = "행동 없음 (저장 안 함)"
             return
         }
@@ -651,7 +681,8 @@ class OverlayService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         reader.stop()
-        runCatching { if (screenRecorder.active) screenRecorder.stop() }
+        runCatching { screenRecorder.endSession() }
+        VideoSession.active = false
         scope.cancel()
         dimView?.let { runCatching { wm.removeView(it) } }
         runCatching { wm.removeView(bar) }

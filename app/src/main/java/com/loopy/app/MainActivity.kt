@@ -1,11 +1,17 @@
 package com.loopy.app
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.app.Activity
+import android.media.projection.MediaProjectionManager
+import com.loopy.app.overlay.VideoSession
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -99,6 +105,28 @@ private enum class Tab(val label: String, val icon: String) {
 @Composable
 private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     val context = LocalContext.current
+    val mpm = remember { context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager }
+    val sessionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            VideoSession.code = result.resultCode
+            VideoSession.data = result.data
+            context.startForegroundService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_SET_SESSION }
+            )
+        }
+    }
+    fun toggleSession(on: Boolean) {
+        if (on) {
+            runCatching { sessionLauncher.launch(mpm.createScreenCaptureIntent()) }
+        } else {
+            context.startService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_END_SESSION }
+            )
+            VideoSession.active = false
+        }
+    }
 
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
@@ -214,6 +242,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                             overlayMsg = "오버레이를 껐어."
                         }
                     },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
                 )
                 Tab.PLAYLIST -> PlaylistTab(
                     playlists = playlists,
@@ -241,6 +271,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                         )
                     },
                     onRecheckOverlay = { canOverlay = Settings.canDrawOverlays(context) },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
                 )
             }
         }
@@ -310,6 +342,8 @@ private fun HomeTab(
     recentMacro: Macro?,
     recentPlaylist: Playlist?,
     onToggleOverlay: (Boolean) -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
 ) {
     var overlayOn by remember { mutableStateOf(false) }
     ScreenColumn {
@@ -336,6 +370,8 @@ private fun HomeTab(
                 Text("설정 탭에서 Shizuku·오버레이 권한을 먼저 허용해줘.", color = TextLo, fontSize = 11.sp)
             }
         }
+
+        VideoSessionCard(sessionActive, onToggleSession)
 
         SoftCard(Modifier.fillMaxWidth()) {
             Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -443,10 +479,14 @@ private fun SettingsTab(
     onRecheckShizuku: () -> Unit,
     onOpenOverlaySettings: () -> Unit,
     onRecheckOverlay: () -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
 ) {
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
         GradientTitle("설정", size = 28)
+
+        VideoSessionCard(sessionActive, onToggleSession)
 
         SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -575,6 +615,25 @@ private fun PlaylistEditor(
                 Box(Modifier.weight(1f)) { LoopyButton("취소", filled = false, onClick = onCancel) }
             }
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
+    SoftCard(Modifier.fillMaxWidth()) {
+        Text("화면 녹화 세션", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (active) "세션 켜짐 · 오버레이 영상 버튼(초록)을 켜고 녹화하면 팝업 없이 화면도 저장돼."
+            else "켜면 화면 녹화 권한을 한 번만 받아둬. 이후 오버레이 녹화 시 팝업·앱전환 없이 영상이 저장돼.",
+            color = TextLo, fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        LoopyButton(text = if (active) "세션 끄기" else "세션 켜기", filled = !active) { onToggle(!active) }
+        if (active) {
+            Spacer(Modifier.height(8.dp))
+            Text("상태바에 화면 녹화(캐스트) 아이콘이 떠 있는 건 정상이야.", color = TextLo, fontSize = 11.sp)
         }
     }
 }
