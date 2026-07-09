@@ -698,3 +698,4 @@ class OverlayService : Service() {
         runCatching { wm.removeView(bar) }
     }
 }
+
