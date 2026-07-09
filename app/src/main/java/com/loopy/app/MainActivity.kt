@@ -486,8 +486,6 @@ private fun SettingsTab(
         Spacer(Modifier.height(24.dp))
         GradientTitle("설정", size = 28)
 
-        VideoSessionCard(sessionActive, onToggleSession)
-
         SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
@@ -522,6 +520,7 @@ private fun SettingsTab(
             }
             LoopyButton("권한 상태 새로고침", filled = false, onClick = onRecheckOverlay)
         }
+        VideoSessionCard(sessionActive, onToggleSession)
         Spacer(Modifier.height(8.dp))
     }
 }

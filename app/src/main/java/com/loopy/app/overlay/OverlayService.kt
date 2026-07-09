@@ -109,6 +109,7 @@ class OverlayService : Service() {
             }
             ACTION_START_VIDEO -> beginVideoThenRecord(intent) // 세션 없을 때 팝업 폴백
             ACTION_START_MACRO_ONLY -> startRecord(null)
+            else -> ensureOverlay() // "오버레이 켜기"(action 없음) 또는 재시작
         }
         return START_STICKY
     }
@@ -135,8 +136,17 @@ class OverlayService : Service() {
         startAsForeground()
         LoopyService.bind(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        recorder.shouldIgnore = { u, v -> barContains(u, v) }
+        recorder.shouldIgnore = { u, v -> if (::bar.isInitialized) barContains(u, v) else false }
+        // 오버레이는 여기서 만들지 않음 — SET_SESSION 등 세션 전용 시작 시 오버레이가 안 뜨게.
+        // "오버레이 켜기"(action 없는 시작)일 때만 onStartCommand 에서 생성.
+    }
+
+    private var overlayBuilt = false
+    private fun ensureOverlay() {
+        if (overlayBuilt) return
         buildOverlay()
+        overlayBuilt = true
+    }
     }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(

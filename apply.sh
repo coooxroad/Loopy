@@ -1,10 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Loopy 세션 3/3: MainActivity(홈+설정 세션 토글)
+# 설정 세션카드 맨 밑 이동
 set -e
 
-if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
+if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 
-mkdir -p "$(dirname "app/src/main/java/com/loopy/app/MainActivity.kt")"
 cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
 package com.loopy.app
 
@@ -494,8 +493,6 @@ private fun SettingsTab(
         Spacer(Modifier.height(24.dp))
         GradientTitle("설정", size = 28)
 
-        VideoSessionCard(sessionActive, onToggleSession)
-
         SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(6.dp))
@@ -530,6 +527,7 @@ private fun SettingsTab(
             }
             LoopyButton("권한 상태 새로고침", filled = false, onClick = onRecheckOverlay)
         }
+        VideoSessionCard(sessionActive, onToggleSession)
         Spacer(Modifier.height(8.dp))
     }
 }
@@ -659,9 +657,9 @@ private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean =
 }
 LOOPY_EOF
 
-echo "sess3_main.sh 반영 완료."
+echo "sessfix2_main.sh 완료."
 git add -A
-git commit -m "화면녹화 세션화: 앱 토글로 권한 1회, 오버레이는 저장여부만(팝업 최소화)+초록버튼+Movies저장"
+git commit -m "세션 독립(오버레이 분리)+설정 카드 맨밑"
 git push
-echo "푸시 완료! vid1~4 위에 적용된 상태여야 함. 이제 빌드하세요."
+echo "푸시 완료!"
 
