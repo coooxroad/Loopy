@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -67,21 +66,42 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             prepare()
         }
     }
-    DisposableEffect(player) { onDispose { player?.release() } }
-
     var playing by remember { mutableStateOf(false) }
     var positionMs by remember { mutableStateOf(0L) } // 영상 있으면 영상시각, 없으면 가상시계
 
-    // 총 길이: 영상 있으면 영상 길이(로드되면), 없으면 매크로 길이 (remember 안 함 → 갱신됨)
+    // 콘텐츠 비율(가로/세로). 화면 미러 기준 기본값, 영상 로드되면 실제 해상도로 갱신.
+    val screenAspect = remember {
+        val dm = context.resources.displayMetrics
+        (dm.widthPixels.toFloat() / dm.heightPixels.toFloat()).coerceIn(0.2f, 2f)
+    }
+    var videoAspect by remember { mutableStateOf(screenAspect) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
+                if (vs.height > 0 && vs.width > 0) {
+                    val par = if (vs.pixelWidthHeightRatio > 0f) vs.pixelWidthHeightRatio else 1f
+                    videoAspect = (vs.width * par) / vs.height
+                }
+            }
+        }
+        player?.addListener(listener)
+        onDispose { player?.removeListener(listener); player?.release() }
+    }
+
+    // 콘텐츠 비율: 영상 있으면 영상 실제 비율, 없으면 화면 비율
+    val contentAspect = if (hasVideo) videoAspect else screenAspect
+
+    // 총 길이: 영상 있으면 영상 길이(로드되면), 없으면 매크로 길이
     val totalMs: Long = run {
         val d = player?.duration ?: 0L
         if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
     }
 
-    // 프리뷰 박스 = 실제 화면 비율(녹화 영상이 화면 미러라, 비율 맞추면 스트로크 좌표가 정렬됨)
-    val screenAspect = remember {
+    // 위쪽 영상 영역 높이 = 화면의 약 52% 고정
+    val previewH = remember {
         val dm = context.resources.displayMetrics
-        (dm.widthPixels.toFloat() / dm.heightPixels.toFloat()).coerceIn(0.3f, 1f)
+        (dm.heightPixels / dm.density * 0.52f).dp
     }
 
     // 재생 루프
@@ -124,10 +144,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             Text(macro.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
 
-        // ── 영상 프리뷰 + 스트로크 오버레이 ──
+        // ── 영상 프리뷰 + 스트로크 오버레이 (고정 높이, 비율 유지 FIT) ──
         Box(
-            Modifier.fillMaxWidth().aspectRatio(screenAspect)
-                .background(Color(0xFF000000)),
+            Modifier.fillMaxWidth().height(previewH).background(Color(0xFF000000)),
             contentAlignment = Alignment.Center,
         ) {
             if (player != null) {
@@ -136,7 +155,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                         PlayerView(ctx).apply {
                             useController = false
                             this.player = player
-                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
@@ -144,7 +163,8 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             } else {
                 Text("영상 없음", color = Color(0xFF4A4F60), fontSize = 14.sp)
             }
-            StrokeOverlay(macro.strokes, playheadStrokeMs)
+            // 스트로크는 실제 영상이 그려진 rect 기준으로 매핑 (FIT 레터박스 보정)
+            StrokeOverlay(macro.strokes, playheadStrokeMs, contentAspect)
         }
 
         // ── 재생 컨트롤 ──
@@ -190,17 +210,25 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 }
 
-/** 현재 재생헤드 근처(±WINDOW_MS)의 스트로크를 그라데이션(파랑→흰) 선으로. */
+/** 재생헤드 근처(±WINDOW_MS)의 스트로크를 그라데이션 선으로. 실제 눌리는 순간만 글로우. */
 @Composable
-private fun StrokeOverlay(strokes: List<Stroke>, playheadStrokeMs: Long) {
+private fun StrokeOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float) {
     Canvas(Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
+        val bw = size.width
+        val bh = size.height
+        // 콘텐츠(영상) 비율에 맞춰 박스 안에 FIT된 실제 rect 계산 (레터박스 보정)
+        val boxAspect = bw / bh
+        val dispW: Float; val dispH: Float
+        if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
+        else { dispH = bh; dispW = bh * contentAspect }
+        val offX = (bw - dispW) / 2f
+        val offY = (bh - dispH) / 2f
+        fun mapX(nx: Float) = offX + nx * dispW
+        fun mapY(ny: Float) = offY + ny * dispH
+
         for (s in strokes) {
             val relT = playheadStrokeMs - s.startMs
-            // 활성: 시작 150ms 전 ~ 끝 150ms 후
             if (relT < -WINDOW_MS || relT > s.durationMs + WINDOW_MS) continue
-            // 페이드(가장자리에서 흐려짐)
             val edge = when {
                 relT < 0 -> 1f + relT / WINDOW_MS.toFloat()
                 relT > s.durationMs -> 1f - (relT - s.durationMs) / WINDOW_MS.toFloat()
@@ -212,26 +240,34 @@ private fun StrokeOverlay(strokes: List<Stroke>, playheadStrokeMs: Long) {
             if (samples.isEmpty()) continue
             val revealT = relT.coerceIn(0L, s.durationMs)
             val dur = s.durationMs.coerceAtLeast(1L)
+            // "지금 진짜 눌리는 중"? = 재생헤드가 down~up 구간 안
+            val pressing = relT in 0..s.durationMs
 
-            // 지나온 구간을 그라데이션 선으로
+            // 지나온 구간 = 그라데이션 선
             var prev: Offset? = null
             var prevFrac = 0f
             for (smp in samples) {
-                if (smp.t > revealT + 40L) break // 아직 안 지난 샘플
-                val p = Offset(smp.nx * w, smp.ny * h)
+                if (smp.t > revealT + 40L) break
+                val p = Offset(mapX(smp.nx), mapY(smp.ny))
                 val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
                 if (prev != null) {
-                    val c = lerp(StrokeStart, StrokeEnd, (prevFrac + frac) / 2f).copy(alpha = edge)
-                    drawLine(c, prev, p, strokeWidth = 8f)
+                    val c = lerp(StrokeStart, StrokeEnd, (prevFrac + frac) / 2f)
+                        .copy(alpha = edge * (if (pressing) 1f else 0.55f))
+                    drawLine(c, prev, p, strokeWidth = if (pressing) 9f else 6f)
                 }
                 prev = p; prevFrac = frac
             }
-            // 현재 위치 점(글로우)
+            // 현재 위치 — 진짜 눌리는 중이면 강한 글로우, 여운이면 흐리게
             val cur = sampleAt(samples, revealT)
             if (cur != null) {
-                val p = Offset(cur.first * w, cur.second * h)
-                drawCircle(StrokeEnd.copy(alpha = 0.25f * edge), radius = 22f, center = p)
-                drawCircle(StrokeEnd.copy(alpha = edge), radius = 9f, center = p)
+                val p = Offset(mapX(cur.first), mapY(cur.second))
+                if (pressing) {
+                    drawCircle(StrokeStart.copy(alpha = 0.20f * edge), radius = 40f, center = p)
+                    drawCircle(StrokeEnd.copy(alpha = 0.35f * edge), radius = 22f, center = p)
+                    drawCircle(StrokeEnd.copy(alpha = edge), radius = 11f, center = p)
+                } else {
+                    drawCircle(StrokeEnd.copy(alpha = 0.4f * edge), radius = 7f, center = p)
+                }
             }
         }
     }

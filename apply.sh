@@ -1,338 +1,305 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# MainActivity 2/2 (이어붙임)
+# 편집기 개선: 영상 비율 유지(FIT)+실제 rect 정렬+진짜 눌림 글로우
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
-cat >> "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
+cat > "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
+package com.loopy.app.editor
+
+import android.net.Uri
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.loopy.app.macro.Macro
+import com.loopy.app.macro.Stroke
+import kotlinx.coroutines.delay
+import java.io.File
+
+private val StrokeStart = Color(0xFF3B82F6) // 파랑 (스트로크 시작)
+private val StrokeEnd = Color(0xFFFFFFFF)   // 흰색 (스트로크 끝)
+private const val WINDOW_MS = 150L          // 재생헤드 앞뒤 표시 창
+
+/** 편집기 1단계: 영상 프리뷰 + 그라데이션 스트로크 오버레이 + 싱크 재생. */
 @Composable
-private fun ScreenColumn(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        content = content,
-    )
-}
+fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val hasVideo = macro.videoPath != null
 
-@Composable
-private fun HomeTab(
-    state: ShizukuState,
-    canOverlay: Boolean,
-    msg: String,
-    recentMacro: Macro?,
-    recentPlaylist: Playlist?,
-    onToggleOverlay: (Boolean) -> Unit,
-    sessionActive: Boolean,
-    onToggleSession: (Boolean) -> Unit,
-) {
-    var overlayOn by remember { mutableStateOf(false) }
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        GradientTitle("Loopy", size = 34)
-        Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
-
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            Text(msg, color = TextLo, fontSize = 12.sp)
-            Spacer(Modifier.height(14.dp))
-            val ready = state == ShizukuState.READY && canOverlay
-            LoopyButton(
-                text = if (overlayOn) "오버레이 끄기" else "오버레이 켜기",
-                filled = !overlayOn,
-                enabled = ready,
-            ) {
-                overlayOn = !overlayOn
-                onToggleOverlay(overlayOn)
-            }
-            if (!ready) {
-                Spacer(Modifier.height(8.dp))
-                Text("설정 탭에서 Shizuku·오버레이 권한을 먼저 허용해줘.", color = TextLo, fontSize = 11.sp)
-            }
-        }
-
-        VideoSessionCard(sessionActive, onToggleSession)
-
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(10.dp))
-            if (recentPlaylist == null && recentMacro == null) {
-                Text("아직 없어. 오버레이에서 녹화해봐.", color = TextLo, fontSize = 12.sp)
-            } else {
-                recentPlaylist?.let {
-                    Text("🎵 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${it.macroIds.size}스텝 플레이리스트", color = TextLo, fontSize = 11.sp)
-                    Spacer(Modifier.height(10.dp))
-                }
-                recentMacro?.let {
-                    Text("📄 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${it.strokes.size} 스트로크", color = TextLo, fontSize = 11.sp)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text("편집은 라이브러리·플레이리스트 탭에서 (곧 지원 예정).", color = TextLo, fontSize = 11.sp)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
+    // 매크로 전체 길이(스트로크 기준)
+    val macroDurationMs = remember(macro) {
+        (macro.strokes.maxOfOrNull { it.startMs + it.durationMs } ?: 0L).coerceAtLeast(1L)
     }
-}
 
-@Composable
-private fun PlaylistTab(
-    playlists: List<Playlist>,
-    onNew: () -> Unit,
-    onEdit: (Playlist) -> Unit,
-    onDelete: (Playlist) -> Unit,
-) {
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GradientTitle("플레이리스트", size = 28, modifier = Modifier.weight(1f))
-            Text("+ 새로 만들기", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onNew() })
+    // ExoPlayer (영상 있을 때만)
+    val player = remember(macro.videoPath) {
+        if (!hasVideo) null else ExoPlayer.Builder(context).build().apply {
+            val path = macro.videoPath!!
+            val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
+            setMediaItem(MediaItem.fromUri(uri))
+            prepare()
         }
-        if (playlists.isEmpty()) {
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("매크로를 2개 이상 저장한 뒤 플레이리스트를 만들어봐.", color = TextLo, fontSize = 13.sp)
+    }
+    var playing by remember { mutableStateOf(false) }
+    var positionMs by remember { mutableStateOf(0L) } // 영상 있으면 영상시각, 없으면 가상시계
+
+    // 콘텐츠 비율(가로/세로). 화면 미러 기준 기본값, 영상 로드되면 실제 해상도로 갱신.
+    val screenAspect = remember {
+        val dm = context.resources.displayMetrics
+        (dm.widthPixels.toFloat() / dm.heightPixels.toFloat()).coerceIn(0.2f, 2f)
+    }
+    var videoAspect by remember { mutableStateOf(screenAspect) }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
+                if (vs.height > 0 && vs.width > 0) {
+                    val par = if (vs.pixelWidthHeightRatio > 0f) vs.pixelWidthHeightRatio else 1f
+                    videoAspect = (vs.width * par) / vs.height
+                }
             }
+        }
+        player?.addListener(listener)
+        onDispose { player?.removeListener(listener); player?.release() }
+    }
+
+    // 콘텐츠 비율: 영상 있으면 영상 실제 비율, 없으면 화면 비율
+    val contentAspect = if (hasVideo) videoAspect else screenAspect
+
+    // 총 길이: 영상 있으면 영상 길이(로드되면), 없으면 매크로 길이
+    val totalMs: Long = run {
+        val d = player?.duration ?: 0L
+        if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
+    }
+
+    // 위쪽 영상 영역 높이 = 화면의 약 52% 고정
+    val previewH = remember {
+        val dm = context.resources.displayMetrics
+        (dm.heightPixels / dm.density * 0.52f).dp
+    }
+
+    // 재생 루프
+    LaunchedEffect(playing) {
+        if (!playing) return@LaunchedEffect
+        if (player != null) {
+            player.playWhenReady = true
+            while (playing) {
+                positionMs = player.currentPosition
+                if (!player.isPlaying && player.playbackState == Player.STATE_ENDED) {
+                    playing = false; break
+                }
+                delay(16)
+            }
+            player.playWhenReady = false
         } else {
-            playlists.forEach { pl ->
-                SoftCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(pl.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
-                            val sh = if (pl.shuffle) " · 셔플" else ""
-                            val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
-                            Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 12.sp)
-                        }
-                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(pl) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(pl) })
-                    }
-                }
+            // 가상 시계 (영상 없는 매크로)
+            var last = System.currentTimeMillis()
+            while (playing) {
+                val now = System.currentTimeMillis()
+                positionMs += (now - last); last = now
+                if (positionMs >= totalMs) { positionMs = totalMs; playing = false; break }
+                delay(16)
             }
         }
-        Spacer(Modifier.height(8.dp))
     }
-}
 
-@Composable
-private fun LibraryTab(
-    macros: List<Macro>,
-    onRefresh: () -> Unit,
-    onRename: (Macro) -> Unit,
-    onDelete: (Macro) -> Unit,
-    onEdit: (Macro) -> Unit,
-) {
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
-            Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
-        }
-        if (macros.isEmpty()) {
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 13.sp)
-            }
-        } else {
-            macros.forEach { m ->
-                SoftCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            Text("${m.strokes.size} 스트로크", color = TextLo, fontSize = 12.sp)
-                        }
-                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(m) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("이름변경", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRename(m) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(m) })
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-}
+    // 스트로크 타임라인 상의 현재 재생헤드(ms). 영상시각 - offset.
+    val playheadStrokeMs = positionMs - macro.videoOffsetMs
 
-@Composable
-private fun SettingsTab(
-    state: ShizukuState,
-    canOverlay: Boolean,
-    onRequestShizuku: () -> Unit,
-    onRecheckShizuku: () -> Unit,
-    onOpenOverlaySettings: () -> Unit,
-    onRecheckOverlay: () -> Unit,
-    sessionActive: Boolean,
-    onToggleSession: (Boolean) -> Unit,
-) {
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        GradientTitle("설정", size = 28)
-
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                when (state) {
-                    ShizukuState.NOT_INSTALLED -> "연결 안 됨 · Shizuku 앱 실행 필요"
-                    ShizukuState.NEEDS_PERMISSION -> "설치됨 · 권한 허용 필요"
-                    ShizukuState.READY -> "준비 완료"
-                },
-                color = if (state == ShizukuState.READY) Accent else TextLo, fontSize = 13.sp,
-            )
-            if (state == ShizukuState.NEEDS_PERMISSION) {
-                Spacer(Modifier.height(12.dp))
-                LoopyButton("권한 허용", onClick = onRequestShizuku)
-            } else if (state == ShizukuState.NOT_INSTALLED) {
-                Spacer(Modifier.height(12.dp))
-                LoopyButton("다시 확인", onClick = onRecheckShizuku)
-            }
-        }
-
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (canOverlay) "허용됨" else "다른 앱 위에 표시 권한 필요",
-                color = if (canOverlay) Accent else TextLo, fontSize = 13.sp,
-            )
-            Spacer(Modifier.height(12.dp))
-            if (!canOverlay) {
-                LoopyButton("권한 설정 열기", onClick = onOpenOverlaySettings)
-                Spacer(Modifier.height(8.dp))
-            }
-            LoopyButton("권한 상태 새로고침", filled = false, onClick = onRecheckOverlay)
-        }
-        VideoSessionCard(sessionActive, onToggleSession)
-        Spacer(Modifier.height(8.dp))
-    }
-}
-
-@Composable
-private fun PlaylistEditor(
-    name: String, onName: (String) -> Unit,
-    shuffle: Boolean, onShuffle: (Boolean) -> Unit,
-    cycles: String, onCycles: (String) -> Unit,
-    gap: String, onGap: (String) -> Unit,
-    pattern: MutableList<String>,
-    macros: List<Macro>,
-    onSave: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize().background(NeuBase)) {
-        AnimatedBottomGradient()
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+    Column(Modifier.fillMaxSize().background(Color(0xFF0E1016))) {
+        // ── 상단 바 ──
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(Modifier.height(24.dp))
-            GradientTitle("플레이리스트 편집", size = 26)
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("이름", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("셔플 (매 사이클 섞기)", color = TextHi, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = shuffle, onCheckedChange = onShuffle)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("반복 횟수 (비우면 무한)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
-                    placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
-                Spacer(Modifier.height(10.dp))
-                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
-                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
-            }
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(2.dp))
-                Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
-                if (pattern.isEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("아래에서 매크로를 탭해 추가해.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    pattern.forEachIndexed { i, id ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                .background(MeshLavender.copy(alpha = 0.35f)).padding(12.dp)
-                                .clickable { pattern.removeAt(i) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${i + 1}. ${macroName(id)}", color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("✕", color = TextLo, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (macros.isEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("저장된 매크로가 없어.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    macros.forEach { m ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clickable { pattern.add(m.id) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(m.name, color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("+ 추가", color = Accent, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.weight(1f)) { LoopyButton("저장", onClick = onSave) }
-                Box(Modifier.weight(1f)) { LoopyButton("취소", filled = false, onClick = onCancel) }
-            }
-            Spacer(Modifier.height(24.dp))
+            Text("‹ 뒤로", color = Color(0xFF9AA0B4), fontSize = 15.sp,
+                modifier = Modifier.clickable { onBack() })
+            Spacer(Modifier.width(14.dp))
+            Text(macro.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
-    }
-}
 
-@Composable
-private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
-    SoftCard(Modifier.fillMaxWidth()) {
-        Text("화면 녹화 세션", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
+        // ── 영상 프리뷰 + 스트로크 오버레이 (고정 높이, 비율 유지 FIT) ──
+        Box(
+            Modifier.fillMaxWidth().height(previewH).background(Color(0xFF000000)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (player != null) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            this.player = player
+                            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text("영상 없음", color = Color(0xFF4A4F60), fontSize = 14.sp)
+            }
+            // 스트로크는 실제 영상이 그려진 rect 기준으로 매핑 (FIT 레터박스 보정)
+            StrokeOverlay(macro.strokes, playheadStrokeMs, contentAspect)
+        }
+
+        // ── 재생 컨트롤 ──
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (playing) "❚❚" else "▶",
+                color = Color.White, fontSize = 20.sp,
+                modifier = Modifier.clickable {
+                    if (positionMs >= totalMs) { positionMs = 0L; player?.seekTo(0) }
+                    playing = !playing
+                },
+            )
+            Spacer(Modifier.width(14.dp))
+            Slider(
+                value = positionMs.coerceIn(0, totalMs).toFloat(),
+                onValueChange = {
+                    playing = false
+                    positionMs = it.toLong()
+                    player?.seekTo(positionMs)
+                },
+                valueRange = 0f..totalMs.toFloat(),
+                modifier = Modifier.weight(1f),
+            )
+        }
         Text(
-            if (active) "세션 켜짐 · 오버레이 영상 버튼(초록)을 켜고 녹화하면 팝업 없이 화면도 저장돼."
-            else "켜면 화면 녹화 권한을 한 번만 받아둬. 이후 오버레이 녹화 시 팝업·앱전환 없이 영상이 저장돼.",
-            color = TextLo, fontSize = 12.sp,
+            "${fmt(positionMs)} / ${fmt(totalMs)}",
+            color = Color(0xFF9AA0B4), fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 18.dp),
         )
-        Spacer(Modifier.height(12.dp))
-        LoopyButton(text = if (active) "세션 끄기" else "세션 켜기", filled = !active) { onToggle(!active) }
-        if (active) {
-            Spacer(Modifier.height(8.dp))
-            Text("상태바에 화면 녹화(캐스트) 아이콘이 떠 있는 건 정상이야.", color = TextLo, fontSize = 11.sp)
+
+        Spacer(Modifier.height(16.dp))
+        // ── 아래: 편집 타임라인 (2단계에서 구현) ──
+        Box(
+            Modifier.fillMaxWidth().weight(1f).padding(16.dp)
+                .background(Color(0xFF14161E)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("타임라인 편집 · 다음 단계", color = Color(0xFF3A3F50), fontSize = 13.sp)
         }
     }
 }
 
+/** 재생헤드 근처(±WINDOW_MS)의 스트로크를 그라데이션 선으로. 실제 눌리는 순간만 글로우. */
 @Composable
-private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(50)
-    val base = Modifier.fillMaxWidth().height(50.dp).clip(shape).alpha(if (enabled) 1f else 0.45f)
-    val styled = if (filled) base.background(Brush.horizontalGradient(listOf(MeshPeach, MeshLavender, MeshMint)))
-    else base.background(LoopyCard).border(1.dp, CardStroke, shape)
-    val clickMod = if (enabled) styled.clickable { onClick() } else styled
-    Box(clickMod, contentAlignment = Alignment.Center) {
-        Text(text, color = if (filled) TextHi else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+private fun StrokeOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float) {
+    Canvas(Modifier.fillMaxSize()) {
+        val bw = size.width
+        val bh = size.height
+        // 콘텐츠(영상) 비율에 맞춰 박스 안에 FIT된 실제 rect 계산 (레터박스 보정)
+        val boxAspect = bw / bh
+        val dispW: Float; val dispH: Float
+        if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
+        else { dispH = bh; dispW = bh * contentAspect }
+        val offX = (bw - dispW) / 2f
+        val offY = (bh - dispH) / 2f
+        fun mapX(nx: Float) = offX + nx * dispW
+        fun mapY(ny: Float) = offY + ny * dispH
+
+        for (s in strokes) {
+            val relT = playheadStrokeMs - s.startMs
+            if (relT < -WINDOW_MS || relT > s.durationMs + WINDOW_MS) continue
+            val edge = when {
+                relT < 0 -> 1f + relT / WINDOW_MS.toFloat()
+                relT > s.durationMs -> 1f - (relT - s.durationMs) / WINDOW_MS.toFloat()
+                else -> 1f
+            }.coerceIn(0f, 1f)
+            if (edge <= 0f) continue
+
+            val samples = s.samples
+            if (samples.isEmpty()) continue
+            val revealT = relT.coerceIn(0L, s.durationMs)
+            val dur = s.durationMs.coerceAtLeast(1L)
+            // "지금 진짜 눌리는 중"? = 재생헤드가 down~up 구간 안
+            val pressing = relT in 0..s.durationMs
+
+            // 지나온 구간 = 그라데이션 선
+            var prev: Offset? = null
+            var prevFrac = 0f
+            for (smp in samples) {
+                if (smp.t > revealT + 40L) break
+                val p = Offset(mapX(smp.nx), mapY(smp.ny))
+                val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
+                if (prev != null) {
+                    val c = lerp(StrokeStart, StrokeEnd, (prevFrac + frac) / 2f)
+                        .copy(alpha = edge * (if (pressing) 1f else 0.55f))
+                    drawLine(c, prev, p, strokeWidth = if (pressing) 9f else 6f)
+                }
+                prev = p; prevFrac = frac
+            }
+            // 현재 위치 — 진짜 눌리는 중이면 강한 글로우, 여운이면 흐리게
+            val cur = sampleAt(samples, revealT)
+            if (cur != null) {
+                val p = Offset(mapX(cur.first), mapY(cur.second))
+                if (pressing) {
+                    drawCircle(StrokeStart.copy(alpha = 0.20f * edge), radius = 40f, center = p)
+                    drawCircle(StrokeEnd.copy(alpha = 0.35f * edge), radius = 22f, center = p)
+                    drawCircle(StrokeEnd.copy(alpha = edge), radius = 11f, center = p)
+                } else {
+                    drawCircle(StrokeEnd.copy(alpha = 0.4f * edge), radius = 7f, center = p)
+                }
+            }
+        }
     }
+}
+
+/** revealT 시점의 보간 좌표. */
+private fun sampleAt(samples: List<com.loopy.app.macro.TouchSample>, t: Long): Pair<Float, Float>? {
+    if (samples.isEmpty()) return null
+    if (t <= samples.first().t) return samples.first().nx to samples.first().ny
+    if (t >= samples.last().t) return samples.last().nx to samples.last().ny
+    for (i in 1 until samples.size) {
+        val a = samples[i - 1]; val b = samples[i]
+        if (t in a.t..b.t) {
+            val f = if (b.t == a.t) 0f else (t - a.t).toFloat() / (b.t - a.t)
+            return (a.nx + (b.nx - a.nx) * f) to (a.ny + (b.ny - a.ny) * f)
+        }
+    }
+    return samples.last().nx to samples.last().ny
+}
+
+private fun fmt(ms: Long): String {
+    val s = ms / 1000; return "%d:%02d.%01d".format(s / 60, s % 60, (ms % 1000) / 100)
 }
 LOOPY_EOF
-echo "2/2 완료."
+echo "완료."
 git add -A
-git commit -m "편집기 1단계: 영상 프리뷰+그라데이션 스트로크 오버레이+싱크 재생, 라이브러리 편집 버튼"
+git commit -m "편집기: 영상 비율유지(FIT)+스트로크 rect정렬+진짜 눌림 글로우"
 git push
 echo "푸시 완료!"
 
