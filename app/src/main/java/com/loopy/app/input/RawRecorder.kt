@@ -86,10 +86,15 @@ class RawRecorder {
     }
 
     /** 시작 시각 순 정렬 + 스트로크 사이 대기 계산. */
+    /** 마지막 snapshot 의 기준시각(첫 이벤트 절대 uptimeMillis). 영상 싱크 계산용. -1 = 없음. */
+    @Volatile var baseUptime: Long = -1L
+        private set
+
     fun snapshot(): List<Stroke> {
         val sorted = synchronized(done) { done.toList() }.sortedBy { it.startT }
-        if (sorted.isEmpty()) return emptyList()
+        if (sorted.isEmpty()) { baseUptime = -1L; return emptyList() }
         val base = sorted.first().startT // 제일 이른 스트로크를 0 기준으로
+        baseUptime = base
         val out = ArrayList<Stroke>(sorted.size)
         for (d in sorted) {
             out.add(

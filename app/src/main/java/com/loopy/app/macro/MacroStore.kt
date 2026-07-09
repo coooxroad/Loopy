@@ -17,9 +17,12 @@ object MacroStore {
     fun autoName(time: Long = System.currentTimeMillis()): String =
         SimpleDateFormat("MMM d a h:mm", Locale.ENGLISH).format(Date(time))
 
-    fun saveNew(ctx: Context, strokes: List<Stroke>): Macro {
+    fun saveNew(
+        ctx: Context, strokes: List<Stroke>,
+        videoPath: String? = null, videoOffsetMs: Long = 0L,
+    ): Macro {
         val now = System.currentTimeMillis()
-        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes)
+        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes, videoPath, videoOffsetMs)
         write(ctx, macro)
         return macro
     }
@@ -59,6 +62,8 @@ object MacroStore {
         return JSONObject()
             .put("id", m.id).put("name", m.name).put("createdAt", m.createdAt)
             .put("strokes", strokes)
+            .put("videoPath", m.videoPath ?: JSONObject.NULL)
+            .put("videoOffsetMs", m.videoOffsetMs)
             .toString()
     }
 
@@ -76,6 +81,7 @@ object MacroStore {
             }
             strokes.add(Stroke(so.optLong("startMs", 0L), so.optLong("durationMs", 0L), samples))
         }
-        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes)
+        val vp = if (o.isNull("videoPath")) null else o.optString("videoPath", "").ifEmpty { null }
+        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes, vp, o.optLong("videoOffsetMs", 0L))
     }
 }
