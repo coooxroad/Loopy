@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# OverlayService 복구 2/2 (뒷부분, 이어붙임)
+# OverlayService 정정본 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
@@ -347,11 +347,10 @@ cat >> "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF
         runCatching { wm.removeView(bar) }
     }
 }
-
 LOOPY_EOF
-echo "2/2 완료. 파일 조립됨."
+echo "2/2 완료."
 git add -A
-git commit -m "fix: OverlayService 복구(세션 독립 온전판)"
+git commit -m "fix: OverlayService 여분 중괄호 제거(빌드 정상화)"
 git push
 echo "푸시 완료!"
 

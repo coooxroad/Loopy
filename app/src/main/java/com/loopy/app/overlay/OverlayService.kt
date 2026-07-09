@@ -147,7 +147,6 @@ class OverlayService : Service() {
         buildOverlay()
         overlayBuilt = true
     }
-    }
 
     private fun dp(v: Int): Int = TypedValue.applyDimension(
         TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
@@ -698,4 +697,3 @@ class OverlayService : Service() {
         runCatching { wm.removeView(bar) }
     }
 }
-
