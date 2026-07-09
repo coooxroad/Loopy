@@ -62,4 +62,8 @@ dependencies {
     // Shizuku: shell/root 권한으로 getevent 실행
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
+
+    // ExoPlayer(media3): 편집기 영상 재생 + 정밀 싱크
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
 }

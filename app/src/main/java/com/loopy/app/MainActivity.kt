@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.app.Activity
 import android.media.projection.MediaProjectionManager
 import com.loopy.app.overlay.VideoSession
+import com.loopy.app.editor.MacroEditorScreen
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -150,6 +151,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var plGap by remember { mutableStateOf("") }
     val pattern = remember { mutableStateListOf<String>() }
     var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
+    var editingMacro by remember { mutableStateOf<Macro?>(null) }
 
     fun refresh() {
         macros = MacroStore.list(context)
@@ -180,6 +182,14 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             LoopyService.bind(context)
             if (!canOverlay) showOverlayDialog = true
         }
+    }
+
+    if (editingMacro != null) {
+        MacroEditorScreen(
+            macro = editingMacro!!,
+            onBack = { editingMacro = null; refresh() },
+        )
+        return
     }
 
     if (editorOpen) {
@@ -256,6 +266,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     onRefresh = { refresh() },
                     onRename = { renaming = it; nameField = it.name },
                     onDelete = { MacroStore.delete(context, it.id); refresh() },
+                    onEdit = { editingMacro = it },
                 )
                 Tab.SETTINGS -> SettingsTab(
                     state = state, canOverlay = canOverlay,
@@ -441,6 +452,7 @@ private fun LibraryTab(
     onRefresh: () -> Unit,
     onRename: (Macro) -> Unit,
     onDelete: (Macro) -> Unit,
+    onEdit: (Macro) -> Unit,
 ) {
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
@@ -460,6 +472,8 @@ private fun LibraryTab(
                             Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                             Text("${m.strokes.size} 스트로크", color = TextLo, fontSize = 12.sp)
                         }
+                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(m) })
+                        Spacer(Modifier.width(14.dp))
                         Text("이름변경", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRename(m) })
                         Spacer(Modifier.width(14.dp))
                         Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(m) })
