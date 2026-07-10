@@ -1,41 +1,36 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 뉴모피즘 2/2 (이어붙임)
+# 편집기 인포바 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-            Spacer(Modifier.weight(1f)) // 하단 여백 — 애니메이션 그라데이션이 보임
-        }
-    }
-}
-
+/** 채운 차콜 재생/퍼즈 벡터 (모서리 약간 둥글게). */
 @Composable
-private fun PlayPauseOutline(playing: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier.size(36.dp).clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(24.dp)) {
-            val c = TextHi
-            val sw = 2.6f
+private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(19.dp)) {
+            val c = Color(0xFF2B2D42)
+            val w = size.width; val h = size.height
             if (playing) {
-                val bw = size.width * 0.20f
-                val gap = size.width * 0.20f
-                val h = size.height * 0.78f
-                val top = (size.height - h) / 2f
-                val x1 = size.width / 2f - gap / 2f - bw
-                val x2 = size.width / 2f + gap / 2f
-                drawRect(c, topLeft = Offset(x1, top),
-                    size = androidx.compose.ui.geometry.Size(bw, h), style = DrawStroke(sw))
-                drawRect(c, topLeft = Offset(x2, top),
-                    size = androidx.compose.ui.geometry.Size(bw, h), style = DrawStroke(sw))
+                val bw = w * 0.28f
+                val gap = w * 0.16f
+                val bh = h * 0.84f
+                val top = (h - bh) / 2f
+                val x1 = w / 2f - gap / 2f - bw
+                val x2 = w / 2f + gap / 2f
+                val cr = androidx.compose.ui.geometry.CornerRadius(bw * 0.45f, bw * 0.45f)
+                drawRoundRect(c, topLeft = Offset(x1, top),
+                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
+                drawRoundRect(c, topLeft = Offset(x2, top),
+                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
             } else {
                 val p = Path().apply {
-                    moveTo(size.width * 0.22f, size.height * 0.12f)
-                    lineTo(size.width * 0.86f, size.height * 0.5f)
-                    lineTo(size.width * 0.22f, size.height * 0.88f)
+                    moveTo(w * 0.24f, h * 0.16f)
+                    lineTo(w * 0.84f, h * 0.5f)
+                    lineTo(w * 0.24f, h * 0.84f)
                     close()
                 }
-                drawPath(p, c, style = DrawStroke(width = sw, join = StrokeJoin.Round))
+                drawPath(p, c) // 채움
+                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round)) // 모서리 둥글게
             }
         }
     }
@@ -58,7 +53,7 @@ private fun Timeline(
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
     val trackH = 52.dp
-    val rulerH = 16.dp
+    val rulerH = 18.dp
     val cardVPad = 6.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
@@ -112,12 +107,20 @@ private fun Timeline(
 
         Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
-                // 눈금자
+                // 눈금자: 초 숫자(뮤트 그레이) + 눈금선
                 Canvas(Modifier.fillMaxWidth().height(rulerH)) {
                     val yb = size.height
-                    for (sec in 0..secCount) {
-                        val x = halfPx + sec * 1000f * pxPerMs
-                        drawLine(CardStroke, Offset(x, yb * 0.35f), Offset(x, yb), strokeWidth = 2f)
+                    val txt = android.graphics.Paint().apply {
+                        color = android.graphics.Color.rgb(138, 141, 160) // TextLo
+                        textSize = 9.sp.toPx()
+                        isAntiAlias = true
+                    }
+                    drawIntoCanvas { canvas ->
+                        for (sec in 0..secCount) {
+                            val x = halfPx + sec * 1000f * pxPerMs
+                            drawLine(CardStroke, Offset(x, yb * 0.58f), Offset(x, yb), strokeWidth = 2f)
+                            canvas.nativeCanvas.drawText("${sec}s", x + 3.dp.toPx(), yb * 0.5f, txt)
+                        }
                     }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -254,7 +257,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기 뉴모피즘: 인포바 볼록카드+편집공간 오목(함몰)+필름스트립 흰카드+슬림 차콜 재생헤드+하단 그라데이션"
+git commit -m "편집기 인포바: 각진 볼록 직사각형(좌우꽉,슬림)+채운 차콜 재생퍼즈 벡터+시간자 초숫자"
 git push
 echo "푸시 완료!"
 

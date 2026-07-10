@@ -37,6 +37,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -68,7 +71,6 @@ import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.AnimatedBottomGradient
-import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.CardStroke
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
@@ -217,19 +219,18 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 TraceOverlay(macro.strokes, playheadStrokeMs, contentAspect, macro.rotation)
             }
 
-            // 인포바: 볼록 뉴모피즘 카드(떠 있는 느낌), 슬림
-            SoftCard(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                cornerRadius = 16.dp, padding = 8.dp,
+            // 인포바: 볼록 뉴모피즘 각진 직사각형(좌우 꽉, 슬림, 한 칸 위)
+            Box(
+                Modifier.fillMaxWidth().neuRaised().background(NeuBase)
+                    .padding(horizontal = 18.dp, vertical = 5.dp),
+                contentAlignment = Alignment.CenterStart,
             ) {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                    Text(
-                        "${fmt(positionMs)} / ${fmt(totalMs)}",
-                        color = TextLo, fontSize = 12.sp,
-                    )
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        PlayPauseOutline(playing) { togglePlay() }
-                    }
+                Text(
+                    "${fmt(positionMs)} / ${fmt(totalMs)}",
+                    color = TextLo, fontSize = 12.sp,
+                )
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    PlayPauseFilled(playing) { togglePlay() }
                 }
             }
 
@@ -260,34 +261,53 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 }
 
+/** 볼록 뉴모피즘(각진 직사각형): 위-왼쪽 하이라이트 + 아래-오른쪽 그림자. */
+private fun Modifier.neuRaised() = this.drawBehind {
+    val off = 5.dp.toPx(); val blur = 11.dp.toPx()
+    drawIntoCanvas { canvas ->
+        val fw = canvas.nativeCanvas
+        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+        val dark = android.graphics.Paint().apply {
+            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, off, off, 0xFFC9D0E0.toInt())
+        }
+        fw.drawRect(rect, dark)
+        val light = android.graphics.Paint().apply {
+            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, -off, -off, 0xFFFFFFFF.toInt())
+        }
+        fw.drawRect(rect, light)
+    }
+}
+
+/** 채운 차콜 재생/퍼즈 벡터 (모서리 약간 둥글게). */
 @Composable
-private fun PlayPauseOutline(playing: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier.size(36.dp).clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(Modifier.size(24.dp)) {
-            val c = TextHi
-            val sw = 2.6f
+private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(19.dp)) {
+            val c = Color(0xFF2B2D42)
+            val w = size.width; val h = size.height
             if (playing) {
-                val bw = size.width * 0.20f
-                val gap = size.width * 0.20f
-                val h = size.height * 0.78f
-                val top = (size.height - h) / 2f
-                val x1 = size.width / 2f - gap / 2f - bw
-                val x2 = size.width / 2f + gap / 2f
-                drawRect(c, topLeft = Offset(x1, top),
-                    size = androidx.compose.ui.geometry.Size(bw, h), style = DrawStroke(sw))
-                drawRect(c, topLeft = Offset(x2, top),
-                    size = androidx.compose.ui.geometry.Size(bw, h), style = DrawStroke(sw))
+                val bw = w * 0.28f
+                val gap = w * 0.16f
+                val bh = h * 0.84f
+                val top = (h - bh) / 2f
+                val x1 = w / 2f - gap / 2f - bw
+                val x2 = w / 2f + gap / 2f
+                val cr = androidx.compose.ui.geometry.CornerRadius(bw * 0.45f, bw * 0.45f)
+                drawRoundRect(c, topLeft = Offset(x1, top),
+                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
+                drawRoundRect(c, topLeft = Offset(x2, top),
+                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
             } else {
                 val p = Path().apply {
-                    moveTo(size.width * 0.22f, size.height * 0.12f)
-                    lineTo(size.width * 0.86f, size.height * 0.5f)
-                    lineTo(size.width * 0.22f, size.height * 0.88f)
+                    moveTo(w * 0.24f, h * 0.16f)
+                    lineTo(w * 0.84f, h * 0.5f)
+                    lineTo(w * 0.24f, h * 0.84f)
                     close()
                 }
-                drawPath(p, c, style = DrawStroke(width = sw, join = StrokeJoin.Round))
+                drawPath(p, c) // 채움
+                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round)) // 모서리 둥글게
             }
         }
     }
@@ -310,7 +330,7 @@ private fun Timeline(
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
     val trackH = 52.dp
-    val rulerH = 16.dp
+    val rulerH = 18.dp
     val cardVPad = 6.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
@@ -364,12 +384,20 @@ private fun Timeline(
 
         Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
-                // 눈금자
+                // 눈금자: 초 숫자(뮤트 그레이) + 눈금선
                 Canvas(Modifier.fillMaxWidth().height(rulerH)) {
                     val yb = size.height
-                    for (sec in 0..secCount) {
-                        val x = halfPx + sec * 1000f * pxPerMs
-                        drawLine(CardStroke, Offset(x, yb * 0.35f), Offset(x, yb), strokeWidth = 2f)
+                    val txt = android.graphics.Paint().apply {
+                        color = android.graphics.Color.rgb(138, 141, 160) // TextLo
+                        textSize = 9.sp.toPx()
+                        isAntiAlias = true
+                    }
+                    drawIntoCanvas { canvas ->
+                        for (sec in 0..secCount) {
+                            val x = halfPx + sec * 1000f * pxPerMs
+                            drawLine(CardStroke, Offset(x, yb * 0.58f), Offset(x, yb), strokeWidth = 2f)
+                            canvas.nativeCanvas.drawText("${sec}s", x + 3.dp.toPx(), yb * 0.5f, txt)
+                        }
                     }
                 }
                 Spacer(Modifier.height(4.dp))
