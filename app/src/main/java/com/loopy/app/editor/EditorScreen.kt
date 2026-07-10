@@ -336,8 +336,8 @@ private fun Timeline(
     val rulerH = 18.dp
     val cardVPad = 6.dp
     val cardH = trackH + cardVPad * 2
-    val laneStep = 22.dp
-    val blockH = 18.dp
+    val laneStep = 28.dp
+    val blockH = 24.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
 
