@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 인포바 2/2 (이어붙임)
+# 편집기 스트로크블록 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -50,6 +50,7 @@ private fun Timeline(
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    var selectedStroke by remember { mutableStateOf<Int?>(null) }
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
     val trackH = 52.dp
@@ -97,7 +98,7 @@ private fun Timeline(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth().height(112.dp)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(160.dp)) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
@@ -147,12 +148,28 @@ private fun Timeline(
                     }
                     Spacer(Modifier.width(halfDp))
                 }
+                // 스트로크 블록 트랙 (필름스트립 아래, 페리윙클 뉴모피즘 블록)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth().height(46.dp)) {
+                    val blockH = 38.dp
+                    val vpad = (46.dp - blockH) / 2
+                    for (i in macro.strokes.indices) {
+                        val s = macro.strokes[i]
+                        val xDp = halfDp + with(density) { (s.startMs * pxPerMs).toDp() }
+                        val wDp = with(density) { (s.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
+                        StrokeBlock(
+                            selected = selectedStroke == i,
+                            onClick = { selectedStroke = if (selectedStroke == i) null else i },
+                            modifier = Modifier.offset(x = xDp, y = vpad).width(wDp).height(blockH),
+                        )
+                    }
+                }
             }
             // 중앙 재생헤드: 슬림 차콜 + 은은한 그림자
             Canvas(Modifier.fillMaxSize()) {
                 val x = size.width / 2f
                 val phTop = 0f
-                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp).toPx() }
+                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + 46.dp + 4.dp).toPx() }
                 drawIntoCanvas { canvas ->
                     val paint = android.graphics.Paint().apply {
                         isAntiAlias = true
@@ -166,6 +183,22 @@ private fun Timeline(
                 }
             }
         }
+    }
+}
+
+/** 스트로크 블록: 기본 페리윙클 볼록, 선택 시 흰색 + 페리윙클 테두리가 약간 커짐. */
+@Composable
+private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(modifier.clickable { onClick() }) {
+        val inset = if (selected) 0.dp else 2.dp
+        Box(
+            Modifier.fillMaxSize().padding(inset)
+                .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
+                .clip(shape)
+                .background(if (selected) Color.White else Accent)
+                .then(if (selected) Modifier.border(2.5.dp, Accent, shape) else Modifier),
+        )
     }
 }
 
@@ -257,7 +290,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기 인포바: 각진 볼록 직사각형(좌우꽉,슬림)+채운 차콜 재생퍼즈 벡터+시간자 초숫자"
+git commit -m "편집기: 인포바 글로우 수직전용/약화 + 페리윙클 뉴모피즘 스트로크 블록트랙(터치 선택→흰색+테두리 확대)"
 git push
 echo "푸시 완료!"
 

@@ -37,6 +37,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.draw.drawBehind
@@ -261,20 +263,20 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 }
 
-/** 볼록 뉴모피즘(각진 직사각형): 위-왼쪽 하이라이트 + 아래-오른쪽 그림자. */
+/** 볼록 뉴모피즘(좌우 꽉 찬 바용): 위 하이라이트 + 아래 그림자를 수직으로만. */
 private fun Modifier.neuRaised() = this.drawBehind {
-    val off = 5.dp.toPx(); val blur = 11.dp.toPx()
+    val off = 3.dp.toPx(); val blur = 7.dp.toPx()
     drawIntoCanvas { canvas ->
         val fw = canvas.nativeCanvas
         val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
         val dark = android.graphics.Paint().apply {
             isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, off, off, 0xFFC9D0E0.toInt())
+            setShadowLayer(blur, 0f, off, 0xFFD3D9E4.toInt())
         }
         fw.drawRect(rect, dark)
         val light = android.graphics.Paint().apply {
             isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, -off, -off, 0xFFFFFFFF.toInt())
+            setShadowLayer(blur, 0f, -off, 0xFFFFFFFF.toInt())
         }
         fw.drawRect(rect, light)
     }
@@ -327,6 +329,7 @@ private fun Timeline(
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
+    var selectedStroke by remember { mutableStateOf<Int?>(null) }
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
     val trackH = 52.dp
@@ -374,7 +377,7 @@ private fun Timeline(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth().height(112.dp)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(160.dp)) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
@@ -424,12 +427,28 @@ private fun Timeline(
                     }
                     Spacer(Modifier.width(halfDp))
                 }
+                // 스트로크 블록 트랙 (필름스트립 아래, 페리윙클 뉴모피즘 블록)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth().height(46.dp)) {
+                    val blockH = 38.dp
+                    val vpad = (46.dp - blockH) / 2
+                    for (i in macro.strokes.indices) {
+                        val s = macro.strokes[i]
+                        val xDp = halfDp + with(density) { (s.startMs * pxPerMs).toDp() }
+                        val wDp = with(density) { (s.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
+                        StrokeBlock(
+                            selected = selectedStroke == i,
+                            onClick = { selectedStroke = if (selectedStroke == i) null else i },
+                            modifier = Modifier.offset(x = xDp, y = vpad).width(wDp).height(blockH),
+                        )
+                    }
+                }
             }
             // 중앙 재생헤드: 슬림 차콜 + 은은한 그림자
             Canvas(Modifier.fillMaxSize()) {
                 val x = size.width / 2f
                 val phTop = 0f
-                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp).toPx() }
+                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + 46.dp + 4.dp).toPx() }
                 drawIntoCanvas { canvas ->
                     val paint = android.graphics.Paint().apply {
                         isAntiAlias = true
@@ -443,6 +462,22 @@ private fun Timeline(
                 }
             }
         }
+    }
+}
+
+/** 스트로크 블록: 기본 페리윙클 볼록, 선택 시 흰색 + 페리윙클 테두리가 약간 커짐. */
+@Composable
+private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val shape = RoundedCornerShape(7.dp)
+    Box(modifier.clickable { onClick() }) {
+        val inset = if (selected) 0.dp else 2.dp
+        Box(
+            Modifier.fillMaxSize().padding(inset)
+                .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
+                .clip(shape)
+                .background(if (selected) Color.White else Accent)
+                .then(if (selected) Modifier.border(2.5.dp, Accent, shape) else Modifier),
+        )
     }
 }
 
