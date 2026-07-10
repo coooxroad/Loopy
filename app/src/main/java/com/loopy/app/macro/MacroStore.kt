@@ -19,10 +19,10 @@ object MacroStore {
 
     fun saveNew(
         ctx: Context, strokes: List<Stroke>,
-        videoPath: String? = null, videoOffsetMs: Long = 0L,
+        videoPath: String? = null, videoOffsetMs: Long = 0L, rotation: Int = 0,
     ): Macro {
         val now = System.currentTimeMillis()
-        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes, videoPath, videoOffsetMs)
+        val macro = Macro(UUID.randomUUID().toString(), autoName(now), now, strokes, videoPath, videoOffsetMs, rotation)
         write(ctx, macro)
         return macro
     }
@@ -64,6 +64,7 @@ object MacroStore {
             .put("strokes", strokes)
             .put("videoPath", m.videoPath ?: JSONObject.NULL)
             .put("videoOffsetMs", m.videoOffsetMs)
+            .put("rotation", m.rotation)
             .toString()
     }
 
@@ -82,6 +83,6 @@ object MacroStore {
             strokes.add(Stroke(so.optLong("startMs", 0L), so.optLong("durationMs", 0L), samples))
         }
         val vp = if (o.isNull("videoPath")) null else o.optString("videoPath", "").ifEmpty { null }
-        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes, vp, o.optLong("videoOffsetMs", 0L))
+        return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes, vp, o.optLong("videoOffsetMs", 0L), o.optInt("rotation", 0))
     }
 }

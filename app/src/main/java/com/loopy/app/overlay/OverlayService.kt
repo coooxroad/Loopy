@@ -454,7 +454,8 @@ class OverlayService : Service() {
         }
         val offset = if (vpath != null && videoStart > 0 && recorder.baseUptime > 0)
             (recorder.baseUptime - videoStart).coerceAtLeast(0L) else 0L
-        val m = MacroStore.saveNew(this, snap, vpath, offset)
+        val rot = runCatching { @Suppress("DEPRECATION") wm.defaultDisplay.rotation * 90 }.getOrDefault(0)
+        val m = MacroStore.saveNew(this, snap, vpath, offset, rot)
         status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
     }
 

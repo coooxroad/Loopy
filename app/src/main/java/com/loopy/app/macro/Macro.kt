@@ -13,4 +13,5 @@ data class Macro(
     val strokes: List<Stroke>,
     val videoPath: String? = null,
     val videoOffsetMs: Long = 0L,
+    val rotation: Int = 0, // 녹화 시 화면 회전(0/90/180/270°) — 편집기 트레이서 정렬용
 )

@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 묶음A: 뉴모피즘 UI + 멈춤버그 수정 + 흰원/파란글로우 트레이서
+# 회전 정렬 2/2: 편집기 3존 UI + 회전 트레이서 + 글로우 강화
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -8,7 +8,9 @@ package com.loopy.app.editor
 import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.MoreTime
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -36,11 +43,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -54,6 +63,7 @@ import com.loopy.app.macro.TouchSample
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.CardStroke
+import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.TextHi
@@ -65,7 +75,7 @@ private val TraceStart = Color(0xFF3B82F6)
 private val TraceEnd = Color(0xFFEFF5FF)
 private const val WINDOW_MS = 150L
 
-/** 편집기 1단계: 영상 프리뷰 + 그라데이션 트레이서 + 싱크 재생 (뉴모피즘 UI). */
+/** 편집기: 3존(프리뷰/재생·타임라인/툴바) + 그라데이션 트레이서 + 회전 정렬. */
 @Composable
 fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -112,10 +122,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
     val previewH = remember {
         val dm = context.resources.displayMetrics
-        (dm.heightPixels / dm.density * 0.5f).dp
+        (dm.heightPixels / dm.density * 0.46f).dp
     }
 
-    // 재생 루프: 위치 폴링만. 실제 재생/정지는 버튼에서 즉시 처리(멈춤 지연 방지).
     LaunchedEffect(playing) {
         if (!playing) return@LaunchedEffect
         if (player != null) {
@@ -154,21 +163,27 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     Box(Modifier.fillMaxSize().background(NeuBase)) {
         AnimatedBottomGradient()
         Column(Modifier.fillMaxSize()) {
+            // ── 상단 바 ──
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("‹ 뒤로", color = Accent, fontSize = 15.sp, fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onBack() })
-                Spacer(Modifier.width(14.dp))
-                Text(macro.name, color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape).background(LoopyCard)
+                        .border(1.dp, CardStroke, CircleShape).clickable { onBack() },
+                    contentAlignment = Alignment.Center,
+                ) { Text("‹", color = Accent, fontSize = 20.sp) }
+                Text(
+                    macro.name, color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.size(38.dp))
             }
 
+            // ── 프리뷰(검정) + 트레이서 ──
             Box(
-                Modifier.fillMaxWidth().height(previewH)
-                    .padding(horizontal = 12.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xFF0A0B0F)),
+                Modifier.fillMaxWidth().height(previewH).padding(horizontal = 12.dp)
+                    .clip(RoundedCornerShape(18.dp)).background(Color(0xFF0A0B0F)),
                 contentAlignment = Alignment.Center,
             ) {
                 if (player != null) {
@@ -185,49 +200,79 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 } else {
                     Text("영상 없음", color = Color(0xFF3A3F50), fontSize = 14.sp)
                 }
-                TraceOverlay(macro.strokes, playheadStrokeMs, contentAspect)
+                TraceOverlay(macro.strokes, playheadStrokeMs, contentAspect, macro.rotation)
             }
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
 
-            SoftCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp), padding = 14.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(44.dp).clip(CircleShape).background(Accent)
-                            .clickable { togglePlay() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(if (playing) "❚❚" else "▶", color = Color.White, fontSize = 17.sp)
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Slider(
-                        value = positionMs.coerceIn(0, totalMs).toFloat(),
-                        onValueChange = { seekTo(it.toLong()) },
-                        valueRange = 0f..totalMs.toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Accent, activeTrackColor = Accent,
-                            inactiveTrackColor = CardStroke,
-                        ),
-                        modifier = Modifier.weight(1f),
-                    )
+            // ── 재생 컨트롤 (플레이 중앙) ──
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(fmt(positionMs), color = TextLo, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                Box(
+                    Modifier.size(52.dp).clip(CircleShape).background(Accent).clickable { togglePlay() },
+                    contentAlignment = Alignment.Center,
+                ) { Text(if (playing) "❚❚" else "▶", color = Color.White, fontSize = 19.sp) }
+                Text(
+                    fmt(totalMs), color = TextLo, fontSize = 12.sp,
+                    textAlign = TextAlign.End, modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // ── 타임라인 스크러버 (2단계에서 트랙으로 확장) ──
+            SoftCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp), padding = 12.dp) {
+                Slider(
+                    value = positionMs.coerceIn(0, totalMs).toFloat(),
+                    onValueChange = { seekTo(it.toLong()) },
+                    valueRange = 0f..totalMs.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Accent, activeTrackColor = Accent, inactiveTrackColor = CardStroke,
+                    ),
+                )
+                Text("타임라인 · 트랙/분할은 다음 단계", color = TextLo, fontSize = 11.sp)
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // ── 하단 툴바 (상황별 도구 — 기능은 다음 단계) ──
+            Box(
+                Modifier.fillMaxWidth().background(LoopyCard)
+                    .border(width = 1.dp, color = CardStroke, shape = RoundedCornerShape(0.dp)),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    ToolItem("분할", Icons.Filled.ContentCut)
+                    ToolItem("대기 삽입", Icons.Filled.MoreTime)
+                    ToolItem("삭제", Icons.Filled.Delete)
                 }
-                Text("${fmt(positionMs)} / ${fmt(totalMs)}", color = TextLo, fontSize = 12.sp)
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            SoftCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                Text("타임라인 편집", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(6.dp))
-                Text("다음 단계에서 트랙·분할·대기삽입이 여기 들어가.", color = TextLo, fontSize = 12.sp)
             }
         }
     }
 }
 
-/** 재생헤드 근처(±WINDOW_MS)의 스트로크를 그라데이션 선으로. 진짜 눌림은 흰 원+파란 글로우. */
 @Composable
-private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float) {
+private fun androidx.compose.foundation.layout.RowScope.ToolItem(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+) {
+    Column(
+        Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(icon, contentDescription = label, tint = TextLo, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(label, color = TextLo, fontSize = 11.sp)
+    }
+}
+
+/** 재생헤드 근처의 스트로크를 그라데이션 선으로. 회전 정렬 + 흰 원+파란 글로우/링. */
+@Composable
+private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, rotationDeg: Int) {
     Canvas(Modifier.fillMaxSize()) {
         val bw = size.width; val bh = size.height
         val boxAspect = bw / bh
@@ -235,8 +280,18 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
         if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
         else { dispH = bh; dispW = bh * contentAspect }
         val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
-        fun mx(nx: Float) = offX + nx * dispW
-        fun my(ny: Float) = offY + ny * dispH
+
+        // 패널 고유좌표(nx,ny) → 화면(영상) 회전 방향으로 변환
+        fun rot(nx: Float, ny: Float): Pair<Float, Float> = when (rotationDeg) {
+            90 -> ny to (1f - nx)
+            180 -> (1f - nx) to (1f - ny)
+            270 -> (1f - ny) to nx
+            else -> nx to ny
+        }
+        fun mapPt(nx: Float, ny: Float): Offset {
+            val (rx, ry) = rot(nx, ny)
+            return Offset(offX + rx * dispW, offY + ry * dispH)
+        }
 
         for (s in strokes) {
             val relT = playheadStrokeMs - s.startMs
@@ -257,7 +312,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             var prev: Offset? = null; var prevFrac = 0f
             for (smp in samples) {
                 if (smp.t > revealT + 40L) break
-                val p = Offset(mx(smp.nx), my(smp.ny))
+                val p = mapPt(smp.nx, smp.ny)
                 val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
                 if (prev != null) {
                     val c = lerp(TraceStart, TraceEnd, (prevFrac + frac) / 2f)
@@ -268,17 +323,20 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             }
             val cur = sampleAt(samples, revealT)
             if (cur != null) {
-                val p = Offset(mx(cur.first), my(cur.second))
+                val p = mapPt(cur.first, cur.second)
                 if (pressing) {
+                    // 파란 글로우(네이티브 blur) + 흰 원 + 파란 링
                     drawIntoCanvas { canvas ->
                         val glow = (255 * edge).toInt().coerceIn(0, 255)
                         val paint = android.graphics.Paint().apply {
                             isAntiAlias = true
                             color = android.graphics.Color.WHITE
-                            setShadowLayer(34f, 0f, 0f, android.graphics.Color.argb(glow, 59, 130, 246))
+                            setShadowLayer(50f, 0f, 0f, android.graphics.Color.argb(glow, 59, 130, 246))
                         }
                         canvas.nativeCanvas.drawCircle(p.x, p.y, 13f, paint)
                     }
+                    drawCircle(TraceStart.copy(alpha = 0.85f * edge), radius = 15f, center = p,
+                        style = DrawStroke(width = 3f))
                 } else {
                     drawCircle(TraceEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
                 }
@@ -307,7 +365,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "완료."
 git add -A
-git commit -m "편집기 묶음A: 뉴모피즘 UI, 멈춤 즉시반영, 흰원+파란글로우 트레이서"
+git commit -m "편집기 3존 UI(뉴모피즘)+회전 트레이서 정렬+글로우/파란링 강화, Macro rotation 저장"
 git push
 echo "푸시 완료!"
 
