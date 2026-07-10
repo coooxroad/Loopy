@@ -1,41 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 스트로크블록 2/2 (이어붙임)
+# 편집기 블록 개선 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-/** 채운 차콜 재생/퍼즈 벡터 (모서리 약간 둥글게). */
-@Composable
-private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(19.dp)) {
-            val c = Color(0xFF2B2D42)
-            val w = size.width; val h = size.height
-            if (playing) {
-                val bw = w * 0.28f
-                val gap = w * 0.16f
-                val bh = h * 0.84f
-                val top = (h - bh) / 2f
-                val x1 = w / 2f - gap / 2f - bw
-                val x2 = w / 2f + gap / 2f
-                val cr = androidx.compose.ui.geometry.CornerRadius(bw * 0.45f, bw * 0.45f)
-                drawRoundRect(c, topLeft = Offset(x1, top),
-                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
-                drawRoundRect(c, topLeft = Offset(x2, top),
-                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
-            } else {
-                val p = Path().apply {
-                    moveTo(w * 0.24f, h * 0.16f)
-                    lineTo(w * 0.84f, h * 0.5f)
-                    lineTo(w * 0.24f, h * 0.84f)
-                    close()
-                }
-                drawPath(p, c) // 채움
-                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round)) // 모서리 둥글게
-            }
-        }
-    }
-}
-
 @Composable
 private fun Timeline(
     macro: Macro,
@@ -56,8 +23,17 @@ private fun Timeline(
     val trackH = 52.dp
     val rulerH = 18.dp
     val cardVPad = 6.dp
+    val cardH = trackH + cardVPad * 2
+    val laneStep = 22.dp
+    val blockH = 18.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
+
+    // 레인 배치(겹치는 블록을 세로로 분리)
+    val lanes = remember(macro) { assignLanes(macro.strokes) }
+    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
+    val strokeTrackH = laneStep * laneCount
+    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
 
     // 프레임 썸네일 추출(크롭용: 비율 유지 스케일 → Image에서 Crop)
     LaunchedEffect(macro.videoPath) {
@@ -98,13 +74,12 @@ private fun Timeline(
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth().height(160.dp)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(timelineH)) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
         val contentDp = with(density) { contentPx.toDp() }
         val halfDp = with(density) { halfPx.toDp() }
-        val cardH = trackH + cardVPad * 2
 
         Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
@@ -148,19 +123,20 @@ private fun Timeline(
                     }
                     Spacer(Modifier.width(halfDp))
                 }
-                // 스트로크 블록 트랙 (필름스트립 아래, 페리윙클 뉴모피즘 블록)
+                // 스트로크 블록 트랙 (필름스트립 아래, 레인별 배치, 영상 싱크)
                 Spacer(Modifier.height(6.dp))
-                Box(Modifier.fillMaxWidth().height(46.dp)) {
-                    val blockH = 38.dp
-                    val vpad = (46.dp - blockH) / 2
+                Box(Modifier.fillMaxWidth().height(strokeTrackH)) {
                     for (i in macro.strokes.indices) {
                         val s = macro.strokes[i]
-                        val xDp = halfDp + with(density) { (s.startMs * pxPerMs).toDp() }
+                        val lane = lanes[i]
+                        val startVideoMs = macro.videoOffsetMs + s.startMs
+                        val xDp = halfDp + with(density) { (startVideoMs * pxPerMs).toDp() }
                         val wDp = with(density) { (s.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
+                        val yDp = laneStep * lane + (laneStep - blockH) / 2
                         StrokeBlock(
                             selected = selectedStroke == i,
                             onClick = { selectedStroke = if (selectedStroke == i) null else i },
-                            modifier = Modifier.offset(x = xDp, y = vpad).width(wDp).height(blockH),
+                            modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH),
                         )
                     }
                 }
@@ -169,7 +145,7 @@ private fun Timeline(
             Canvas(Modifier.fillMaxSize()) {
                 val x = size.width / 2f
                 val phTop = 0f
-                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + 46.dp + 4.dp).toPx() }
+                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 4.dp).toPx() }
                 drawIntoCanvas { canvas ->
                     val paint = android.graphics.Paint().apply {
                         isAntiAlias = true
@@ -196,8 +172,8 @@ private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifi
             Modifier.fillMaxSize().padding(inset)
                 .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
                 .clip(shape)
-                .background(if (selected) Color.White else Accent)
-                .then(if (selected) Modifier.border(2.5.dp, Accent, shape) else Modifier),
+                .background(if (selected) Color.White else TraceStart)
+                .then(if (selected) Modifier.border(2.5.dp, TraceStart, shape) else Modifier),
         )
     }
 }
@@ -270,6 +246,20 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
     }
 }
 
+/** 각 스트로크의 레인 번호(시간 겹치면 다음 레인). 반환은 strokes와 같은 인덱스. */
+private fun assignLanes(strokes: List<Stroke>): List<Int> {
+    val result = IntArray(strokes.size)
+    val laneEnd = ArrayList<Long>()
+    for (idx in strokes.indices.sortedBy { strokes[it].startMs }) {
+        val s = strokes[idx]
+        var lane = laneEnd.indexOfFirst { it <= s.startMs }
+        if (lane < 0) { lane = laneEnd.size; laneEnd.add(0L) }
+        laneEnd[lane] = s.startMs + s.durationMs
+        result[idx] = lane
+    }
+    return result.toList()
+}
+
 private fun sampleAt(samples: List<TouchSample>, t: Long): Pair<Float, Float>? {
     if (samples.isEmpty()) return null
     if (t <= samples.first().t) return samples.first().nx to samples.first().ny
@@ -290,7 +280,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기: 인포바 글로우 수직전용/약화 + 페리윙클 뉴모피즘 스트로크 블록트랙(터치 선택→흰색+테두리 확대)"
+git commit -m "편집기 블록: videoOffset 싱크+레인 세로분리+색 트레이서 푸른색(3B82F6)"
 git push
 echo "푸시 완료!"
 
