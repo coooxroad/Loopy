@@ -66,9 +66,9 @@ import com.loopy.app.macro.Macro
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
 import com.loopy.app.ui.theme.Accent
+import com.loopy.app.ui.theme.AnimatedBottomGradient
+import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.CardStroke
-import com.loopy.app.ui.theme.GradA
-import com.loopy.app.ui.theme.GradB
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.TextHi
@@ -175,6 +175,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val playheadStrokeMs = positionMs - macro.videoOffsetMs
 
     Box(Modifier.fillMaxSize().background(NeuBase)) {
+        AnimatedBottomGradient()
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(8.dp))
             Row(
@@ -215,41 +216,45 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 TraceOverlay(macro.strokes, playheadStrokeMs, contentAspect, macro.rotation)
             }
 
-            // 인포바: 왼쪽 현재/전체, 가운데 선-심볼 재생/퍼즈
-            Box(
-                Modifier.fillMaxWidth().height(46.dp).padding(horizontal = 18.dp),
-                contentAlignment = Alignment.CenterStart,
+            // 인포바: 볼록 뉴모피즘 카드(떠 있는 느낌), 슬림
+            SoftCard(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                cornerRadius = 16.dp, padding = 8.dp,
             ) {
-                Text(
-                    "${fmt(positionMs)} / ${fmt(totalMs)}",
-                    color = TextLo, fontSize = 12.sp,
-                )
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    PlayPauseOutline(playing) { togglePlay() }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                    Text(
+                        "${fmt(positionMs)} / ${fmt(totalMs)}",
+                        color = TextLo, fontSize = 12.sp,
+                    )
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        PlayPauseOutline(playing) { togglePlay() }
+                    }
                 }
             }
 
-            // 인포바 ↔ 편집공간 그라데이션 구분(위→아래)
-            Box(
-                Modifier.fillMaxWidth().height(20.dp).background(
-                    Brush.verticalGradient(
-                        listOf(lerp(GradA, GradB, 0.4f).copy(alpha = 0.32f), Color.Transparent),
+            // 편집공간: 오목(함몰) — 위쪽 이너 섀도우로 파인 느낌
+            Column(Modifier.fillMaxWidth().background(Color(0xFFE6EAF2))) {
+                Box(
+                    Modifier.fillMaxWidth().height(9.dp).background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xFFC9D0E0).copy(alpha = 0.55f), Color.Transparent),
+                        ),
                     ),
-                ),
-            )
+                )
+                Timeline(
+                    macro = macro, totalMs = totalMs, positionMs = positionMs,
+                    dpPerSec = DP_PER_SEC, density = density,
+                    onScrubTime = { t ->
+                        playing = false; player?.playWhenReady = false
+                        positionMs = t; player?.seekTo(t)
+                    },
+                    onScrubbingChange = { userScrubbing = it },
+                    userScrubbing = userScrubbing,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
 
-            // 편집공간: 필름스트립 타임라인
-            Timeline(
-                macro = macro, totalMs = totalMs, positionMs = positionMs,
-                dpPerSec = DP_PER_SEC, density = density,
-                onScrubTime = { t ->
-                    playing = false; player?.playWhenReady = false
-                    positionMs = t; player?.seekTo(t)
-                },
-                onScrubbingChange = { userScrubbing = it },
-                userScrubbing = userScrubbing,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            Spacer(Modifier.weight(1f)) // 하단 여백 — 애니메이션 그라데이션이 보임
         }
     }
 }
@@ -303,8 +308,9 @@ private fun Timeline(
     val scrollState = rememberScrollState()
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
-    val trackH = 58.dp
-    val rulerH = 18.dp
+    val trackH = 52.dp
+    val rulerH = 16.dp
+    val cardVPad = 6.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
 
@@ -347,43 +353,65 @@ private fun Timeline(
         }
     }
 
-    BoxWithConstraints(modifier.background(NeuBase)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(112.dp)) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
         val contentDp = with(density) { contentPx.toDp() }
         val halfDp = with(density) { halfPx.toDp() }
+        val cardH = trackH + cardVPad * 2
 
-        Box(Modifier.fillMaxSize().padding(top = 8.dp), contentAlignment = Alignment.TopStart) {
+        Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
+                // 눈금자
                 Canvas(Modifier.fillMaxWidth().height(rulerH)) {
                     val yb = size.height
                     for (sec in 0..secCount) {
                         val x = halfPx + sec * 1000f * pxPerMs
-                        drawLine(CardStroke, Offset(x, yb * 0.4f), Offset(x, yb), strokeWidth = 2f)
+                        drawLine(CardStroke, Offset(x, yb * 0.35f), Offset(x, yb), strokeWidth = 2f)
                     }
                 }
-                Row(Modifier.height(trackH)) {
+                Spacer(Modifier.height(4.dp))
+                // 필름스트립: 양옆 런웨이(투명, 오목 배경 보임) + 흰 둥근 카드가 흐름
+                Row(Modifier.height(cardH), verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(halfDp))
-                    for (i in 0 until secCount) {
-                        val ib = thumbs.getOrNull(i)
-                        Box(
-                            Modifier.width(dpPerSec.dp).height(trackH)
-                                .background(Color(0xFF1A1D26))
-                                .border(0.5.dp, Color(0x22000000)),
-                        ) {
-                            if (ib != null) {
-                                Image(ib, contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(
+                        Modifier.height(cardH).clip(RoundedCornerShape(12.dp)).background(LoopyCard),
+                    ) {
+                        Row(Modifier.padding(vertical = cardVPad)) {
+                            for (i in 0 until secCount) {
+                                val ib = thumbs.getOrNull(i)
+                                Box(
+                                    Modifier.width(dpPerSec.dp).height(trackH)
+                                        .background(Color(0xFF1A1D26)),
+                                ) {
+                                    if (ib != null) {
+                                        Image(ib, contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                    }
+                                }
                             }
                         }
                     }
                     Spacer(Modifier.width(halfDp))
                 }
             }
-            // 중앙 재생헤드(고정)
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                Box(Modifier.width(2.dp).height(rulerH + trackH).background(Accent))
+            // 중앙 재생헤드: 슬림 차콜 + 은은한 그림자
+            Canvas(Modifier.fillMaxSize()) {
+                val x = size.width / 2f
+                val phTop = 0f
+                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp).toPx() }
+                drawIntoCanvas { canvas ->
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        color = android.graphics.Color.rgb(43, 45, 66) // TextHi
+                        strokeWidth = with(density) { 2.5.dp.toPx() }
+                        strokeCap = android.graphics.Paint.Cap.ROUND
+                        setShadowLayer(with(density) { 5.dp.toPx() }, 0f,
+                            with(density) { 1.dp.toPx() }, android.graphics.Color.argb(60, 0, 0, 0))
+                    }
+                    canvas.nativeCanvas.drawLine(x, phTop, x, phBot, paint)
+                }
             }
         }
     }

@@ -1,20 +1,9 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 UI개편 2/2 (이어붙임)
+# 편집기 뉴모피즘 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-            // 편집공간: 필름스트립 타임라인
-            Timeline(
-                macro = macro, totalMs = totalMs, positionMs = positionMs,
-                dpPerSec = DP_PER_SEC, density = density,
-                onScrubTime = { t ->
-                    playing = false; player?.playWhenReady = false
-                    positionMs = t; player?.seekTo(t)
-                },
-                onScrubbingChange = { userScrubbing = it },
-                userScrubbing = userScrubbing,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            Spacer(Modifier.weight(1f)) // 하단 여백 — 애니메이션 그라데이션이 보임
         }
     }
 }
@@ -68,8 +57,9 @@ private fun Timeline(
     val scrollState = rememberScrollState()
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
-    val trackH = 58.dp
-    val rulerH = 18.dp
+    val trackH = 52.dp
+    val rulerH = 16.dp
+    val cardVPad = 6.dp
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
 
@@ -112,43 +102,65 @@ private fun Timeline(
         }
     }
 
-    BoxWithConstraints(modifier.background(NeuBase)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(112.dp)) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
         val contentDp = with(density) { contentPx.toDp() }
         val halfDp = with(density) { halfPx.toDp() }
+        val cardH = trackH + cardVPad * 2
 
-        Box(Modifier.fillMaxSize().padding(top = 8.dp), contentAlignment = Alignment.TopStart) {
+        Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
+                // 눈금자
                 Canvas(Modifier.fillMaxWidth().height(rulerH)) {
                     val yb = size.height
                     for (sec in 0..secCount) {
                         val x = halfPx + sec * 1000f * pxPerMs
-                        drawLine(CardStroke, Offset(x, yb * 0.4f), Offset(x, yb), strokeWidth = 2f)
+                        drawLine(CardStroke, Offset(x, yb * 0.35f), Offset(x, yb), strokeWidth = 2f)
                     }
                 }
-                Row(Modifier.height(trackH)) {
+                Spacer(Modifier.height(4.dp))
+                // 필름스트립: 양옆 런웨이(투명, 오목 배경 보임) + 흰 둥근 카드가 흐름
+                Row(Modifier.height(cardH), verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(halfDp))
-                    for (i in 0 until secCount) {
-                        val ib = thumbs.getOrNull(i)
-                        Box(
-                            Modifier.width(dpPerSec.dp).height(trackH)
-                                .background(Color(0xFF1A1D26))
-                                .border(0.5.dp, Color(0x22000000)),
-                        ) {
-                            if (ib != null) {
-                                Image(ib, contentDescription = null,
-                                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(
+                        Modifier.height(cardH).clip(RoundedCornerShape(12.dp)).background(LoopyCard),
+                    ) {
+                        Row(Modifier.padding(vertical = cardVPad)) {
+                            for (i in 0 until secCount) {
+                                val ib = thumbs.getOrNull(i)
+                                Box(
+                                    Modifier.width(dpPerSec.dp).height(trackH)
+                                        .background(Color(0xFF1A1D26)),
+                                ) {
+                                    if (ib != null) {
+                                        Image(ib, contentDescription = null,
+                                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                    }
+                                }
                             }
                         }
                     }
                     Spacer(Modifier.width(halfDp))
                 }
             }
-            // 중앙 재생헤드(고정)
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                Box(Modifier.width(2.dp).height(rulerH + trackH).background(Accent))
+            // 중앙 재생헤드: 슬림 차콜 + 은은한 그림자
+            Canvas(Modifier.fillMaxSize()) {
+                val x = size.width / 2f
+                val phTop = 0f
+                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp).toPx() }
+                drawIntoCanvas { canvas ->
+                    val paint = android.graphics.Paint().apply {
+                        isAntiAlias = true
+                        color = android.graphics.Color.rgb(43, 45, 66) // TextHi
+                        strokeWidth = with(density) { 2.5.dp.toPx() }
+                        strokeCap = android.graphics.Paint.Cap.ROUND
+                        setShadowLayer(with(density) { 5.dp.toPx() }, 0f,
+                            with(density) { 1.dp.toPx() }, android.graphics.Color.argb(60, 0, 0, 0))
+                    }
+                    canvas.nativeCanvas.drawLine(x, phTop, x, phBot, paint)
+                }
             }
         }
     }
@@ -242,7 +254,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기 UI: 검은 영상 직사각형+인포바(선심볼 재생)+그라데이션 구분+크롭 필름스트립, 스트로크블록/툴바 제거"
+git commit -m "편집기 뉴모피즘: 인포바 볼록카드+편집공간 오목(함몰)+필름스트립 흰카드+슬림 차콜 재생헤드+하단 그라데이션"
 git push
 echo "푸시 완료!"
 
