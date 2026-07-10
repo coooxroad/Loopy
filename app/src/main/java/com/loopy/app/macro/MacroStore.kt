@@ -32,6 +32,12 @@ object MacroStore {
         write(ctx, m.copy(name = newName))
     }
 
+    /** 편집기에서 스트로크 변경(삭제/자르기/분할/이동/추가) 후 저장. */
+    fun updateStrokes(ctx: Context, id: String, strokes: List<Stroke>) {
+        val m = read(ctx, id) ?: return
+        write(ctx, m.copy(strokes = strokes))
+    }
+
     fun delete(ctx: Context, id: String) {
         File(dir(ctx), "$id.json").delete()
     }

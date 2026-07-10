@@ -1,293 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기: 스트로크 블록 세로 길게(laneStep28/blockH24)
+# 편집기 편집코어+핀치 2/2 (EditorScreen 이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
-cat > "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-package com.loopy.app.editor
-
-import android.app.Activity
-import android.graphics.Bitmap
-import android.media.MediaMetadataRetriever
-import android.net.Uri
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.foundation.layout.offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.SeekParameters
-import androidx.media3.ui.PlayerView
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.TouchSample
-import com.loopy.app.ui.theme.Accent
-import com.loopy.app.ui.theme.AnimatedBottomGradient
-import com.loopy.app.ui.theme.CardStroke
-import com.loopy.app.ui.theme.LoopyCard
-import com.loopy.app.ui.theme.NeuBase
-import com.loopy.app.ui.theme.TextHi
-import com.loopy.app.ui.theme.TextLo
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.File
-import kotlin.math.abs
-import kotlin.math.ceil
-
-private val TraceStart = Color(0xFF3B82F6)
-private val TraceEnd = Color(0xFFEFF5FF)
-private const val WINDOW_MS = 150L
-private const val DP_PER_SEC = 68f
-
-@Composable
-fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val density = LocalDensity.current
-    val hasVideo = macro.videoPath != null
-
-    DisposableEffect(Unit) {
-        val window = (context as? Activity)?.window
-        val controller = window?.let { WindowInsetsControllerCompat(it, it.decorView) }
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
-        controller?.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
-    }
-
-    val macroDurationMs = remember(macro) {
-        (macro.strokes.maxOfOrNull { it.startMs + it.durationMs } ?: 0L).coerceAtLeast(1L)
-    }
-
-    val player = remember(macro.videoPath) {
-        if (!hasVideo) null else ExoPlayer.Builder(context).build().apply {
-            val path = macro.videoPath!!
-            val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
-            setMediaItem(MediaItem.fromUri(uri)); prepare()
-            setSeekParameters(SeekParameters.CLOSEST_SYNC)
-        }
-    }
-
-    var playing by remember { mutableStateOf(false) }
-    var positionMs by remember { mutableStateOf(0L) }
-    var userScrubbing by remember { mutableStateOf(false) }
-
-    val screenAspect = remember {
-        val dm = context.resources.displayMetrics
-        (dm.widthPixels.toFloat() / dm.heightPixels.toFloat()).coerceIn(0.2f, 2f)
-    }
-    var videoAspect by remember { mutableStateOf(screenAspect) }
-
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onVideoSizeChanged(vs: androidx.media3.common.VideoSize) {
-                if (vs.height > 0 && vs.width > 0) {
-                    val par = if (vs.pixelWidthHeightRatio > 0f) vs.pixelWidthHeightRatio else 1f
-                    videoAspect = (vs.width * par) / vs.height
-                }
-            }
-        }
-        player?.addListener(listener)
-        onDispose { player?.removeListener(listener); player?.release() }
-    }
-
-    val contentAspect = if (hasVideo) videoAspect else screenAspect
-    val totalMs: Long = run {
-        val d = player?.duration ?: 0L
-        if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
-    }
-    val previewH = remember {
-        val dm = context.resources.displayMetrics
-        (dm.heightPixels / dm.density * 0.42f).dp
-    }
-
-    LaunchedEffect(playing) {
-        if (!playing) return@LaunchedEffect
-        if (player != null) {
-            while (playing) {
-                positionMs = player.currentPosition
-                if (player.playbackState == Player.STATE_ENDED) {
-                    player.playWhenReady = false; playing = false; break
-                }
-                kotlinx.coroutines.delay(16)
-            }
-        } else {
-            var last = System.currentTimeMillis()
-            while (playing) {
-                val now = System.currentTimeMillis()
-                positionMs += (now - last); last = now
-                if (positionMs >= totalMs) { positionMs = totalMs; playing = false; break }
-                kotlinx.coroutines.delay(16)
-            }
-        }
-    }
-
-    fun togglePlay() {
-        if (positionMs >= totalMs) { positionMs = 0L; player?.seekTo(0) }
-        playing = !playing
-        player?.playWhenReady = playing
-    }
-
-    val playheadStrokeMs = positionMs - macro.videoOffsetMs
-
-    Box(Modifier.fillMaxSize().background(NeuBase)) {
-        AnimatedBottomGradient()
-        Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier.size(38.dp).clip(CircleShape).background(LoopyCard)
-                        .border(1.dp, CardStroke, CircleShape).clickable { onBack() },
-                    contentAlignment = Alignment.Center,
-                ) { Text("‹", color = Accent, fontSize = 20.sp) }
-                Text(
-                    macro.name, color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.size(38.dp))
-            }
-
-            // 영상: 가로 꽉 찬 검은 직사각형
-            Box(
-                Modifier.fillMaxWidth().height(previewH).background(Color(0xFF000000)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (player != null) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                useController = false
-                                this.player = player
-                                resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Text("영상 없음", color = Color(0xFF3A3F50), fontSize = 14.sp)
-                }
-                TraceOverlay(macro.strokes, playheadStrokeMs, contentAspect, macro.rotation)
-            }
-
-            // 인포바: 볼록 뉴모피즘 각진 직사각형(좌우 꽉, 슬림, 한 칸 위)
-            Box(
-                Modifier.fillMaxWidth().neuRaised().background(NeuBase)
-                    .padding(horizontal = 18.dp, vertical = 5.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    "${fmt(positionMs)} / ${fmt(totalMs)}",
-                    color = TextLo, fontSize = 12.sp,
-                )
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    PlayPauseFilled(playing) { togglePlay() }
-                }
-            }
-
-            // 편집공간: 오목(함몰) — 위쪽 이너 섀도우로 파인 느낌
-            Column(Modifier.fillMaxWidth().background(Color(0xFFE6EAF2))) {
-                Box(
-                    Modifier.fillMaxWidth().height(9.dp).background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xFFC9D0E0).copy(alpha = 0.55f), Color.Transparent),
-                        ),
-                    ),
-                )
-                Timeline(
-                    macro = macro, totalMs = totalMs, positionMs = positionMs,
-                    dpPerSec = DP_PER_SEC, density = density,
-                    onScrubTime = { t ->
-                        playing = false; player?.playWhenReady = false
-                        positionMs = t; player?.seekTo(t)
-                    },
-                    onScrubbingChange = { userScrubbing = it },
-                    userScrubbing = userScrubbing,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            Spacer(Modifier.weight(1f)) // 하단 여백 — 애니메이션 그라데이션이 보임
-        }
-    }
-}
-
-/** 볼록 뉴모피즘(좌우 꽉 찬 바용): 위 하이라이트 + 아래 그림자를 수직으로만. */
-private fun Modifier.neuRaised() = this.drawBehind {
-    val off = 3.dp.toPx(); val blur = 7.dp.toPx()
-    drawIntoCanvas { canvas ->
-        val fw = canvas.nativeCanvas
-        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
-        val dark = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, 0f, off, 0xFFD3D9E4.toInt())
-        }
-        fw.drawRect(rect, dark)
-        val light = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, 0f, -off, 0xFFFFFFFF.toInt())
-        }
-        fw.drawRect(rect, light)
-    }
-}
-
-/** 채운 차콜 재생/퍼즈 벡터 (모서리 약간 둥글게). */
+cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
 @Composable
 private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
@@ -295,26 +10,19 @@ private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
             val c = Color(0xFF2B2D42)
             val w = size.width; val h = size.height
             if (playing) {
-                val bw = w * 0.28f
-                val gap = w * 0.16f
-                val bh = h * 0.84f
+                val bw = w * 0.28f; val gap = w * 0.16f; val bh = h * 0.84f
                 val top = (h - bh) / 2f
-                val x1 = w / 2f - gap / 2f - bw
-                val x2 = w / 2f + gap / 2f
-                val cr = androidx.compose.ui.geometry.CornerRadius(bw * 0.45f, bw * 0.45f)
-                drawRoundRect(c, topLeft = Offset(x1, top),
-                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
-                drawRoundRect(c, topLeft = Offset(x2, top),
-                    size = androidx.compose.ui.geometry.Size(bw, bh), cornerRadius = cr)
+                val x1 = w / 2f - gap / 2f - bw; val x2 = w / 2f + gap / 2f
+                val cr = CornerRadius(bw * 0.45f, bw * 0.45f)
+                drawRoundRect(c, topLeft = Offset(x1, top), size = Size(bw, bh), cornerRadius = cr)
+                drawRoundRect(c, topLeft = Offset(x2, top), size = Size(bw, bh), cornerRadius = cr)
             } else {
                 val p = Path().apply {
-                    moveTo(w * 0.24f, h * 0.16f)
-                    lineTo(w * 0.84f, h * 0.5f)
-                    lineTo(w * 0.24f, h * 0.84f)
-                    close()
+                    moveTo(w * 0.24f, h * 0.16f); lineTo(w * 0.84f, h * 0.5f)
+                    lineTo(w * 0.24f, h * 0.84f); close()
                 }
-                drawPath(p, c) // 채움
-                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round)) // 모서리 둥글게
+                drawPath(p, c)
+                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round))
             }
         }
     }
@@ -322,19 +30,23 @@ private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun Timeline(
-    macro: Macro,
+    strokes: List<Stroke>,
     totalMs: Long,
     positionMs: Long,
-    dpPerSec: Float,
+    videoOffsetMs: Long,
+    videoPath: String?,
     density: androidx.compose.ui.unit.Density,
+    selected: Int?,
     onScrubTime: (Long) -> Unit,
     onScrubbingChange: (Boolean) -> Unit,
     userScrubbing: Boolean,
+    onSelect: (Int) -> Unit,
+    onMove: (Int, Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
-    var selectedStroke by remember { mutableStateOf<Int?>(null) }
+    var dpPerSec by remember { mutableStateOf(DP_PER_SEC) }
     val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
     val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
     val trackH = 52.dp
@@ -346,22 +58,25 @@ private fun Timeline(
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
 
-    // 레인 배치(겹치는 블록을 세로로 분리)
-    val lanes = remember(macro) { assignLanes(macro.strokes) }
+    val lanes = assignLanes(strokes)
     val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
     val strokeTrackH = laneStep * laneCount
     val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
 
-    // 프레임 썸네일 추출(크롭용: 비율 유지 스케일 → Image에서 Crop)
-    LaunchedEffect(macro.videoPath) {
+    // 드래그(홀드 이동) 상태
+    var dragIndex by remember { mutableStateOf<Int?>(null) }
+    var dragDx by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(videoPath, dpPerSec) {
         thumbs.clear()
-        val path = macro.videoPath ?: return@LaunchedEffect
+        val path = videoPath ?: return@LaunchedEffect
+        val secN = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
         withContext(Dispatchers.IO) {
             val r = MediaMetadataRetriever()
             runCatching {
                 val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
                 r.setDataSource(context, uri)
-                for (i in 0 until secCount) {
+                for (i in 0 until secN) {
                     val ib = runCatching {
                         val src = r.getFrameAtTime(i * 1000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                         src?.let {
@@ -384,14 +99,31 @@ private fun Timeline(
                 if (inProgress) onScrubTime((px / pxPerMs).toLong().coerceIn(0L, totalMs))
             }
     }
-    LaunchedEffect(positionMs, userScrubbing) {
+    LaunchedEffect(positionMs, userScrubbing, dpPerSec) {
         if (!userScrubbing) {
             val target = (positionMs * pxPerMs).toInt().coerceIn(0, scrollState.maxValue)
             if (abs(scrollState.value - target) > 1) runCatching { scrollState.scrollTo(target) }
         }
     }
 
-    BoxWithConstraints(modifier.fillMaxWidth().height(timelineH)) {
+    BoxWithConstraints(
+        modifier.fillMaxWidth().height(timelineH)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val e = awaitPointerEvent()
+                        if (e.changes.count { it.pressed } >= 2) {
+                            val z = e.calculateZoom()
+                            if (z != 1f) {
+                                dpPerSec = (dpPerSec * z).coerceIn(24f, 240f)
+                                e.changes.forEach { it.consume() }
+                            }
+                        }
+                    } while (e.changes.any { it.pressed })
+                }
+            },
+    ) {
         val viewportPx = constraints.maxWidth
         val halfPx = viewportPx / 2f
         val contentPx = viewportPx + totalMs * pxPerMs
@@ -400,13 +132,11 @@ private fun Timeline(
 
         Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
             Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
-                // 눈금자: 초 숫자(뮤트 그레이) + 눈금선
                 Canvas(Modifier.fillMaxWidth().height(rulerH)) {
                     val yb = size.height
                     val txt = android.graphics.Paint().apply {
-                        color = android.graphics.Color.rgb(138, 141, 160) // TextLo
-                        textSize = 9.sp.toPx()
-                        isAntiAlias = true
+                        color = android.graphics.Color.rgb(138, 141, 160)
+                        textSize = 9.sp.toPx(); isAntiAlias = true
                     }
                     drawIntoCanvas { canvas ->
                         for (sec in 0..secCount) {
@@ -417,12 +147,9 @@ private fun Timeline(
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                // 필름스트립: 양옆 런웨이(투명, 오목 배경 보임) + 흰 둥근 카드가 흐름
                 Row(Modifier.height(cardH), verticalAlignment = Alignment.CenterVertically) {
                     Spacer(Modifier.width(halfDp))
-                    Box(
-                        Modifier.height(cardH).clip(RoundedCornerShape(12.dp)).background(LoopyCard),
-                    ) {
+                    Box(Modifier.height(cardH).clip(RoundedCornerShape(12.dp)).background(LoopyCard)) {
                         Row(Modifier.padding(vertical = cardVPad)) {
                             for (i in 0 until secCount) {
                                 val ib = thumbs.getOrNull(i)
@@ -440,46 +167,57 @@ private fun Timeline(
                     }
                     Spacer(Modifier.width(halfDp))
                 }
-                // 스트로크 블록 트랙 (필름스트립 아래, 레인별 배치, 영상 싱크)
                 Spacer(Modifier.height(6.dp))
+                // 스트로크 블록 트랙 (레인 배치, 영상 싱크, 홀드 드래그)
                 Box(Modifier.fillMaxWidth().height(strokeTrackH)) {
-                    for (i in macro.strokes.indices) {
-                        val s = macro.strokes[i]
+                    for (i in strokes.indices) {
+                        val s = strokes[i]
                         val lane = lanes[i]
-                        val startVideoMs = macro.videoOffsetMs + s.startMs
-                        val xDp = halfDp + with(density) { (startVideoMs * pxPerMs).toDp() }
+                        val startVideoMs = videoOffsetMs + s.startMs
+                        val dxDp = if (dragIndex == i) with(density) { dragDx.toDp() } else 0.dp
+                        val xDp = halfDp + with(density) { (startVideoMs * pxPerMs).toDp() } + dxDp
                         val wDp = with(density) { (s.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
                         val yDp = laneStep * lane + (laneStep - blockH) / 2
                         StrokeBlock(
-                            selected = selectedStroke == i,
-                            onClick = { selectedStroke = if (selectedStroke == i) null else i },
-                            modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH),
+                            selected = selected == i,
+                            onClick = { onSelect(i) },
+                            modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH)
+                                .pointerInput(i, pxPerMs) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { dragIndex = i; dragDx = 0f },
+                                        onDrag = { change, amount -> dragDx += amount.x; change.consume() },
+                                        onDragEnd = {
+                                            val ns = (s.startMs + (dragDx / pxPerMs)).toLong().coerceAtLeast(0L)
+                                            onMove(i, ns); dragIndex = null; dragDx = 0f
+                                        },
+                                        onDragCancel = { dragIndex = null; dragDx = 0f },
+                                    )
+                                },
                         )
                     }
                 }
             }
-            // 중앙 재생헤드: 슬림 차콜 + 은은한 그림자
+            // 중앙 재생헤드
             Canvas(Modifier.fillMaxSize()) {
                 val x = size.width / 2f
-                val phTop = 0f
                 val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 4.dp).toPx() }
                 drawIntoCanvas { canvas ->
                     val paint = android.graphics.Paint().apply {
                         isAntiAlias = true
-                        color = android.graphics.Color.rgb(43, 45, 66) // TextHi
+                        color = android.graphics.Color.rgb(43, 45, 66)
                         strokeWidth = with(density) { 2.5.dp.toPx() }
                         strokeCap = android.graphics.Paint.Cap.ROUND
                         setShadowLayer(with(density) { 5.dp.toPx() }, 0f,
                             with(density) { 1.dp.toPx() }, android.graphics.Color.argb(60, 0, 0, 0))
                     }
-                    canvas.nativeCanvas.drawLine(x, phTop, x, phBot, paint)
+                    canvas.nativeCanvas.drawLine(x, 0f, x, phBot, paint)
                 }
             }
         }
     }
 }
 
-/** 스트로크 블록: 기본 페리윙클 볼록, 선택 시 흰색 + 페리윙클 테두리가 약간 커짐. */
+/** 스트로크 블록: 기본 푸른색 볼록, 선택 시 흰색 + 푸른 테두리가 약간 커짐. */
 @Composable
 private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
@@ -563,7 +301,26 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
     }
 }
 
-/** 각 스트로크의 레인 번호(시간 겹치면 다음 레인). 반환은 strokes와 같은 인덱스. */
+// ── 스트로크 편집 연산 ──
+private fun trimLeft(s: Stroke, atStrokeMs: Long): Stroke? {
+    val rel = (atStrokeMs - s.startMs).coerceIn(0L, s.durationMs)
+    val kept = s.samples.filter { it.t >= rel }.map { it.copy(t = it.t - rel) }
+    if (kept.size < 2) return null
+    return Stroke(s.startMs + rel, s.durationMs - rel, kept)
+}
+private fun trimRight(s: Stroke, atStrokeMs: Long): Stroke? {
+    val rel = (atStrokeMs - s.startMs).coerceIn(0L, s.durationMs)
+    val kept = s.samples.filter { it.t <= rel }
+    if (kept.size < 2) return null
+    return Stroke(s.startMs, rel, kept)
+}
+private fun splitStroke(s: Stroke, atStrokeMs: Long): Pair<Stroke, Stroke>? {
+    val left = trimRight(s, atStrokeMs) ?: return null
+    val right = trimLeft(s, atStrokeMs) ?: return null
+    return left to right
+}
+
+/** 각 스트로크의 레인 번호(시간 겹치면 다음 레인). */
 private fun assignLanes(strokes: List<Stroke>): List<Int> {
     val result = IntArray(strokes.size)
     val laneEnd = ArrayList<Long>()
@@ -595,9 +352,9 @@ private fun fmt(ms: Long): String {
     val s = ms / 1000; return "%d:%02d.%01d".format(s / 60, s % 60, (ms % 1000) / 100)
 }
 LOOPY_EOF
-echo "완료."
+echo "2/2 완료."
 git add -A
-git commit -m "편집기: 스트로크 블록 세로 확대(레인 28dp/블록 24dp)"
+git commit -m "편집기 편집코어: 편집가능 스트로크+저장, 선택 스냅, 삭제/좌우자르기/분할 툴바, 홀드드래그 이동+레인정리, 핀치 줌"
 git push
 echo "푸시 완료!"
 
