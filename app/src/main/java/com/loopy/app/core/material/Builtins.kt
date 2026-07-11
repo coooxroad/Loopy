@@ -1,0 +1,117 @@
+package com.loopy.app.core.material
+
+/**
+ * 기본 내장 타입들.
+ *
+ * 여기 있는 것들이 공리에서 유도되는 첫 정리들이다. 이 파일이 커지면 안 된다.
+ * 새 타입은 자기 파일에서 정의하고 [registerBuiltins] 처럼 등록만 하면 된다.
+ */
+
+// ── 촬영 매크로 ──
+
+/** 스트로크는 무거우므로 본체는 따로 저장하고 여기서는 참조만 든다. */
+data class TouchParams(val macroId: String) : Params {
+    override fun toMap() = mapOf("macroId" to macroId)
+}
+
+object TouchType : MaterialType {
+    override val id = "touch"
+    override val kind = Kind.ACTION
+    override val label = "촬영 매크로"
+    override val editor = EditorKind.TIMELINE
+    override fun parse(map: Map<String, Any?>) = TouchParams(map["macroId"] as? String ?: "")
+}
+
+// ── 대기 ──
+
+data class WaitParams(val ms: Long) : Params {
+    override fun toMap() = mapOf("ms" to ms)
+}
+
+object WaitType : MaterialType {
+    override val id = "wait"
+    override val kind = Kind.ACTION
+    override val label = "대기"
+    override val input = ParamInput.INLINE
+    override fun parse(map: Map<String, Any?>) =
+        WaitParams((map["ms"] as? Number)?.toLong() ?: 1000L)
+}
+
+// ── 반복 ──
+
+data class LoopParams(val count: Int, val infinite: Boolean = false) : Params {
+    override fun toMap() = mapOf("count" to count, "infinite" to infinite)
+}
+
+object LoopType : MaterialType {
+    override val id = "loop"
+    override val kind = Kind.CONTROL
+    override val label = "반복"
+    override val input = ParamInput.INLINE
+    override val editor = EditorKind.BLOCKS
+    override fun parse(map: Map<String, Any?>) = LoopParams(
+        count = (map["count"] as? Number)?.toInt() ?: 1,
+        infinite = map["infinite"] as? Boolean ?: false,
+    )
+}
+
+// ── 조건 ──
+
+/** 조건식은 문자열로 두고 평가기가 해석한다. 변수 치환({name})이 여기서 힘을 발휘한다. */
+data class IfParams(val condition: String) : Params {
+    override fun toMap() = mapOf("condition" to condition)
+}
+
+object IfType : MaterialType {
+    override val id = "if"
+    override val kind = Kind.CONTROL
+    override val label = "만약"
+    override val input = ParamInput.SHEET
+    override val editor = EditorKind.BLOCKS
+    override fun parse(map: Map<String, Any?>) = IfParams(map["condition"] as? String ?: "")
+}
+
+// ── 동시 실행 ──
+
+/**
+ * 순서축의 한계를 메우는 블록.
+ * 빌드는 본래 순차 실행이라 "이동하면서 스킬 쓰기" 같은 동시 조작을 표현할 수 없다.
+ */
+object ParallelType : MaterialType {
+    override val id = "parallel"
+    override val kind = Kind.CONTROL
+    override val label = "동시에"
+    override val editor = EditorKind.BLOCKS
+    override val parallel = true
+    override fun parse(map: Map<String, Any?>) = NoParams
+}
+
+// ── 빌드 ──
+
+/** 빌드도 Material 이다. 그래서 빌드 안에 빌드를 넣을 수 있고 플레이리스트가 필요 없다. */
+object BuildType : MaterialType {
+    override val id = "build"
+    override val kind = Kind.CONTROL
+    override val label = "빌드"
+    override val editor = EditorKind.BLOCKS
+    override fun parse(map: Map<String, Any?>) = NoParams
+}
+
+// ── 종료 ──
+
+object StopType : MaterialType {
+    override val id = "stop"
+    override val kind = Kind.ACTION
+    override val label = "종료"
+    override fun parse(map: Map<String, Any?>) = NoParams
+}
+
+fun registerBuiltins() {
+    MaterialRegistry.register(TouchType)
+    MaterialRegistry.register(WaitType)
+    MaterialRegistry.register(LoopType)
+    MaterialRegistry.register(IfType)
+    MaterialRegistry.register(ParallelType)
+    MaterialRegistry.register(BuildType)
+    MaterialRegistry.register(StopType)
+}

@@ -3,6 +3,9 @@ package com.loopy.app.core.exec
 import com.loopy.app.core.io.Io
 import com.loopy.app.core.material.Material
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -111,7 +114,7 @@ object ExecutorRegistry {
  * 엔진.
  *
  * 자식 목록을 순서대로 실행하고, 각 실행기가 돌려준 Flow 에 따라 흐름을 정한다.
- * 제어 블록은 이 runChildren 을 재귀 호출해 자기 자식들을 돌린다.
+ * 제어 블록은 runChildren 을 재귀 호출해 자기 body 를 돌린다.
  */
 object Engine {
 
@@ -136,5 +139,23 @@ object Engine {
             }
         }
         return Flow.Next
+    }
+
+    /**
+     * 자식들을 동시에.
+     *
+     * 순서축(빌드)만으로는 "왼손으로 이동하며 오른손으로 스킬" 같은 동시 조작을 표현할 수 없다.
+     * PARALLEL 제어 블록이 이것을 쓴다. 변수 스코프는 갈래마다 분리해 서로 덮어쓰지 않게 한다.
+     */
+    suspend fun runParallel(children: List<Material>, ctx: ExecContext): Flow = coroutineScope {
+        val results = children.map { child ->
+            async {
+                val branch = ExecContext(ctx.io, ctx.scope.child(), ctx.cancel, ctx.log)
+                run(child, branch)
+            }
+        }.awaitAll()
+
+        // 한 갈래라도 전체 종료를 요구하면 그것이 우선한다.
+        if (results.any { it is Flow.Stop }) Flow.Stop else Flow.Next
     }
 }

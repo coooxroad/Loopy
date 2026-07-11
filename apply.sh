@@ -1,275 +1,16 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Phase 0-1: 확장 가능한 기반 (Material 공리 / 실행엔진 / Io 통로 / 좌표통합 / 뉴모피즘통합)
+# Phase 0-1: 2/2
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
-mkdir -p app/src/main/java/com/loopy/app/core/geom app/src/main/java/com/loopy/app/core/io app/src/main/java/com/loopy/app/core/material app/src/main/java/com/loopy/app/core/exec
-cat > "app/src/main/java/com/loopy/app/core/geom/Coords.kt" << 'LOOPY_EOF'
-package com.loopy.app.core.geom
-
-import androidx.compose.ui.geometry.Offset
-
-/**
- * 좌표 변환의 단일 진실 공급원.
- *
- * 터치 샘플의 nx/ny 는 **터치 패널 기준 정규화 좌표**다. 기기를 돌려도 값이 변하지 않는다.
- * 반대로 화면·영상은 회전에 따라 배치가 달라지므로, 그릴 때마다 그 시점의 회전으로 변환해야 한다.
- * 변환 로직이 여러 곳에 흩어지면 회전 규칙을 바꿀 때마다 전부 고쳐야 하므로 여기 하나로 모은다.
- */
-object Coords {
-
-    /** 패널 좌표 → 회전된 화면 좌표(0~1). 재생 측 좌표 변환과 반드시 같은 규칙이어야 한다. */
-    fun rotate(nx: Float, ny: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
-        90 -> ny to (1f - nx)
-        180 -> (1f - nx) to (1f - ny)
-        270 -> (1f - ny) to nx
-        else -> nx to ny
-    }
-
-    /** 화면 델타 → 패널 델타. rotate 의 역변환. */
-    fun unrotateDelta(dx: Float, dy: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
-        90 -> (-dy) to dx
-        180 -> (-dx) to (-dy)
-        270 -> dy to (-dx)
-        else -> dx to dy
-    }
-
-    fun isLandscape(rotDeg: Int) = rotDeg == 90 || rotDeg == 270
-
-    /** 뷰 안에 종횡비 aspect 인 내용을 letterbox 로 맞춘 사각형. */
-    fun fitRect(viewW: Float, viewH: Float, aspect: Float): Rect {
-        val viewAspect = viewW / viewH
-        return if (aspect > viewAspect) {
-            val h = viewW / aspect
-            Rect(0f, (viewH - h) / 2f, viewW, h)
-        } else {
-            val w = viewH * aspect
-            Rect((viewW - w) / 2f, 0f, w, viewH)
-        }
-    }
-
-    /**
-     * 스트로크를 그릴 실제 영역.
-     *
-     * 화면 녹화 영상은 프레임 해상도가 고정(보통 세로)이라, 녹화 중 기기를 돌리면 가로 화면이
-     * 그 세로 프레임 **안에** 축소되어 배치된다. 따라서 회전 구간의 스트로크는 프레임 전체가
-     * 아니라 그 축소된 영역에 매핑해야 한다.
-     *
-     * @param videoRect 영상 프레임이 뷰에 그려진 사각형
-     * @param screenAspect 기기 세로 화면의 종횡비(w/h)
-     */
-    fun contentRect(videoRect: Rect, rotDeg: Int, screenAspect: Float): Rect {
-        if (!isLandscape(rotDeg)) return videoRect
-        val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
-        val inner = fitRect(videoRect.w, videoRect.h, landAspect)
-        return Rect(videoRect.x + inner.x, videoRect.y + inner.y, inner.w, inner.h)
-    }
-
-    /** 패널 좌표 → 뷰 픽셀. 회전·레터박스·회전구간 축소를 모두 반영한다. */
-    fun toView(nx: Float, ny: Float, rotDeg: Int, videoRect: Rect, screenAspect: Float): Offset {
-        val (rx, ry) = rotate(nx, ny, rotDeg)
-        val area = contentRect(videoRect, rotDeg, screenAspect)
-        return Offset(area.x + rx * area.w, area.y + ry * area.h)
-    }
-
-    /** 뷰 픽셀 델타 → 패널 정규화 델타. 드래그로 스트로크를 옮길 때 사용. */
-    fun deltaToPanel(
-        dx: Float, dy: Float, rotDeg: Int, videoRect: Rect, screenAspect: Float,
-    ): Pair<Float, Float> {
-        val area = contentRect(videoRect, rotDeg, screenAspect)
-        return unrotateDelta(dx / area.w, dy / area.h, rotDeg)
-    }
-}
-
-data class Rect(val x: Float, val y: Float, val w: Float, val h: Float) {
-    val right get() = x + w
-    val bottom get() = y + h
-}
-LOOPY_EOF
-cat > "app/src/main/java/com/loopy/app/core/io/Io.kt" << 'LOOPY_EOF'
-package com.loopy.app.core.io
-
-import com.loopy.app.macro.Stroke
-
-/**
- * 시스템에 실제로 손을 대는 모든 경로의 단일 통로.
- *
- * Shizuku(ADB 권한)가 있으면 접근성 서비스로는 불가능한 일들이 가능해진다.
- * 터치 주입, 설정 변경, 화면 캡처, 앱 제어가 전부 여기를 거치므로,
- * 이후 추가될 Material(이미지 인식, 스크립트, API 연동)도 같은 통로만 알면 된다.
- *
- * 구현을 인터페이스 뒤에 두는 이유:
- *  - 테스트 시 가짜 구현으로 대체 가능
- *  - Shizuku 외 백엔드(루트, 접근성)를 나중에 붙일 여지
- */
-interface Io {
-
-    val available: Boolean
-
-    // ── 입력 ──
-
-    /** 스트로크들을 실제 터치로 주입. startMs 가 겹치면 멀티터치로 동시 재생된다. */
-    suspend fun playStrokes(strokes: List<Stroke>, rotationAt: (Long) -> Int)
-
-    /** 진행 중인 주입을 중단. 킬 스위치가 어디서든 동작하려면 필요하다. */
-    fun stopPlayback()
-
-    /** 터치 캡처 시작. 콜백은 패널 정규화 좌표(회전 불변)를 넘긴다. */
-    fun startCapture(onPoint: (slot: Int, nx: Float, ny: Float, down: Boolean) -> Unit)
-
-    fun stopCapture()
-
-    // ── 화면 ──
-
-    /** 현재 화면 회전(0/90/180/270). */
-    fun rotation(): Int
-
-    /** 화면 픽셀 크기. */
-    fun screenSize(): Pair<Int, Int>
-
-    /**
-     * 현재 화면 캡처. 이미지 인식 Material 이 여기에 의존한다.
-     * 아직 구현하지 않았지만, 자리를 비워둬야 나중에 호출부가 흔들리지 않는다.
-     */
-    suspend fun captureScreen(): ScreenShot?
-
-    // ── 시스템 ──
-
-    /** `settings put` 계열. 밝기·볼륨 등 Material 이 사용한다. */
-    suspend fun putSetting(namespace: String, key: String, value: String): Boolean
-
-    suspend fun getSetting(namespace: String, key: String): String?
-
-    /** 임의 셸 명령. 마지막 수단이자, 아직 전용 API 가 없는 기능의 임시 통로. */
-    suspend fun shell(cmd: String): String?
-
-    /** 앱 실행 / 종료. 트리거·액션 양쪽에서 쓰인다. */
-    suspend fun launchApp(pkg: String): Boolean
-
-    suspend fun forceStop(pkg: String): Boolean
-
-    /** 현재 최상위 앱 패키지. 트리거(앱 실행 감지)와 조건에서 쓰인다. */
-    suspend fun foregroundApp(): String?
-}
-
-/** 캡처된 화면. 이미지 인식이 이 위에서 템플릿 매칭을 수행한다. */
-class ScreenShot(
-    val width: Int,
-    val height: Int,
-    val pixels: IntArray,
-    val rotation: Int,
-)
-LOOPY_EOF
-cat > "app/src/main/java/com/loopy/app/core/material/Material.kt" << 'LOOPY_EOF'
-package com.loopy.app.core.material
-
-/**
- * Loopy 의 유일한 공리.
- *
- * 터치 매크로도, 대기도, 조건도, 반복도, 트리거도, 그리고 그것들을 모아 만든 빌드까지도
- * 전부 Material 이다. 빌드가 Material 이므로 빌드 안에 빌드를 넣을 수 있고,
- * 그래서 플레이리스트 같은 별도 개념이 필요 없다.
- *
- * 새 기능을 추가할 때 이 구조는 바뀌지 않는다. 새 [MaterialType] 과 그에 맞는
- * Params · 실행기 · 편집기를 등록할 뿐이다. 스크립트든 API 연동이든 마찬가지다.
- */
-data class Material(
-    val id: String,
-    val typeId: String,
-    val params: Params,
-    val children: List<Material> = emptyList(),
-    val meta: Meta = Meta(),
-    /** 개별 블록만 잠시 꺼두기. 삭제하지 않고 실험할 수 있어야 한다. */
-    val enabled: Boolean = true,
-) {
-    val type: MaterialType get() = MaterialRegistry.require(typeId)
-}
-
-data class Meta(
-    val name: String = "",
-    val note: String = "",
-    val favorite: Boolean = false,
-    val folder: String? = null,
-    val createdAt: Long = 0L,
-)
-
-/** 타입별 설정값. 각 타입이 자기 Params 를 정의한다. */
-interface Params {
-    /** 저장을 위한 직렬화. 타입마다 자기 형식을 안다. */
-    fun toMap(): Map<String, Any?>
-}
-
-object NoParams : Params {
-    override fun toMap(): Map<String, Any?> = emptyMap()
-}
-
-/**
- * 블록의 성격.
- *
- * HAT 은 스크래치의 모자 블록처럼 위에 아무것도 붙일 수 없다. 트리거가 여기 속하며,
- * 그래서 "매크로 중간에 트리거가 있는" 상태가 구조적으로 불가능해진다.
- */
-enum class Kind { HAT, ACTION, CONTROL }
-
-/** 이 Material 을 어떻게 편집하는가. 타입마다 편집 UI 가 다르다는 사실을 구조에 못 박는다. */
-enum class EditorKind {
-    /** 시간축 — 촬영 매크로. 스트로크가 특정 시각에 배치된다. */
-    TIMELINE,
-
-    /** 순서축 — 빌드. 블록을 세로로 쌓고 가지친다. */
-    BLOCKS,
-
-    /** 블록 안에서 바로 값만 고침. 대기 시간 등. */
-    INLINE,
-
-    /** 바텀시트 폼. 항목이 여럿인 설정. */
-    SHEET,
-
-    /** 코드 에디터. 스크립트 Material 용. */
-    CODE,
-}
-
-interface MaterialType {
-    val id: String
-    val kind: Kind
-    val editor: EditorKind
-    val label: String
-
-    /** 저장된 맵에서 Params 복원. */
-    fun parse(map: Map<String, Any?>): Params
-
-    /** CONTROL 이면 children 을 가진다. */
-    val hasChildren: Boolean get() = kind == Kind.CONTROL
-}
-
-/**
- * 타입 레지스트리.
- *
- * 런타임 등록이므로 새 타입을 추가해도 기존 코드를 건드리지 않는다.
- * 나중에 플러그인이 자기 타입을 여기에 밀어 넣는 것도 같은 방식이다.
- */
-object MaterialRegistry {
-    private val types = LinkedHashMap<String, MaterialType>()
-
-    fun register(type: MaterialType) {
-        types[type.id] = type
-    }
-
-    fun find(id: String): MaterialType? = types[id]
-
-    fun require(id: String): MaterialType =
-        types[id] ?: error("등록되지 않은 Material 타입: $id")
-
-    fun all(): List<MaterialType> = types.values.toList()
-
-    fun byKind(kind: Kind): List<MaterialType> = types.values.filter { it.kind == kind }
-}
-LOOPY_EOF
 cat > "app/src/main/java/com/loopy/app/core/exec/Engine.kt" << 'LOOPY_EOF'
 package com.loopy.app.core.exec
 
 import com.loopy.app.core.io.Io
 import com.loopy.app.core.material.Material
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -378,7 +119,7 @@ object ExecutorRegistry {
  * 엔진.
  *
  * 자식 목록을 순서대로 실행하고, 각 실행기가 돌려준 Flow 에 따라 흐름을 정한다.
- * 제어 블록은 이 runChildren 을 재귀 호출해 자기 자식들을 돌린다.
+ * 제어 블록은 runChildren 을 재귀 호출해 자기 body 를 돌린다.
  */
 object Engine {
 
@@ -403,6 +144,163 @@ object Engine {
             }
         }
         return Flow.Next
+    }
+
+    /**
+     * 자식들을 동시에.
+     *
+     * 순서축(빌드)만으로는 "왼손으로 이동하며 오른손으로 스킬" 같은 동시 조작을 표현할 수 없다.
+     * PARALLEL 제어 블록이 이것을 쓴다. 변수 스코프는 갈래마다 분리해 서로 덮어쓰지 않게 한다.
+     */
+    suspend fun runParallel(children: List<Material>, ctx: ExecContext): Flow = coroutineScope {
+        val results = children.map { child ->
+            async {
+                val branch = ExecContext(ctx.io, ctx.scope.child(), ctx.cancel, ctx.log)
+                run(child, branch)
+            }
+        }.awaitAll()
+
+        // 한 갈래라도 전체 종료를 요구하면 그것이 우선한다.
+        if (results.any { it is Flow.Stop }) Flow.Stop else Flow.Next
+    }
+}
+LOOPY_EOF
+cat > "app/src/main/java/com/loopy/app/core/exec/Builtins.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.exec
+
+import com.loopy.app.core.material.IfParams
+import com.loopy.app.core.material.LoopParams
+import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.WaitParams
+import kotlinx.coroutines.delay
+
+/**
+ * 내장 타입들의 실행 규칙.
+ *
+ * 각 실행기는 자기 일만 하고 다음 흐름을 [Flow] 로 알린다. 제어 블록이 자식을 돌릴 때는
+ * [Engine.runChildren] 을 재귀 호출하므로, 중첩 구조가 그대로 실행 구조가 된다.
+ */
+
+object WaitExecutor : Executor {
+    override val typeId = "wait"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        val ms = (material.params as WaitParams).ms
+        // 통째로 재우면 취소에 늦게 반응한다. 잘게 쪼개 킬 스위치가 즉시 먹히게 한다.
+        var left = ms
+        while (left > 0) {
+            ctx.cancel.throwIfCancelled()
+            val step = minOf(left, 50L)
+            delay(step)
+            left -= step
+        }
+        return Flow.Next
+    }
+}
+
+object LoopExecutor : Executor {
+    override val typeId = "loop"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        val p = material.params as LoopParams
+        var i = 0
+        while (p.infinite || i < p.count) {
+            ctx.cancel.throwIfCancelled()
+            ctx.scope.setLocal("_i", i.toString())
+            when (Engine.runChildren(material.children, ctx)) {
+                Flow.Break -> return Flow.Next
+                Flow.Stop -> return Flow.Stop
+                else -> Unit // Next, Continue 는 모두 다음 회차로
+            }
+            i++
+        }
+        return Flow.Next
+    }
+}
+
+object IfExecutor : Executor {
+    override val typeId = "if"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        val cond = (material.params as IfParams).condition
+        return if (Conditions.eval(cond, ctx)) {
+            Engine.runChildren(material.children, ctx)
+        } else {
+            Flow.Next
+        }
+    }
+}
+
+object ParallelExecutor : Executor {
+    override val typeId = "parallel"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow =
+        Engine.runParallel(material.children, ctx)
+}
+
+object BuildExecutor : Executor {
+    override val typeId = "build"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        // 트리거(HAT)는 실행 대상이 아니라 발동 조건이므로 건너뛴다.
+        val body = material.children.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
+        return when (Engine.runChildren(body, ctx)) {
+            Flow.Stop -> Flow.Stop
+            else -> Flow.Next
+        }
+    }
+}
+
+object StopExecutor : Executor {
+    override val typeId = "stop"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        ctx.io.stopPlayback()
+        return Flow.Stop
+    }
+}
+
+fun registerBuiltinExecutors() {
+    ExecutorRegistry.register(WaitExecutor)
+    ExecutorRegistry.register(LoopExecutor)
+    ExecutorRegistry.register(IfExecutor)
+    ExecutorRegistry.register(ParallelExecutor)
+    ExecutorRegistry.register(BuildExecutor)
+    ExecutorRegistry.register(StopExecutor)
+}
+
+/**
+ * 조건식 평가.
+ *
+ * 지금은 변수 비교만 지원한다. 이미지 인식·앱 상태 같은 조건이 추가되면 여기에 얹는다.
+ * 문법을 단순하게 유지하는 이유는, 복잡한 식이 필요해지는 순간 스크립트 Material 로
+ * 넘기는 편이 낫기 때문이다.
+ */
+object Conditions {
+    private val binary = Regex("""\s*(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*""")
+
+    fun eval(expr: String, ctx: ExecContext): Boolean {
+        val e = ctx.scope.expand(expr).trim()
+        if (e.isEmpty()) return true
+        if (e.equals("true", true)) return true
+        if (e.equals("false", true)) return false
+
+        val m = binary.matchEntire(e) ?: return false
+        val (l, op, r) = m.destructured
+        val ln = l.toDoubleOrNull()
+        val rn = r.toDoubleOrNull()
+
+        return if (ln != null && rn != null) {
+            when (op) {
+                "==" -> ln == rn
+                "!=" -> ln != rn
+                ">" -> ln > rn
+                "<" -> ln < rn
+                ">=" -> ln >= rn
+                "<=" -> ln <= rn
+                else -> false
+            }
+        } else {
+            when (op) {
+                "==" -> l == r
+                "!=" -> l != r
+                else -> false
+            }
+        }
     }
 }
 LOOPY_EOF
@@ -562,9 +460,9 @@ fun Color.shade(f: Float) = Color(red * f, green * f, blue * f, alpha)
 fun Color.tint(f: Float) =
     Color(red + (1f - red) * f, green + (1f - green) * f, blue + (1f - blue) * f, alpha)
 LOOPY_EOF
-echo "기반 파일 5개 생성 완료."
+echo "2/2 완료."
 git add -A
-git commit -m "Phase 0-1: 확장 기반 — Material 공리, 실행 엔진 계약, Io 통로, 좌표 매핑 통합, 뉴모피즘 단일화"
+git commit -m "Phase 0-1: 확장 기반 — Material 공리(재귀/레지스트리/HAT), 실행엔진(Flow/변수/킬스위치/PARALLEL), Io 단일통로, 좌표매핑 통합, 뉴모피즘 단일화"
 git push
 echo "푸시 완료"
 
