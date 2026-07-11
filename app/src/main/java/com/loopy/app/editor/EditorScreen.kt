@@ -237,6 +237,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         }
     }
 
+    var timeEditing by remember { mutableStateOf(false) }
+    var timeText by remember { mutableStateOf("0.00") }
+
     LaunchedEffect(positionMs, timeEditing) {
         if (!timeEditing) timeText = fmtPlain(positionMs)
     }
@@ -252,8 +255,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var captureMsg by remember { mutableStateOf("") }
     var captureBaseStrokeMs by remember { mutableStateOf(0L) }
     val liveTouches = remember { mutableStateMapOf<Int, Offset>() }
-    var timeEditing by remember { mutableStateOf(false) }
-    var timeText by remember { mutableStateOf("0.00") }
 
     fun startCapture() {
         val devs = runCatching { reader.probe() }.getOrDefault(emptyList())

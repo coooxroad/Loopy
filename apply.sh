@@ -390,7 +390,7 @@ private fun parseTime(s: String, total: Long): Long? {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "뉴모피즘 제대로(대각선 우하그림자+좌상흰글로우, 큰 blur, 컬러요소는 배경그림자+자기색발광+안쪽그라데이션) + 시간 인라인 자판입력"
+git commit -m "fix: timeText/timeEditing 선언 순서 + 뉴모피즘 재구현(대각선/큰blur/컬러발광) + 인라인 시간입력"
 git push
 echo "푸시 완료!"
 
