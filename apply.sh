@@ -1,176 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 트레이서 개선+촬영 트래킹 2/2
+# 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-@Composable
-private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.weight(1f).height(50.dp)
-            .shadow(5.dp, RoundedCornerShape(14.dp))
-            .clip(RoundedCornerShape(14.dp)).background(bg)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-}
-
-@Composable
-private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.weight(1f).height(52.dp)
-            .shadow(3.dp, RoundedCornerShape(12.dp))
-            .clip(RoundedCornerShape(12.dp)).background(NeuBase)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Canvas(Modifier.size(20.dp)) { drawEditIcon(kind, tint) }
-            Spacer(Modifier.height(3.dp))
-            Text(label, color = tint, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditIcon(kind: String, col: Color) {
-    val w = size.width; val h = size.height; val sw = w * 0.09f
-    when (kind) {
-        "trimLeft", "trimRight" -> {
-            val left = kind == "trimLeft"
-            val barX = if (left) w * 0.6f else w * 0.4f
-            drawLine(col, Offset(barX, h * 0.16f), Offset(barX, h * 0.84f), sw, cap = StrokeCap.Round)
-            val blkL = if (left) barX + w * 0.08f else w * 0.16f
-            val blkR = if (left) w * 0.86f else barX - w * 0.08f
-            drawRoundRect(col.copy(alpha = 0.9f), topLeft = Offset(blkL, h * 0.32f),
-                size = Size(blkR - blkL, h * 0.36f), cornerRadius = CornerRadius(3f))
-        }
-        "split" -> {
-            drawRoundRect(col, topLeft = Offset(w * 0.1f, h * 0.32f),
-                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
-            drawRoundRect(col, topLeft = Offset(w * 0.6f, h * 0.32f),
-                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
-            drawLine(col, Offset(w / 2f, h * 0.12f), Offset(w / 2f, h * 0.88f), sw * 0.9f, cap = StrokeCap.Round)
-        }
-        "delete" -> {
-            drawLine(col, Offset(w * 0.18f, h * 0.28f), Offset(w * 0.82f, h * 0.28f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.4f, h * 0.28f), Offset(w * 0.4f, h * 0.18f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.4f, h * 0.18f), Offset(w * 0.6f, h * 0.18f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.6f, h * 0.18f), Offset(w * 0.6f, h * 0.28f), sw, cap = StrokeCap.Round)
-            drawRoundRect(col, topLeft = Offset(w * 0.26f, h * 0.34f),
-                size = Size(w * 0.48f, h * 0.48f), cornerRadius = CornerRadius(4f),
-                style = DrawStroke(width = sw))
-            drawLine(col, Offset(w * 0.42f, h * 0.44f), Offset(w * 0.42f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.58f, h * 0.44f), Offset(w * 0.58f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
-        }
-    }
-}
-
-/** UNDO(↶) / REDO(↷) 곡선 화살표 벡터. */
-@Composable
-private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(30.dp).clickable(enabled = enabled) { onClick() }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(18.dp)) {
-            val col = if (enabled) Color(0xFF2B2D42) else Color(0xFFC2C6D2)
-            val w = size.width; val h = size.height; val sw = w * 0.11f
-            withTransform({ if (redo) scale(-1f, 1f, pivot = Offset(w / 2f, h / 2f)) }) {
-                val cx = w / 2f; val cy = h * 0.52f; val r = w * 0.30f
-                val startDeg = 30f; val sweep = 250f
-                drawArc(col, startAngle = startDeg, sweepAngle = sweep, useCenter = false,
-                    topLeft = Offset(cx - r, cy - r), size = Size(2 * r, 2 * r),
-                    style = DrawStroke(width = sw, cap = StrokeCap.Round))
-                val endRad = Math.toRadians((startDeg + sweep).toDouble())
-                val px = (cx + r * Math.cos(endRad)).toFloat()
-                val py = (cy + r * Math.sin(endRad)).toFloat()
-                val tx = (-Math.sin(endRad)).toFloat(); val ty = Math.cos(endRad).toFloat()
-                val nx = Math.cos(endRad).toFloat(); val ny = Math.sin(endRad).toFloat()
-                val len = w * 0.26f; val ww = w * 0.17f
-                val tip = Offset(px + tx * len, py + ty * len)
-                val b1 = Offset(px + nx * ww, py + ny * ww)
-                val b2 = Offset(px - nx * ww, py - ny * ww)
-                drawPath(Path().apply { moveTo(tip.x, tip.y); lineTo(b1.x, b1.y); lineTo(b2.x, b2.y); close() }, col)
-            }
-        }
-    }
-}
-
-/** 볼록 뉴모피즘(좌우 꽉 찬 바용): 수직 하이라이트/그림자. */
-private fun Modifier.neuRaised() = this.drawBehind {
-    val off = 3.dp.toPx(); val blur = 7.dp.toPx()
-    drawIntoCanvas { canvas ->
-        val fw = canvas.nativeCanvas
-        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
-        val dark = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, 0f, off, 0xFFD3D9E4.toInt())
-        }
-        fw.drawRect(rect, dark)
-        val light = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, 0f, -off, 0xFFFFFFFF.toInt())
-        }
-        fw.drawRect(rect, light)
-    }
-}
-
-@Composable
-private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(19.dp)) {
-            val c = Color(0xFF2B2D42)
-            val w = size.width; val h = size.height
-            if (playing) {
-                val bw = w * 0.28f; val gap = w * 0.16f; val bh = h * 0.84f
-                val top = (h - bh) / 2f
-                val x1 = w / 2f - gap / 2f - bw; val x2 = w / 2f + gap / 2f
-                val cr = CornerRadius(bw * 0.45f, bw * 0.45f)
-                drawRoundRect(c, topLeft = Offset(x1, top), size = Size(bw, bh), cornerRadius = cr)
-                drawRoundRect(c, topLeft = Offset(x2, top), size = Size(bw, bh), cornerRadius = cr)
-            } else {
-                val p = Path().apply {
-                    moveTo(w * 0.24f, h * 0.16f); lineTo(w * 0.84f, h * 0.5f)
-                    lineTo(w * 0.24f, h * 0.84f); close()
-                }
-                drawPath(p, c)
-                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round))
-            }
-        }
-    }
-}
-
-@Composable
-private fun Timeline(
-    strokes: List<Stroke>,
-    totalMs: Long,
-    positionMs: Long,
-    videoOffsetMs: Long,
-    videoPath: String?,
-    density: androidx.compose.ui.unit.Density,
-    selected: Int?,
-    onScrubTime: (Long) -> Unit,
-    onScrubbingChange: (Boolean) -> Unit,
-    userScrubbing: Boolean,
-    onSelect: (Int) -> Unit,
-    onMove: (Int, Long) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val scrollState = rememberScrollState()
-    var dpPerSec by remember { mutableStateOf(DP_PER_SEC) }
-    val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
-    val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
-    val trackH = 52.dp
-    val rulerH = 18.dp
-    val cardVPad = 6.dp
-    val cardH = trackH + cardVPad * 2
-    val laneStep = 28.dp
-    val blockH = 24.dp
-    val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
-    val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
-
-    val lanes = assignLanes(strokes)
-    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
-    val strokeTrackH = laneStep * laneCount
-    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
-
     // 드래그(홀드 이동) 상태
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     var dragDx by remember { mutableStateOf(0f) }
@@ -326,21 +158,113 @@ private fun Timeline(
     }
 }
 
-/** 스트로크 블록: 캡처=파란색, 편집기 추가=초록색. 선택 시 흰색 + 색 테두리 확대. */
+/** 스트로크 블록: 캡처=파랑, 추가=초록. 색맞춤 뉴모피즘(우하 그림자/좌상 글로우). */
 @Composable
 private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
     val base = if (added) AddedGreen else TraceStart
+    val fill = if (selected) Color.White else base
     Box(modifier.clickable { onClick() }) {
-        val inset = if (selected) 0.dp else 2.dp
         Box(
-            Modifier.fillMaxSize().padding(inset)
-                .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
+            Modifier.fillMaxSize().padding(1.dp)
+                .neu(fill, cornerDp = 7f, offDp = if (selected) 3f else 2.5f,
+                    blurDp = if (selected) 7f else 5f, raised = true)
                 .clip(shape)
-                .background(if (selected) Color.White else base)
-                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
+                .background(fill)
+                .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }
+}
+
+/**
+ * 선택된 스트로크를 덮는 직사각형. 영상 위에서 드래그하면 스트로크 전체가 평행이동.
+ * 파란 얇은 테두리 + 뉴모피즘 입체, 안은 불투명 흰색. 트레이서보다 아래 레이어.
+ */
+@Composable
+private fun StrokeMoveBox(
+    stroke: Stroke, contentAspect: Float, defaultRot: Int,
+    onDrag: (Float, Float) -> Unit, onDragEnd: () -> Unit,
+) {
+    val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
+    Box(
+        Modifier.fillMaxSize().pointerInput(stroke, contentAspect) {
+            detectDragGestures(
+                onDrag = { change, amount ->
+                    change.consume()
+                    val bw = size.width.toFloat(); val bh = size.height.toFloat()
+                    val boxAspect = bw / bh
+                    val dispW: Float; val dispH: Float
+                    if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
+                    else { dispH = bh; dispW = bh * contentAspect }
+                    // 화면 dx,dy → 회전 역변환 → 정규화 델타
+                    val sx = amount.x / dispW; val sy = amount.y / dispH
+                    val (dnx, dny) = when (rotDeg) {
+                        90 -> (-sy) to sx
+                        180 -> (-sx) to (-sy)
+                        270 -> sy to (-sx)
+                        else -> sx to sy
+                    }
+                    onDrag(dnx, dny)
+                },
+                onDragEnd = { onDragEnd() },
+            )
+        },
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val bw = size.width; val bh = size.height
+            val boxAspect = bw / bh
+            val dispW: Float; val dispH: Float
+            if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
+            else { dispH = bh; dispW = bh * contentAspect }
+            val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
+            if (stroke.samples.isEmpty()) return@Canvas
+            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+            var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+            for (smp in stroke.samples) {
+                val (rx, ry) = rotNorm(smp.nx, smp.ny, rotDeg)
+                val x = offX + rx * dispW; val y = offY + ry * dispH
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+            }
+            val pad = 22f
+            val l = minX - pad; val tp = minY - pad
+            val w = (maxX - minX) + pad * 2; val h = (maxY - minY) + pad * 2
+            val cr = 14f
+            // 뉴모피즘: 파란 그림자 우하 + 밝은 글로우 좌상 (얇게)
+            drawIntoCanvas { canvas ->
+                val dark = android.graphics.Paint().apply {
+                    isAntiAlias = true; color = android.graphics.Color.WHITE
+                    setShadowLayer(9f, 4f, 4f, android.graphics.Color.argb(120, 37, 84, 160))
+                }
+                canvas.nativeCanvas.drawRoundRect(l, tp, l + w, tp + h, cr, cr, dark)
+                val light = android.graphics.Paint().apply {
+                    isAntiAlias = true; color = android.graphics.Color.WHITE
+                    setShadowLayer(9f, -4f, -4f, android.graphics.Color.argb(150, 190, 220, 255))
+                }
+                canvas.nativeCanvas.drawRoundRect(l, tp, l + w, tp + h, cr, cr, light)
+            }
+            // 흰 불투명 채움 + 얇은 파란 테두리
+            drawRoundRect(Color.White, topLeft = Offset(l, tp), size = Size(w, h),
+                cornerRadius = CornerRadius(cr, cr))
+            drawRoundRect(TraceStart.copy(alpha = 0.95f), topLeft = Offset(l, tp), size = Size(w, h),
+                cornerRadius = CornerRadius(cr, cr), style = DrawStroke(width = 2f))
+        }
+    }
+}
+
+/** 정규화 좌표를 화면 회전에 맞게 변환. */
+private fun rotNorm(nx: Float, ny: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
+    90 -> ny to (1f - nx)
+    180 -> (1f - nx) to (1f - ny)
+    270 -> (1f - ny) to nx
+    else -> nx to ny
+}
+
+/** 현재 화면 회전(0/90/180/270). */
+private fun currentRotation(ctx: android.content.Context): Int {
+    val wm = ctx.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+    @Suppress("DEPRECATION")
+    return wm.defaultDisplay.rotation * 90
 }
 
 /** 현재 눌림 표시: 흰 점 + 강한 글로우 + 얇은 테두리(테두리→중심으로 아주 옅게 페이드). */
@@ -386,14 +310,8 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
         if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
         else { dispH = bh; dispW = bh * contentAspect }
         val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
-        fun rot(nx: Float, ny: Float): Pair<Float, Float> = when (rotationDeg) {
-            90 -> ny to (1f - nx)
-            180 -> (1f - nx) to (1f - ny)
-            270 -> (1f - ny) to nx
-            else -> nx to ny
-        }
-        fun mapPt(nx: Float, ny: Float): Offset {
-            val (rx, ry) = rot(nx, ny)
+        fun mapPt(nx: Float, ny: Float, rotDeg: Int): Offset {
+            val (rx, ry) = rotNorm(nx, ny, rotDeg)
             return Offset(offX + rx * dispW, offY + ry * dispH)
         }
         for (s in strokes) {
@@ -407,6 +325,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             if (edge <= 0f) continue
             val samples = s.samples
             if (samples.isEmpty()) continue
+            val sRot = if (s.rotation >= 0) s.rotation else rotationDeg
             val cStart = if (s.added) AddedGreen else TraceStart
             val cEnd = if (s.added) AddedEnd else TraceEnd
             val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
@@ -416,7 +335,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             var prev: Offset? = null; var prevFrac = 0f
             for (smp in samples) {
                 if (smp.t > revealT + 40L) break
-                val p = mapPt(smp.nx, smp.ny)
+                val p = mapPt(smp.nx, smp.ny, sRot)
                 val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
                 if (prev != null) {
                     val c = lerp(cStart, cEnd, (prevFrac + frac) / 2f)
@@ -427,7 +346,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             }
             val cur = sampleAt(samples, revealT)
             if (cur != null) {
-                val p = mapPt(cur.first, cur.second)
+                val p = mapPt(cur.first, cur.second, sRot)
                 if (pressing) drawTouchDot(p, edge, cStart, rgb)
                 else drawCircle(cEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
             }
@@ -483,12 +402,12 @@ private fun sampleAt(samples: List<TouchSample>, t: Long): Pair<Float, Float>? {
 }
 
 private fun fmt(ms: Long): String {
-    val s = ms / 1000; return "%d:%02d.%01d".format(s / 60, s % 60, (ms % 1000) / 100)
+    val s = ms / 1000; return "%d:%02d.%02d".format(s / 60, s % 60, (ms % 1000) / 10)
 }
 LOOPY_EOF
-echo "2/2 완료."
+echo "3/3 완료."
 git add -A
-git commit -m "트레이서: 추가스트로크 초록 그라데이션+초록 터치표시, 터치점 축소/글로우강화/얇은 그라데이션 테두리, 촬영중 실시간 터치 트래킹"
+git commit -m "뉴모피즘 재정의(색맞춤 우하그림자+좌상글로우), 블록/시계 적용, 인포바 글로우 완화, 시간 소수2자리+키패드, 스트로크별 회전보정, 영상 드래그 박스로 터치위치 이동"
 git push
 echo "푸시 완료!"
 

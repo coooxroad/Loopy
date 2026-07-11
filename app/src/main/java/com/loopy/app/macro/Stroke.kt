@@ -11,4 +11,11 @@ data class TouchSample(val t: Long, val nx: Float, val ny: Float)
  *           여러 스트로크의 startMs 가 겹치면 그만큼 동시에 재생된다.
  * durationMs = down→up 총 지속시간(홀드 유지시간 재현용).
  */
-data class Stroke(val startMs: Long, val durationMs: Long, val samples: List<TouchSample>, val added: Boolean = false)
+data class Stroke(
+    val startMs: Long,
+    val durationMs: Long,
+    val samples: List<TouchSample>,
+    val added: Boolean = false,
+    /** 이 스트로크가 캡처될 때의 화면 회전(0/90/180/270). -1이면 매크로 기본 rotation 사용. */
+    val rotation: Int = -1,
+)
