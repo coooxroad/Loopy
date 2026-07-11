@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -236,6 +237,10 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         }
     }
 
+    LaunchedEffect(positionMs, timeEditing) {
+        if (!timeEditing) timeText = fmtPlain(positionMs)
+    }
+
     val playheadStrokeMs = positionMs - macro.videoOffsetMs
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
@@ -247,7 +252,8 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var captureMsg by remember { mutableStateOf("") }
     var captureBaseStrokeMs by remember { mutableStateOf(0L) }
     val liveTouches = remember { mutableStateMapOf<Int, Offset>() }
-    var showTimeDialog by remember { mutableStateOf(false) }
+    var timeEditing by remember { mutableStateOf(false) }
+    var timeText by remember { mutableStateOf("0.00") }
 
     fun startCapture() {
         val devs = runCatching { reader.probe() }.getOrDefault(emptyList())
@@ -386,14 +392,35 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     .padding(horizontal = 18.dp, vertical = 5.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                // 시계: 파인(오목) 뉴모피즘 — 필름스트립 배경색. 클릭 시 시간 직접 지정
-                Box(
-                    Modifier.neu(Color(0xFFE6EAF2), cornerDp = 8f, offDp = 2f, blurDp = 5f, raised = false)
-                        .clip(RoundedCornerShape(8.dp)).background(Color(0xFFE6EAF2))
-                        .clickable { showTimeDialog = true }
-                        .padding(horizontal = 9.dp, vertical = 4.dp),
-                ) {
-                    Text("${fmt(positionMs)} / ${fmt(totalMs)}", color = TextLo, fontSize = 12.sp)
+                // 시계: 파인(오목) 뉴모피즘. 탭하면 그 자리에서 자판 올라와 시간 직접 입력
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.neu(Color(0xFFE6EAF2), cornerDp = 10f, offDp = 2.5f, blurDp = 6f, raised = false)
+                            .clip(RoundedCornerShape(10.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        BasicTextField(
+                            value = timeText,
+                            onValueChange = { v ->
+                                timeText = v
+                                parseTime(v, totalMs)?.let { ms ->
+                                    playing = false; player?.playWhenReady = false; seekTo(ms)
+                                }
+                            },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = TextHi, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                            ),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(TraceStart),
+                            modifier = Modifier.width(52.dp)
+                                .onFocusChanged { fs ->
+                                    timeEditing = fs.isFocused
+                                    if (fs.isFocused) timeText = fmtPlain(positionMs)
+                                },
+                        )
+                    }
+                    Text(" / ${fmt(totalMs)}", color = TextLo, fontSize = 12.sp)
                 }
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     PlayPauseFilled(playing) { togglePlay() }
@@ -451,7 +478,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             ) {
                 Box(
                     Modifier.size(56.dp)
-                        .colorRaised(AddedGreen, cornerDp = 28f)
+                        .neu(NeuBase, fill = AddedGreen, cornerDp = 28f, offDp = 5f, blurDp = 13f)
                         .clickable { startCapture() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -468,14 +495,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             Spacer(Modifier.weight(1f))
         }
 
-        if (showTimeDialog) {
-            TimeInputDialog(
-                current = positionMs, total = totalMs,
-                onDismiss = { showTimeDialog = false },
-                onConfirm = { ms -> playing = false; player?.playWhenReady = false; seekTo(ms); showTimeDialog = false },
-            )
-        }
-
         // 전체화면 캡처 오버레이
         if (capturing) {
             CaptureOverlay(
@@ -483,75 +502,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 live = liveTouches, rotationDeg = currentRotation(context), contentAspect = contentAspect,
                 onSave = { finishCapture(true) }, onCancel = { finishCapture(false) },
             )
-        }
-    }
-}
-
-/** 시간 직접 입력: 핸드폰 키보드로 초 단위 입력(예: 6.04 또는 1:06.04). */
-@Composable
-private fun TimeInputDialog(current: Long, total: Long, onDismiss: () -> Unit, onConfirm: (Long) -> Unit) {
-    var text by remember { mutableStateOf(fmtPlain(current)) }
-    fun parse(s: String): Long? {
-        val str = s.trim()
-        if (str.isEmpty()) return null
-        return runCatching {
-            if (str.contains(":")) {
-                val parts = str.split(":")
-                val m = parts[0].trim().toLong()
-                val sec = parts[1].trim().toDouble()
-                (m * 60_000L + (sec * 1000).toLong())
-            } else {
-                (str.toDouble() * 1000).toLong()
-            }
-        }.getOrNull()?.coerceIn(0L, total)
-    }
-    Box(
-        Modifier.fillMaxSize().background(Color(0x99101218)).clickable { onDismiss() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier.padding(30.dp).clip(RoundedCornerShape(20.dp)).background(NeuBase)
-                .padding(22.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("시간 지정", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text("초 또는 분:초 (예: 6.04 / 1:06.04)", color = TextLo, fontSize = 11.sp)
-            Spacer(Modifier.height(14.dp))
-            Box(
-                Modifier.neu(Color(0xFFE6EAF2), cornerDp = 12f, offDp = 2f, blurDp = 4f, raised = false)
-                    .clip(RoundedCornerShape(12.dp)).background(Color(0xFFE6EAF2)),
-            ) {
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        color = TextHi, fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                    ),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    cursorBrush = androidx.compose.ui.graphics.SolidColor(TraceStart),
-                    modifier = Modifier.width(180.dp).padding(horizontal = 14.dp, vertical = 12.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text("전체 ${fmt(total)}", color = TextLo, fontSize = 10.sp)
-            Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    Modifier.width(96.dp).height(44.dp)
-                        .neu(NeuBase, cornerDp = 12f, offDp = 2.5f, blurDp = 4f)
-                        .clip(RoundedCornerShape(12.dp)).clickable { onDismiss() },
-                    contentAlignment = Alignment.Center,
-                ) { Text("취소", color = TextLo, fontSize = 13.sp) }
-                Box(
-                    Modifier.width(96.dp).height(44.dp)
-                        .colorRaised(TraceStart, cornerDp = 12f)
-                        .clickable { parse(text)?.let { onConfirm(it) } },
-                    contentAlignment = Alignment.Center,
-                ) { Text("이동", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
-            }
         }
     }
 }
@@ -615,7 +565,7 @@ private fun CaptureOverlay(
 private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .colorRaised(bg, cornerDp = 14f)
+            .neu(Color(0xFF2A2E3A), fill = bg, cornerDp = 16f, offDp = 4f, blurDp = 11f)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
@@ -625,7 +575,7 @@ private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick:
 private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(52.dp)
-            .neu(NeuBase, cornerDp = 12f, offDp = 2.5f, blurDp = 4f)
+            .neu(NeuBase, cornerDp = 16f, offDp = 4.5f, blurDp = 11f)
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
@@ -699,66 +649,79 @@ private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** 색을 어둡게/밝게. */
-private fun Color.darker(f: Float = 0.88f) = Color(red * f, green * f, blue * f, alpha)
-private fun Color.lighter(f: Float = 0.6f) =
+/** 색 조절 헬퍼. */
+private fun Color.darker(f: Float = 0.86f) = Color(red * f, green * f, blue * f, alpha)
+private fun Color.lighter(f: Float = 0.5f) =
     Color(red + (1f - red) * f, green + (1f - green) * f, blue + (1f - blue) * f, alpha)
 
 /**
- * 뉴모피즘: 요소가 "배경과 같은 재질"로서 솟거나(raised) 파인(recessed) 표면.
- * 그림자/글로우는 배경(surface)색에서 파생되고, 가장자리에 바짝 붙는다.
+ * 뉴모피즘(참고 이미지 방식):
+ *  - 광원은 왼쪽 위 → 좌상에 흰 글로우, 우하에 어두운 그림자 (대각선)
+ *  - blur를 넉넉히, offset은 적당히 → 부드럽게 배경에서 솟은 느낌
+ *  - 컬러 요소도 동일한 "배경색 기준" 그림자/글로우를 받고, 여기에
+ *    자기 색 발광(soft glow) + 안쪽 세로 그라데이션이 얹힌다.
+ *  - raised=false면 파인(recessed): 방향 반전.
+ *
+ * fill=null이면 표면색(surface) 그대로인 회색 뉴모피즘 요소.
  */
 private fun Modifier.neu(
-    surface: Color, cornerDp: Float = 10f, offDp: Float = 2.5f, blurDp: Float = 4f, raised: Boolean = true,
+    surface: Color,
+    fill: Color? = null,
+    cornerDp: Float = 16f,
+    offDp: Float = 5f,
+    blurDp: Float = 12f,
+    raised: Boolean = true,
 ) = this.drawBehind {
-    val off = offDp.dp.toPx(); val blur = blurDp.dp.toPx(); val cr = cornerDp.dp.toPx()
+    val off = offDp.dp.toPx()
+    val blur = blurDp.dp.toPx()
+    val cr = cornerDp.dp.toPx()
     val sign = if (raised) 1f else -1f
-    val argb = surface.toArgb()
-    val darkC = surface.darker().toArgb()
-    val lightC = surface.lighter().toArgb()
+    val body = fill ?: surface
+    val shadowC = surface.darker(0.80f).toArgb()
+    val glowC = android.graphics.Color.WHITE
+    val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+
     drawIntoCanvas { canvas ->
         val fw = canvas.nativeCanvas
-        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+        // 1) 우하 어두운 그림자 (배경색 기준)
         val pd = android.graphics.Paint()
         pd.isAntiAlias = true
-        pd.color = argb
-        pd.setShadowLayer(blur, off * sign, off * sign, darkC)
+        pd.color = body.toArgb()
+        pd.setShadowLayer(blur, off * sign, off * sign, shadowC)
         fw.drawRoundRect(rect, cr, cr, pd)
+        // 2) 좌상 흰 글로우
         val pl = android.graphics.Paint()
         pl.isAntiAlias = true
-        pl.color = argb
-        pl.setShadowLayer(blur, -off * sign, -off * sign, lightC)
+        pl.color = body.toArgb()
+        pl.setShadowLayer(blur, -off * sign, -off * sign, glowC)
         fw.drawRoundRect(rect, cr, cr, pl)
+        // 3) 컬러 요소면: 자기 색 발광을 은은하게 더함
+        if (fill != null && raised) {
+            val pg = android.graphics.Paint()
+            pg.isAntiAlias = true
+            pg.color = body.toArgb()
+            pg.setShadowLayer(blur * 1.1f, 0f, off * 0.5f,
+                fill.copy(alpha = 0.55f).toArgb())
+            fw.drawRoundRect(rect, cr, cr, pg)
+        }
     }
-}
-
-/** 컬러 요소(스트로크 블록)용 입체: 위 밝음→아래 어두움 그라데이션 + 아래에 붙는 짧은 그림자. */
-private fun Modifier.colorRaised(base: Color, cornerDp: Float = 7f) = this.drawBehind {
-    val cr = cornerDp.dp.toPx()
-    drawIntoCanvas { canvas ->
-        val p = android.graphics.Paint()
-        p.isAntiAlias = true
-        p.color = base.toArgb()
-        p.setShadowLayer(3.dp.toPx(), 0f, 1.5f.dp.toPx(),
-            base.darker(0.55f).copy(alpha = 0.55f).toArgb())
-        canvas.nativeCanvas.drawRoundRect(
-            android.graphics.RectF(0f, 0f, size.width, size.height), cr, cr, p)
-    }
-    // 안쪽 세로 그라데이션(위 밝게 → 아래 진하게)
+    // 4) 안쪽 그라데이션: 위 밝게 → 아래 어둡게 (볼록) / 반대 (오목)
+    val top = if (raised) body.lighter(0.22f) else body.darker(0.93f)
+    val bot = if (raised) body.darker(0.90f) else body.lighter(0.16f)
     drawRoundRect(
-        brush = Brush.verticalGradient(
-            listOf(base.lighter(0.28f), base, base.darker(0.86f)),
-        ),
+        brush = Brush.verticalGradient(listOf(top, body, bot)),
         cornerRadius = CornerRadius(cr, cr),
     )
-    // 상단 얇은 하이라이트 라인
-    drawRoundRect(
-        brush = Brush.verticalGradient(
-            0f to Color.White.copy(alpha = 0.35f),
-            0.35f to Color.Transparent,
-        ),
-        cornerRadius = CornerRadius(cr, cr),
-    )
+    // 5) 상단 얇은 하이라이트 라인(볼록일 때만)
+    if (raised) {
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.30f),
+                0.3f to Color.Transparent,
+            ),
+            cornerRadius = CornerRadius(cr, cr),
+        )
+    }
 }
 
 /** 볼록 뉴모피즘(좌우 꽉 찬 바용): 수직 하이라이트/그림자. */
@@ -1003,7 +966,7 @@ private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, 
     Box(modifier.clickable { onClick() }) {
         Box(
             Modifier.fillMaxSize().padding(1.dp)
-                .colorRaised(if (selected) Color.White else base, cornerDp = 7f)
+                .neu(NeuBase, fill = if (selected) Color.White else base, cornerDp = 8f, offDp = 2.5f, blurDp = 6f)
                 .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
         )
     }
@@ -1237,3 +1200,19 @@ private fun fmt(ms: Long): String {
 
 /** 초 단위 평문(입력 필드 기본값). */
 private fun fmtPlain(ms: Long): String = "%.2f".format(ms / 1000.0)
+
+/** "6.04" 또는 "1:06.04" → ms. */
+private fun parseTime(s: String, total: Long): Long? {
+    val str = s.trim()
+    if (str.isEmpty()) return null
+    return runCatching {
+        if (str.contains(":")) {
+            val parts = str.split(":")
+            val m = parts[0].trim().toLong()
+            val sec = parts[1].trim().toDouble()
+            m * 60_000L + (sec * 1000).toLong()
+        } else {
+            (str.toDouble() * 1000).toLong()
+        }
+    }.getOrNull()?.coerceIn(0L, total)
+}

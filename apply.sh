@@ -3,40 +3,6 @@
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
-    val lanes = assignLanes(strokes)
-    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
-    val strokeTrackH = laneStep * laneCount
-    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
-
-    // 드래그(홀드 이동) 상태
-    var dragIndex by remember { mutableStateOf<Int?>(null) }
-    var dragDx by remember { mutableStateOf(0f) }
-
-    LaunchedEffect(videoPath, dpPerSec) {
-        thumbs.clear()
-        val path = videoPath ?: return@LaunchedEffect
-        val secN = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
-        withContext(Dispatchers.IO) {
-            val r = MediaMetadataRetriever()
-            runCatching {
-                val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
-                r.setDataSource(context, uri)
-                for (i in 0 until secN) {
-                    val ib = runCatching {
-                        val src = r.getFrameAtTime(i * 1000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        src?.let {
-                            val ratio = thumbHpx.toFloat() / it.height
-                            val w = (it.width * ratio).toInt().coerceAtLeast(1)
-                            Bitmap.createScaledBitmap(it, w, thumbHpx, true).asImageBitmap()
-                        }
-                    }.getOrNull()
-                    withContext(Dispatchers.Main) { thumbs.add(ib) }
-                }
-            }
-            runCatching { r.release() }
-        }
-    }
-
     LaunchedEffect(scrollState, dpPerSec) {
         snapshotFlow { scrollState.value to scrollState.isScrollInProgress }
             .collect { (px, inProgress) ->
@@ -171,7 +137,7 @@ private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, 
     Box(modifier.clickable { onClick() }) {
         Box(
             Modifier.fillMaxSize().padding(1.dp)
-                .colorRaised(if (selected) Color.White else base, cornerDp = 7f)
+                .neu(NeuBase, fill = if (selected) Color.White else base, cornerDp = 8f, offDp = 2.5f, blurDp = 6f)
                 .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
         )
     }
@@ -405,10 +371,26 @@ private fun fmt(ms: Long): String {
 
 /** 초 단위 평문(입력 필드 기본값). */
 private fun fmtPlain(ms: Long): String = "%.2f".format(ms / 1000.0)
+
+/** "6.04" 또는 "1:06.04" → ms. */
+private fun parseTime(s: String, total: Long): Long? {
+    val str = s.trim()
+    if (str.isEmpty()) return null
+    return runCatching {
+        if (str.contains(":")) {
+            val parts = str.split(":")
+            val m = parts[0].trim().toLong()
+            val sec = parts[1].trim().toDouble()
+            m * 60_000L + (sec * 1000).toLong()
+        } else {
+            (str.toDouble() * 1000).toLong()
+        }
+    }.getOrNull()?.coerceIn(0L, total)
+}
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "뉴모피즘 재구현(배경색 기준, 가장자리 밀착) + 컬러블록 그라데이션 입체 + 박스 딱맞게/반투명/드래그 수정 + 시간입력 키보드"
+git commit -m "뉴모피즘 제대로(대각선 우하그림자+좌상흰글로우, 큰 blur, 컬러요소는 배경그림자+자기색발광+안쪽그라데이션) + 시간 인라인 자판입력"
 git push
 echo "푸시 완료!"
 
