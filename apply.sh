@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 undo/redo 2/2 (이어붙임)
+# 편집기 undo/redo 2/2
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -401,7 +401,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기: 핀치 텔포 수정(dpPerSec 키) + 편집버튼 아이콘+라벨 벡터 + 인포바 undo/redo 벡터"
+git commit -m "fix: selectedStroke 선언을 undo/redo 위로 이동(스코프)"
 git push
 echo "푸시 완료!"
 
