@@ -163,6 +163,8 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 
     var playing by remember { mutableStateOf(false) }
+    var timeEditing by remember { mutableStateOf(false) }
+    var timeText by remember { mutableStateOf("0.00") }
     var positionMs by remember { mutableStateOf(0L) }
     var userScrubbing by remember { mutableStateOf(false) }
 
@@ -186,13 +188,34 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 
     val contentAspect = if (hasVideo) videoAspect else screenAspect
+    // 영상이 현재 가로인지(회전 구간인지) — 종횡비로 판단
+    val videoLandscape = contentAspect > 1f
+    // 패널 좌표(회전 불변)를 현재 영상 방향에 맞게 매핑할 회전값
+    val effectiveRot = remember(videoLandscape, macro.rotation) {
+        if (videoLandscape) {
+            // 영상이 가로 → 기기가 90 또는 270으로 돌아간 상태.
+            // 매크로 rotation이 이미 가로면 그대로, 아니면 90으로 가정.
+            if (macro.rotation == 90 || macro.rotation == 270) macro.rotation else 90
+        } else {
+            if (macro.rotation == 90 || macro.rotation == 270) 0 else macro.rotation
+        }
+    }
     val totalMs: Long = run {
         val d = player?.duration ?: 0L
         if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
     }
-    val previewH = remember {
+    // 프리뷰 높이: 영상 종횡비에 맞춰 조정(가로 영상일 때 쪼그라들지 않게)
+    val screenWDp = remember {
         val dm = context.resources.displayMetrics
-        (dm.heightPixels / dm.density * 0.42f).dp
+        dm.widthPixels / dm.density
+    }
+    val maxPreviewDp = remember {
+        val dm = context.resources.displayMetrics
+        dm.heightPixels / dm.density * 0.46f
+    }
+    val previewH = run {
+        val fit = screenWDp / contentAspect.coerceAtLeast(0.05f)
+        fit.coerceAtMost(maxPreviewDp).dp
     }
 
     LaunchedEffect(playing) {
@@ -223,6 +246,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
     fun seekTo(ms: Long) {
         positionMs = ms.coerceIn(0L, totalMs); player?.seekTo(positionMs)
+        if (!timeEditing) timeText = fmtPlain(positionMs)
     }
 
     // 블록 선택 시: 재생헤드를 블록 가장 가까운 가장자리로 스냅(닿게)
@@ -237,8 +261,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         }
     }
 
-    var timeEditing by remember { mutableStateOf(false) }
-    var timeText by remember { mutableStateOf("0.00") }
 
     LaunchedEffect(positionMs, timeEditing) {
         if (!timeEditing) timeText = fmtPlain(positionMs)
@@ -379,12 +401,12 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     if (si < strokes.size) {
                         StrokeMoveBox(
                             stroke = strokes[si], contentAspect = contentAspect,
-                            defaultRot = macro.rotation,
+                            defaultRot = effectiveRot,
                             onCommit = { dnx, dny -> doNudge(si, dnx, dny) },
                         )
                     }
                 }
-                TraceOverlay(strokes, playheadStrokeMs, contentAspect, macro.rotation)
+                TraceOverlay(strokes, playheadStrokeMs, contentAspect, effectiveRot)
             }
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
@@ -396,7 +418,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 // 시계: 파인(오목) 뉴모피즘. 탭하면 그 자리에서 자판 올라와 시간 직접 입력
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.neu(Color(0xFFE6EAF2), cornerDp = 10f, offDp = 2.5f, blurDp = 6f, raised = false)
+                        Modifier.neu(Color(0xFFE6EAF2), cornerDp = 9f, offDp = 2f, blurDp = 4.5f, raised = false)
                             .clip(RoundedCornerShape(10.dp))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     ) {
@@ -479,7 +501,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             ) {
                 Box(
                     Modifier.size(56.dp)
-                        .neu(NeuBase, fill = AddedGreen, cornerDp = 28f, offDp = 5f, blurDp = 13f)
+                        .neu(NeuBase, fill = AddedGreen, cornerDp = 28f, offDp = 3f, blurDp = 7f)
                         .clickable { startCapture() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -566,7 +588,7 @@ private fun CaptureOverlay(
 private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .neu(Color(0xFF2A2E3A), fill = bg, cornerDp = 16f, offDp = 4f, blurDp = 11f)
+            .neu(Color(0xFF2A2E3A), fill = bg, cornerDp = 15f, offDp = 2.6f, blurDp = 6f)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
@@ -576,7 +598,7 @@ private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick:
 private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(52.dp)
-            .neu(NeuBase, cornerDp = 16f, offDp = 4.5f, blurDp = 11f)
+            .neu(NeuBase, cornerDp = 14f, offDp = 2.6f, blurDp = 5.5f)
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
@@ -656,72 +678,93 @@ private fun Color.lighter(f: Float = 0.5f) =
     Color(red + (1f - red) * f, green + (1f - green) * f, blue + (1f - blue) * f, alpha)
 
 /**
- * 뉴모피즘(참고 이미지 방식):
- *  - 광원은 왼쪽 위 → 좌상에 흰 글로우, 우하에 어두운 그림자 (대각선)
- *  - blur를 넉넉히, offset은 적당히 → 부드럽게 배경에서 솟은 느낌
- *  - 컬러 요소도 동일한 "배경색 기준" 그림자/글로우를 받고, 여기에
- *    자기 색 발광(soft glow) + 안쪽 세로 그라데이션이 얹힌다.
- *  - raised=false면 파인(recessed): 방향 반전.
- *
- * fill=null이면 표면색(surface) 그대로인 회색 뉴모피즘 요소.
+ * 뉴모피즘: 광원은 왼쪽 위.
+ *  - raised: 우하 어두운 그림자 + 좌상 흰 글로우 (요소 밖, 좁게)
+ *  - recessed(파임): 안쪽 그림자 — 좌상 안쪽 어둡게, 우하 안쪽 밝게 (inner shadow)
+ *  - 컬러 요소(fill)도 배경색 그림자/글로우를 받고 자기색 발광이 은은히 얹힘.
  */
 private fun Modifier.neu(
     surface: Color,
     fill: Color? = null,
-    cornerDp: Float = 16f,
-    offDp: Float = 5f,
-    blurDp: Float = 12f,
+    cornerDp: Float = 12f,
+    offDp: Float = 2.5f,
+    blurDp: Float = 5f,
     raised: Boolean = true,
 ) = this.drawBehind {
     val off = offDp.dp.toPx()
     val blur = blurDp.dp.toPx()
     val cr = cornerDp.dp.toPx()
-    val sign = if (raised) 1f else -1f
     val body = fill ?: surface
-    val shadowC = surface.darker(0.80f).toArgb()
-    val glowC = android.graphics.Color.WHITE
     val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
 
-    drawIntoCanvas { canvas ->
-        val fw = canvas.nativeCanvas
-        // 1) 우하 어두운 그림자 (배경색 기준)
-        val pd = android.graphics.Paint()
-        pd.isAntiAlias = true
-        pd.color = body.toArgb()
-        pd.setShadowLayer(blur, off * sign, off * sign, shadowC)
-        fw.drawRoundRect(rect, cr, cr, pd)
-        // 2) 좌상 흰 글로우
-        val pl = android.graphics.Paint()
-        pl.isAntiAlias = true
-        pl.color = body.toArgb()
-        pl.setShadowLayer(blur, -off * sign, -off * sign, glowC)
-        fw.drawRoundRect(rect, cr, cr, pl)
-        // 3) 컬러 요소면: 자기 색 발광을 은은하게 더함
-        if (fill != null && raised) {
-            val pg = android.graphics.Paint()
-            pg.isAntiAlias = true
-            pg.color = body.toArgb()
-            pg.setShadowLayer(blur * 1.1f, 0f, off * 0.5f,
-                fill.copy(alpha = 0.55f).toArgb())
-            fw.drawRoundRect(rect, cr, cr, pg)
-        }
-    }
-    // 4) 안쪽 그라데이션: 위 밝게 → 아래 어둡게 (볼록) / 반대 (오목)
-    val top = if (raised) body.lighter(0.22f) else body.darker(0.93f)
-    val bot = if (raised) body.darker(0.90f) else body.lighter(0.16f)
-    drawRoundRect(
-        brush = Brush.verticalGradient(listOf(top, body, bot)),
-        cornerRadius = CornerRadius(cr, cr),
-    )
-    // 5) 상단 얇은 하이라이트 라인(볼록일 때만)
     if (raised) {
+        val shadowC = surface.darker(0.78f).toArgb()
+        drawIntoCanvas { canvas ->
+            val fw = canvas.nativeCanvas
+            val pd = android.graphics.Paint()
+            pd.isAntiAlias = true
+            pd.color = body.toArgb()
+            pd.setShadowLayer(blur, off, off, shadowC)
+            fw.drawRoundRect(rect, cr, cr, pd)
+            val pl = android.graphics.Paint()
+            pl.isAntiAlias = true
+            pl.color = body.toArgb()
+            pl.setShadowLayer(blur, -off, -off, android.graphics.Color.WHITE)
+            fw.drawRoundRect(rect, cr, cr, pl)
+            if (fill != null) {
+                val pg = android.graphics.Paint()
+                pg.isAntiAlias = true
+                pg.color = body.toArgb()
+                pg.setShadowLayer(blur * 1.05f, 0f, off * 0.4f, fill.copy(alpha = 0.45f).toArgb())
+                fw.drawRoundRect(rect, cr, cr, pg)
+            }
+        }
+        // 안쪽 세로 그라데이션(위 밝게 → 아래 어둡게) + 상단 하이라이트
+        drawRoundRect(
+            brush = Brush.verticalGradient(listOf(body.lighter(0.20f), body, body.darker(0.91f))),
+            cornerRadius = CornerRadius(cr, cr),
+        )
         drawRoundRect(
             brush = Brush.verticalGradient(
-                0f to Color.White.copy(alpha = 0.30f),
-                0.3f to Color.Transparent,
+                0f to Color.White.copy(alpha = 0.26f),
+                0.32f to Color.Transparent,
             ),
             cornerRadius = CornerRadius(cr, cr),
         )
+    } else {
+        // 파임: 표면색으로 채우고 안쪽 그림자(좌상 어둡게, 우하 밝게)
+        drawRoundRect(body, cornerRadius = CornerRadius(cr, cr))
+        drawIntoCanvas { canvas ->
+            val fw = canvas.nativeCanvas
+            val sc = fw.save()
+            val clipPath = android.graphics.Path().apply {
+                addRoundRect(rect, cr, cr, android.graphics.Path.Direction.CW)
+            }
+            fw.clipPath(clipPath)
+            // 좌상 안쪽 어두운 그림자
+            val pIn = android.graphics.Paint()
+            pIn.isAntiAlias = true
+            pIn.style = android.graphics.Paint.Style.STROKE
+            pIn.strokeWidth = off * 2.2f
+            pIn.color = android.graphics.Color.TRANSPARENT
+            pIn.setShadowLayer(blur, off, off, surface.darker(0.72f).toArgb())
+            fw.drawRoundRect(
+                android.graphics.RectF(-off * 2f, -off * 2f, size.width + off * 2f, size.height + off * 2f),
+                cr, cr, pIn,
+            )
+            // 우하 안쪽 밝은 반사
+            val pIn2 = android.graphics.Paint()
+            pIn2.isAntiAlias = true
+            pIn2.style = android.graphics.Paint.Style.STROKE
+            pIn2.strokeWidth = off * 2.2f
+            pIn2.color = android.graphics.Color.TRANSPARENT
+            pIn2.setShadowLayer(blur, -off, -off, android.graphics.Color.WHITE)
+            fw.drawRoundRect(
+                android.graphics.RectF(-off * 2f, -off * 2f, size.width + off * 2f, size.height + off * 2f),
+                cr, cr, pIn2,
+            )
+            fw.restoreToCount(sc)
+        }
     }
 }
 
@@ -959,16 +1002,19 @@ private fun Timeline(
     }
 }
 
-/** 스트로크 블록: 캡처=파랑, 추가=초록. 컬러 입체(위 밝음→아래 어두움 + 하단 그림자). */
+/** 스트로크 블록. 그림자가 이웃 블록을 침범하지 않도록 안쪽 여백 안에서만 그린다. */
 @Composable
 private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
     val base = if (added) AddedGreen else TraceStart
-    Box(modifier.clickable { onClick() }) {
+    // 바깥 Box = 히트영역 / 안쪽 Box = 실제 블록(그림자 여백만큼 축소)
+    Box(modifier.clickable { onClick() }, contentAlignment = Alignment.Center) {
         Box(
-            Modifier.fillMaxSize().padding(1.dp)
-                .neu(NeuBase, fill = if (selected) Color.White else base, cornerDp = 8f, offDp = 2.5f, blurDp = 6f)
-                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
+            Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
+                .clip(shape)
+                .neu(NeuBase, fill = if (selected) Color.White else base,
+                    cornerDp = 7f, offDp = 1.6f, blurDp = 3.2f)
+                .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }
 }

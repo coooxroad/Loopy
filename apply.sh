@@ -3,6 +3,40 @@
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
+    val lanes = assignLanes(strokes)
+    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
+    val strokeTrackH = laneStep * laneCount
+    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
+
+    // 드래그(홀드 이동) 상태
+    var dragIndex by remember { mutableStateOf<Int?>(null) }
+    var dragDx by remember { mutableStateOf(0f) }
+
+    LaunchedEffect(videoPath, dpPerSec) {
+        thumbs.clear()
+        val path = videoPath ?: return@LaunchedEffect
+        val secN = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
+        withContext(Dispatchers.IO) {
+            val r = MediaMetadataRetriever()
+            runCatching {
+                val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
+                r.setDataSource(context, uri)
+                for (i in 0 until secN) {
+                    val ib = runCatching {
+                        val src = r.getFrameAtTime(i * 1000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        src?.let {
+                            val ratio = thumbHpx.toFloat() / it.height
+                            val w = (it.width * ratio).toInt().coerceAtLeast(1)
+                            Bitmap.createScaledBitmap(it, w, thumbHpx, true).asImageBitmap()
+                        }
+                    }.getOrNull()
+                    withContext(Dispatchers.Main) { thumbs.add(ib) }
+                }
+            }
+            runCatching { r.release() }
+        }
+    }
+
     LaunchedEffect(scrollState, dpPerSec) {
         snapshotFlow { scrollState.value to scrollState.isScrollInProgress }
             .collect { (px, inProgress) ->
@@ -129,16 +163,19 @@ cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
     }
 }
 
-/** 스트로크 블록: 캡처=파랑, 추가=초록. 컬러 입체(위 밝음→아래 어두움 + 하단 그림자). */
+/** 스트로크 블록. 그림자가 이웃 블록을 침범하지 않도록 안쪽 여백 안에서만 그린다. */
 @Composable
 private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
     val base = if (added) AddedGreen else TraceStart
-    Box(modifier.clickable { onClick() }) {
+    // 바깥 Box = 히트영역 / 안쪽 Box = 실제 블록(그림자 여백만큼 축소)
+    Box(modifier.clickable { onClick() }, contentAlignment = Alignment.Center) {
         Box(
-            Modifier.fillMaxSize().padding(1.dp)
-                .neu(NeuBase, fill = if (selected) Color.White else base, cornerDp = 8f, offDp = 2.5f, blurDp = 6f)
-                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
+            Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
+                .clip(shape)
+                .neu(NeuBase, fill = if (selected) Color.White else base,
+                    cornerDp = 7f, offDp = 1.6f, blurDp = 3.2f)
+                .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }
 }
@@ -390,7 +427,7 @@ private fun parseTime(s: String, total: Long): Long? {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "fix: timeText/timeEditing 선언 순서 + 뉴모피즘 재구현(대각선/큰blur/컬러발광) + 인라인 시간입력"
+git commit -m "그림자 축소/블록격리, 시계 진짜 오목(inner shadow)+시크시 시간동기, 회전보정(영상방향 기반 effectiveRot + 프리뷰 종횡비 적응)"
 git push
 echo "푸시 완료!"
 
