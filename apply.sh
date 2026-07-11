@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 undo/redo 2/2
+# 편집기 순서수정 최종 2/2
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -401,7 +401,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "fix: selectedStroke 선언을 undo/redo 위로 이동(스코프)"
+git commit -m "fix: selectedStroke 선언 순서(undo/redo 위)"
 git push
 echo "푸시 완료!"
 

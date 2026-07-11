@@ -107,6 +107,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
     // 편집 가능한 스트로크 상태
     val strokes = remember { mutableStateListOf<Stroke>().apply { addAll(macro.strokes) } }
+    var selectedStroke by remember { mutableStateOf<Int?>(null) }
     fun persist() { MacroStore.updateStrokes(context, macro.id, strokes.toList()) }
 
     // UNDO / REDO 히스토리
@@ -152,7 +153,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var playing by remember { mutableStateOf(false) }
     var positionMs by remember { mutableStateOf(0L) }
     var userScrubbing by remember { mutableStateOf(false) }
-    var selectedStroke by remember { mutableStateOf<Int?>(null) }
 
     val screenAspect = remember {
         val dm = context.resources.displayMetrics
