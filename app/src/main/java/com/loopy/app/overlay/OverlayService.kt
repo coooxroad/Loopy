@@ -35,6 +35,7 @@ import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
+import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.RotationEvent
 import com.loopy.app.macro.Stroke
@@ -63,6 +64,7 @@ class OverlayService : Service() {
     private lateinit var wm: WindowManager
 
     private val reader = GeteventReader()
+    private val io by lazy { ShizukuIo(this, scope) }
     private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
@@ -208,7 +210,7 @@ class OverlayService : Service() {
         ).apply { leftMargin = dp(8) })
 
         status = TextView(this).apply {
-            setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
+            setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화 버튼을 누르세요"
             setPadding(dp(6), dp(6), 0, 0)
             visibility = View.GONE
         }
@@ -433,7 +435,7 @@ class OverlayService : Service() {
         stopPlayback(null)
         val devs = reader.probe()
         val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { status.text = "터치 디바이스를 못 찾음"; return }
+        if (dev == null) { status.text = "터치 장치 없음"; return }
         device = dev
         currentVideoPath = videoPath
         recorder.reset()
@@ -442,7 +444,7 @@ class OverlayService : Service() {
         registerRotationListener()
         recordBtn.setImageResource(R.drawable.ic_ov_stop)
         status.visibility = View.VISIBLE
-        status.text = if (videoPath != null) "● 녹화중 (영상 포함)" else "● 녹화중 — 평소처럼 플레이해"
+        status.text = if (videoPath != null) "● 녹화 중 · 영상" else "● 녹화 중"
         reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
     }
 
@@ -531,7 +533,7 @@ class OverlayService : Service() {
         stopPlayback(null)
         val macros = HashMap<String, Macro>()
         pl.macroIds.toSet().forEach { id -> MacroStore.read(this, id)?.let { macros[id] = it } }
-        if (macros.isEmpty()) { status.text = "매크로가 비어있어"; return }
+        if (macros.isEmpty()) { status.text = "비어 있음"; return }
         stopPlayBtn.visibility = View.VISIBLE
         playJob = scope.launch {
             var cycle = 0
@@ -563,50 +565,7 @@ class OverlayService : Service() {
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
     /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
     private suspend fun runStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val w = m.widthPixels
-        val h = m.heightPixels
-        val rot = displayObj.rotation
-
-        val nStroke = strokes.size
-        // 손가락 id 배정: 겹치지 않는 스트로크끼리는 같은 id 재사용(활성 포인터 수 최소화).
-        val fingerIds = IntArray(nStroke)
-        val idFreeAt = ArrayList<Long>()
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
-            var assigned = -1
-            for (id in idFreeAt.indices) {
-                if (idFreeAt[id] + 12L <= s.startMs) { assigned = id; break }
-            }
-            if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
-            fingerIds[k] = assigned
-        }
-
-        val totalSamples = strokes.sumOf { it.samples.size }
-        val startArr = LongArray(nStroke)
-        val durArr = LongArray(nStroke)
-        val counts = IntArray(nStroke)
-        val xs = IntArray(totalSamples)
-        val ys = IntArray(totalSamples)
-        val times = LongArray(totalSamples)
-        var off = 0
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            startArr[k] = s.startMs
-            durArr[k] = s.durationMs
-            counts[k] = s.samples.size
-            for (i in s.samples.indices) {
-                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
-                xs[off] = px; ys[off] = py; times[off] = s.samples[i].t
-                off++
-            }
-        }
-        withContext(Dispatchers.IO) {
-            LoopyService.playMulti(fingerIds, startArr, durArr, counts, xs, ys, times)
-        }
+        io.playStrokes(strokes) { displayObj.rotation * 90 }
     }
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
@@ -689,12 +648,6 @@ class OverlayService : Service() {
         setOnClickListener { onClick() }
     }
 
-    private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
-        Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
-        Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
-        Surface.ROTATION_270 -> ((1 - v) * w).toInt() to (u * h).toInt()
-        else -> (u * w).toInt() to (v * h).toInt()
-    }
 
     private fun barContains(u: Float, v: Float): Boolean {
         val m = DisplayMetrics()
@@ -720,7 +673,7 @@ class OverlayService : Service() {
         }
         return Notification.Builder(this, channelId)
             .setContentTitle("Loopy 실행 중")
-            .setContentText("매크로 컨트롤이 화면에 떠 있어요")
+            .setContentText("컨트롤이 화면에 표시 중")
             .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setOngoing(true)
             .build()

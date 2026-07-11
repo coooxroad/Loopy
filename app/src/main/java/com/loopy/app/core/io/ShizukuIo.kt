@@ -28,6 +28,11 @@ class ShizukuIo(
 
     private val reader = GeteventReader()
 
+    private companion object {
+        /** UP 직후 같은 id 를 재사용하기까지의 최소 간격. 연타가 하나로 합쳐지는 것을 막는다. */
+        const val FINGER_REUSE_GAP_MS = 12L
+    }
+
     override val available: Boolean
         get() = ShizukuManager.state() == ShizukuState.READY && LoopyService.isReady()
 
@@ -36,11 +41,37 @@ class ShizukuIo(
     override suspend fun playStrokes(strokes: List<Stroke>, rotationAt: (Long) -> Int) {
         if (strokes.isEmpty()) return
         val (w, h) = screenSize()
+        val n = strokes.size
 
-        val ids = IntArray(strokes.size) { it }
-        val starts = LongArray(strokes.size) { strokes[it].startMs }
-        val durs = LongArray(strokes.size) { strokes[it].durationMs }
-        val counts = IntArray(strokes.size) { strokes[it].samples.size }
+        // 손가락 id 배정.
+        //
+        // 스트로크마다 새 id 를 주면 활성 포인터가 계속 늘어나 시스템이 입력을 뭉갠다.
+        // 시간이 겹치지 않는 스트로크끼리는 같은 id 를 재사용하되, UP 과 다음 DOWN 사이에
+        // 최소 간격(12ms)을 둔다. 이 간격이 없으면 빠른 연타가 하나의 터치로 합쳐진다.
+        val fingerIds = IntArray(n)
+        val freeAt = ArrayList<Long>()
+        for (k in strokes.indices) {
+            val s = strokes[k]
+            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
+            var assigned = -1
+            for (id in freeAt.indices) {
+                if (freeAt[id] + FINGER_REUSE_GAP_MS <= s.startMs) {
+                    assigned = id
+                    break
+                }
+            }
+            if (assigned == -1) {
+                assigned = freeAt.size
+                freeAt.add(end)
+            } else {
+                freeAt[assigned] = end
+            }
+            fingerIds[k] = assigned
+        }
+
+        val starts = LongArray(n) { strokes[it].startMs }
+        val durs = LongArray(n) { strokes[it].durationMs }
+        val counts = IntArray(n) { strokes[it].samples.size }
 
         val total = counts.sum()
         val xs = IntArray(total)
@@ -61,7 +92,7 @@ class ShizukuIo(
         }
 
         withContext(Dispatchers.IO) {
-            LoopyService.playMulti(ids, starts, durs, counts, xs, ys, ts)
+            LoopyService.playMulti(fingerIds, starts, durs, counts, xs, ys, ts)
         }
     }
 

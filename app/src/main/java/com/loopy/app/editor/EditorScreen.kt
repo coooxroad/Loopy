@@ -97,13 +97,16 @@ import com.loopy.app.macro.Macro
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
-import com.loopy.app.input.GeteventReader
+import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.input.RawRecorder
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.CardStroke
 import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.core.geom.Coords
 import com.loopy.app.ui.theme.NeuBase
+import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuBar
 import com.loopy.app.ui.theme.TextHi
 import com.loopy.app.ui.theme.TextLo
 import kotlinx.coroutines.Dispatchers
@@ -273,7 +276,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
     val coScope = rememberCoroutineScope()
-    val reader = remember { GeteventReader() }
+    val io = remember { ShizukuIo(context, coScope) }
     val recorder = remember { RawRecorder() }
     var capturing by remember { mutableStateOf(false) }
     var captureStarted by remember { mutableStateOf(false) }
@@ -282,30 +285,39 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val liveTouches = remember { mutableStateMapOf<Int, Offset>() }
 
     fun startCapture() {
-        val devs = runCatching { reader.probe() }.getOrDefault(emptyList())
-        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { captureMsg = "터치 디바이스를 못 찾음 (Shizuku 확인)"; capturing = true; return }
+        if (!io.available) {
+            captureMsg = "Shizuku 연결 필요"
+            capturing = true
+            return
+        }
         captureBaseStrokeMs = playheadStrokeMs.coerceAtLeast(0L)
         recorder.reset()
-        // 하단 저장/취소 버튼 영역(아래 12%)은 스트로크로 잡지 않음
+        // 저장/취소 버튼이 놓인 하단은 스트로크로 잡히면 안 된다.
         recorder.shouldIgnore = { _, v -> v > 0.88f }
         captureStarted = false
-        captureMsg = "화면을 터치하면 촬영 시작"
+        captureMsg = "화면을 눌러 시작"
         capturing = true
-        playing = false; player?.playWhenReady = false; player?.seekTo(positionMs)
-        reader.stream(coScope, listOf(dev)) { _, p ->
-            if (!captureStarted && p.down) {
+        playing = false
+        player?.playWhenReady = false
+        player?.seekTo(positionMs)
+
+        io.startCapture { slot, nx, ny, down ->
+            // 영상은 멈춰 있다가 첫 터치와 함께 흐른다. 손이 닿는 순간을 기준으로 맞추기 위해서다.
+            if (!captureStarted && down) {
                 captureStarted = true
-                coScope.launch { player?.playWhenReady = true; playing = true }
+                coScope.launch {
+                    player?.playWhenReady = true
+                    playing = true
+                }
             }
             coScope.launch {
-                if (p.down) liveTouches[p.slot] = Offset(p.nx, p.ny) else liveTouches.remove(p.slot)
+                if (down) liveTouches[slot] = Offset(nx, ny) else liveTouches.remove(slot)
             }
-            recorder.onPoint(p)
+            recorder.onPoint(slot, nx, ny, down)
         }
     }
     fun finishCapture(save: Boolean) {
-        reader.stop()
+        io.stopCapture()
         playing = false; player?.playWhenReady = false
         if (save) {
             val snap = recorder.snapshot()
@@ -322,7 +334,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         capturing = false; captureStarted = false; liveTouches.clear()
     }
 
-    DisposableEffect(Unit) { onDispose { reader.stop() } }
+    DisposableEffect(Unit) { onDispose { io.stopCapture() } }
 
     // 편집 연산 (재생헤드 기준)
     fun doDelete() {
@@ -421,14 +433,14 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
             Box(
-                Modifier.fillMaxWidth().neuRaised().background(NeuBase)
+                Modifier.fillMaxWidth().neuBar().background(NeuBase)
                     .padding(horizontal = 18.dp, vertical = 5.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 // 시계: 파인(오목) 뉴모피즘. 탭하면 그 자리에서 자판 올라와 시간 직접 입력
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.neu(Color(0xFFE6EAF2), cornerDp = 9f, offDp = 2f, blurDp = 4.5f, raised = false)
+                        Modifier.neu(Color(0xFFE6EAF2), corner = 9.dp, offset = 2.dp, blur = 4.5.dp, raised = false)
                             .clip(RoundedCornerShape(10.dp))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     ) {
@@ -522,7 +534,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             ) {
                 Box(
                     Modifier.size(56.dp)
-                        .neu(NeuBase, fill = AddedGreen, cornerDp = 28f, offDp = 3f, blurDp = 7f)
+                        .neu(NeuBase, fill = AddedGreen, corner = 28.dp, offset = 3.dp, blur = 7.dp)
                         .clickable { startCapture() },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -582,7 +594,7 @@ private fun CaptureOverlay(
             else { dispH = bh; dispW = bh * contentAspect }
             val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
             for ((_, n) in live) {
-                val (rx, ry) = rotNorm(n.x, n.y, rotationDeg)
+                val (rx, ry) = Coords.rotate(n.x, n.y, rotationDeg)
                 val p = Offset(offX + rx * dispW, offY + ry * dispH)
                 drawTouchDot(p, 1f, AddedGreen, Triple(32, 201, 151))
             }
@@ -609,7 +621,7 @@ private fun CaptureOverlay(
 private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .neu(Color(0xFF2A2E3A), fill = bg, cornerDp = 15f, offDp = 2.6f, blurDp = 6f)
+            .neu(Color(0xFF2A2E3A), fill = bg, corner = 15.dp, offset = 2.6.dp, blur = 6.dp)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
@@ -619,7 +631,7 @@ private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick:
 private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(52.dp)
-            .neu(NeuBase, cornerDp = 14f, offDp = 2.6f, blurDp = 5.5f)
+            .neu(NeuBase, corner = 14.dp, offset = 2.6.dp, blur = 5.5.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
@@ -694,120 +706,6 @@ private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
 }
 
 /** 색 조절 헬퍼. */
-private fun Color.darker(f: Float = 0.86f) = Color(red * f, green * f, blue * f, alpha)
-private fun Color.lighter(f: Float = 0.5f) =
-    Color(red + (1f - red) * f, green + (1f - green) * f, blue + (1f - blue) * f, alpha)
-
-/**
- * 뉴모피즘: 광원은 왼쪽 위.
- *  - raised: 우하 어두운 그림자 + 좌상 흰 글로우 (요소 밖, 좁게)
- *  - recessed(파임): 안쪽 그림자 — 좌상 안쪽 어둡게, 우하 안쪽 밝게 (inner shadow)
- *  - 컬러 요소(fill)도 배경색 그림자/글로우를 받고 자기색 발광이 은은히 얹힘.
- */
-private fun Modifier.neu(
-    surface: Color,
-    fill: Color? = null,
-    cornerDp: Float = 12f,
-    offDp: Float = 2.5f,
-    blurDp: Float = 5f,
-    raised: Boolean = true,
-) = this.drawBehind {
-    val off = offDp.dp.toPx()
-    val blur = blurDp.dp.toPx()
-    val cr = cornerDp.dp.toPx()
-    val body = fill ?: surface
-    val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
-
-    if (raised) {
-        val shadowC = surface.darker(0.78f).toArgb()
-        drawIntoCanvas { canvas ->
-            val fw = canvas.nativeCanvas
-            val pd = android.graphics.Paint()
-            pd.isAntiAlias = true
-            pd.color = body.toArgb()
-            pd.setShadowLayer(blur, off, off, shadowC)
-            fw.drawRoundRect(rect, cr, cr, pd)
-            val pl = android.graphics.Paint()
-            pl.isAntiAlias = true
-            pl.color = body.toArgb()
-            pl.setShadowLayer(blur, -off, -off, android.graphics.Color.WHITE)
-            fw.drawRoundRect(rect, cr, cr, pl)
-            if (fill != null) {
-                val pg = android.graphics.Paint()
-                pg.isAntiAlias = true
-                pg.color = body.toArgb()
-                pg.setShadowLayer(blur * 1.05f, 0f, off * 0.4f, fill.copy(alpha = 0.45f).toArgb())
-                fw.drawRoundRect(rect, cr, cr, pg)
-            }
-        }
-        // 안쪽 세로 그라데이션(위 밝게 → 아래 어둡게) + 상단 하이라이트
-        drawRoundRect(
-            brush = Brush.verticalGradient(listOf(body.lighter(0.20f), body, body.darker(0.91f))),
-            cornerRadius = CornerRadius(cr, cr),
-        )
-        drawRoundRect(
-            brush = Brush.verticalGradient(
-                0f to Color.White.copy(alpha = 0.26f),
-                0.32f to Color.Transparent,
-            ),
-            cornerRadius = CornerRadius(cr, cr),
-        )
-    } else {
-        // 파임: 표면색으로 채우고 안쪽 그림자(좌상 어둡게, 우하 밝게)
-        drawRoundRect(body, cornerRadius = CornerRadius(cr, cr))
-        drawIntoCanvas { canvas ->
-            val fw = canvas.nativeCanvas
-            val sc = fw.save()
-            val clipPath = android.graphics.Path().apply {
-                addRoundRect(rect, cr, cr, android.graphics.Path.Direction.CW)
-            }
-            fw.clipPath(clipPath)
-            // 좌상 안쪽 어두운 그림자
-            val pIn = android.graphics.Paint()
-            pIn.isAntiAlias = true
-            pIn.style = android.graphics.Paint.Style.STROKE
-            pIn.strokeWidth = off * 2.2f
-            pIn.color = android.graphics.Color.TRANSPARENT
-            pIn.setShadowLayer(blur, off, off, surface.darker(0.72f).toArgb())
-            fw.drawRoundRect(
-                android.graphics.RectF(-off * 2f, -off * 2f, size.width + off * 2f, size.height + off * 2f),
-                cr, cr, pIn,
-            )
-            // 우하 안쪽 밝은 반사
-            val pIn2 = android.graphics.Paint()
-            pIn2.isAntiAlias = true
-            pIn2.style = android.graphics.Paint.Style.STROKE
-            pIn2.strokeWidth = off * 2.2f
-            pIn2.color = android.graphics.Color.TRANSPARENT
-            pIn2.setShadowLayer(blur, -off, -off, android.graphics.Color.WHITE)
-            fw.drawRoundRect(
-                android.graphics.RectF(-off * 2f, -off * 2f, size.width + off * 2f, size.height + off * 2f),
-                cr, cr, pIn2,
-            )
-            fw.restoreToCount(sc)
-        }
-    }
-}
-
-/** 볼록 뉴모피즘(좌우 꽉 찬 바용): 수직 하이라이트/그림자. */
-private fun Modifier.neuRaised() = this.drawBehind {
-    val off = 3.dp.toPx(); val blur = 7.dp.toPx()
-    drawIntoCanvas { canvas ->
-        val fw = canvas.nativeCanvas
-        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
-        val dark = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur, 0f, off, 0xFFDDE2EB.toInt())
-        }
-        fw.drawRect(rect, dark)
-        val light = android.graphics.Paint().apply {
-            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
-            setShadowLayer(blur * 0.7f, 0f, -off * 0.7f, 0x66FFFFFF)
-        }
-        fw.drawRect(rect, light)
-    }
-}
-
 @Composable
 private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
@@ -1108,7 +1006,7 @@ private fun StrokeMoveBox(
             var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
             var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
             for (smp in stroke.samples) {
-                val (rx, ry) = rotNorm(smp.nx, smp.ny, rotDeg)
+                val (rx, ry) = Coords.rotate(smp.nx, smp.ny, rotDeg)
                 val x = areaX + rx * areaW; val y = areaY + ry * areaH
                 if (x < minX) minX = x; if (x > maxX) maxX = x
                 if (y < minY) minY = y; if (y > maxY) maxY = y
@@ -1140,14 +1038,6 @@ private fun rotationAt(macro: Macro, tMs: Long): Int {
         if (e.tMs <= tMs) rot = e.rotation else break
     }
     return rot
-}
-
-/** 정규화 좌표를 화면 회전에 맞게 변환. */
-private fun rotNorm(nx: Float, ny: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
-    90 -> ny to (1f - nx)
-    180 -> (1f - nx) to (1f - ny)
-    270 -> (1f - ny) to nx
-    else -> nx to ny
 }
 
 /** 현재 화면 회전(0/90/180/270). */
@@ -1213,7 +1103,7 @@ private fun TraceOverlay(
          * 그 축소된 가로 영역에 매핑해야 한다.
          */
         fun mapPt(nx: Float, ny: Float, rotDeg: Int): Offset {
-            val (rx, ry) = rotNorm(nx, ny, rotDeg)
+            val (rx, ry) = Coords.rotate(nx, ny, rotDeg)
             val landscape = rotDeg == 90 || rotDeg == 270
             if (!landscape) {
                 return Offset(offX + rx * dispW, offY + ry * dispH)

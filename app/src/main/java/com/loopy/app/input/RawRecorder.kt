@@ -45,6 +45,10 @@ class RawRecorder {
 
     fun count(): Int = done.size
 
+    /** Io 통로에서 오는 원시 좌표. 호출부가 TouchPoint 를 알 필요 없게 한다. */
+    fun onPoint(slot: Int, nx: Float, ny: Float, down: Boolean) =
+        onPoint(TouchPoint(slot, nx, ny, 0, 0, down))
+
     fun onPoint(p: TouchPoint) {
         val now = SystemClock.uptimeMillis()
         val b = tracks[p.slot]
