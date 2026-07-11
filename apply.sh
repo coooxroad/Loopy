@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 3/3
+# neu 수정본 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -407,7 +407,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "뉴모피즘 재정의(색맞춤 우하그림자+좌상글로우), 블록/시계 적용, 인포바 글로우 완화, 시간 소수2자리+키패드, 스트로크별 회전보정, 영상 드래그 박스로 터치위치 이동"
+git commit -m "fix: neu() 파라미터 color->base (Paint.color 대입 충돌). 뉴모피즘/회전보정/드래그박스"
 git push
 echo "푸시 완료!"
 

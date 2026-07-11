@@ -702,24 +702,25 @@ private fun Color.lighter(f: Float = 0.55f) =
  * raised=true면 볼록(튀어나옴), false면 오목(파임: 방향 반전).
  */
 private fun Modifier.neu(
-    color: Color, cornerDp: Float = 8f, offDp: Float = 3f, blurDp: Float = 6f, raised: Boolean = true,
+    base: Color, cornerDp: Float = 8f, offDp: Float = 3f, blurDp: Float = 6f, raised: Boolean = true,
 ) = this.drawBehind {
     val off = offDp.dp.toPx(); val blur = blurDp.dp.toPx(); val cr = cornerDp.dp.toPx()
     val sign = if (raised) 1f else -1f
-    val dark = color.darker().toArgb()
-    val light = color.lighter().toArgb()
+    val argb = base.toArgb()
+    val dark = base.darker().toArgb()
+    val light = base.lighter().toArgb()
     drawIntoCanvas { canvas ->
         val fw = canvas.nativeCanvas
         val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
-        val pDark = android.graphics.Paint().apply {
-            isAntiAlias = true; color = color.toArgb()
-            setShadowLayer(blur, off * sign, off * sign, dark)
-        }
+        val pDark = android.graphics.Paint()
+        pDark.isAntiAlias = true
+        pDark.color = argb
+        pDark.setShadowLayer(blur, off * sign, off * sign, dark)
         fw.drawRoundRect(rect, cr, cr, pDark)
-        val pLight = android.graphics.Paint().apply {
-            isAntiAlias = true; color = color.toArgb()
-            setShadowLayer(blur, -off * sign, -off * sign, light)
-        }
+        val pLight = android.graphics.Paint()
+        pLight.isAntiAlias = true
+        pLight.color = argb
+        pLight.setShadowLayer(blur, -off * sign, -off * sign, light)
         fw.drawRoundRect(rect, cr, cr, pLight)
     }
 }
