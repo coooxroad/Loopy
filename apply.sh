@@ -1,8 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# neu 수정본 3/3
+# 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
+    val lanes = assignLanes(strokes)
+    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
+    val strokeTrackH = laneStep * laneCount
+    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
+
     // 드래그(홀드 이동) 상태
     var dragIndex by remember { mutableStateOf<Int?>(null) }
     var dragDx by remember { mutableStateOf(0f) }
@@ -158,55 +163,56 @@ cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
     }
 }
 
-/** 스트로크 블록: 캡처=파랑, 추가=초록. 색맞춤 뉴모피즘(우하 그림자/좌상 글로우). */
+/** 스트로크 블록: 캡처=파랑, 추가=초록. 컬러 입체(위 밝음→아래 어두움 + 하단 그림자). */
 @Composable
 private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
     val base = if (added) AddedGreen else TraceStart
-    val fill = if (selected) Color.White else base
     Box(modifier.clickable { onClick() }) {
         Box(
             Modifier.fillMaxSize().padding(1.dp)
-                .neu(fill, cornerDp = 7f, offDp = if (selected) 3f else 2.5f,
-                    blurDp = if (selected) 7f else 5f, raised = true)
-                .clip(shape)
-                .background(fill)
-                .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
+                .colorRaised(if (selected) Color.White else base, cornerDp = 7f)
+                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
         )
     }
 }
 
 /**
- * 선택된 스트로크를 덮는 직사각형. 영상 위에서 드래그하면 스트로크 전체가 평행이동.
- * 파란 얇은 테두리 + 뉴모피즘 입체, 안은 불투명 흰색. 트레이서보다 아래 레이어.
+ * 선택된 스트로크를 덮는 직사각형. 드래그하면 스트로크 전체가 평행이동.
+ * 드래그 중엔 누적 오프셋만 들고 있다가(제스처 리셋 방지) 놓을 때 한 번에 적용.
  */
 @Composable
 private fun StrokeMoveBox(
     stroke: Stroke, contentAspect: Float, defaultRot: Int,
-    onDrag: (Float, Float) -> Unit, onDragEnd: () -> Unit,
+    onCommit: (Float, Float) -> Unit,
 ) {
     val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
+    var dx by remember(stroke) { mutableStateOf(0f) }
+    var dy by remember(stroke) { mutableStateOf(0f) }
     Box(
-        Modifier.fillMaxSize().pointerInput(stroke, contentAspect) {
+        Modifier.fillMaxSize().pointerInput(rotDeg, contentAspect) {
             detectDragGestures(
                 onDrag = { change, amount ->
                     change.consume()
+                    dx += amount.x; dy += amount.y
+                },
+                onDragEnd = {
                     val bw = size.width.toFloat(); val bh = size.height.toFloat()
                     val boxAspect = bw / bh
                     val dispW: Float; val dispH: Float
                     if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
                     else { dispH = bh; dispW = bh * contentAspect }
-                    // 화면 dx,dy → 회전 역변환 → 정규화 델타
-                    val sx = amount.x / dispW; val sy = amount.y / dispH
+                    val sx = dx / dispW; val sy = dy / dispH
                     val (dnx, dny) = when (rotDeg) {
                         90 -> (-sy) to sx
                         180 -> (-sx) to (-sy)
                         270 -> sy to (-sx)
                         else -> sx to sy
                     }
-                    onDrag(dnx, dny)
+                    onCommit(dnx, dny)
+                    dx = 0f; dy = 0f
                 },
-                onDragEnd = { onDragEnd() },
+                onDragCancel = { dx = 0f; dy = 0f },
             )
         },
     ) {
@@ -226,28 +232,20 @@ private fun StrokeMoveBox(
                 if (x < minX) minX = x; if (x > maxX) maxX = x
                 if (y < minY) minY = y; if (y > maxY) maxY = y
             }
-            val pad = 22f
-            val l = minX - pad; val tp = minY - pad
+            // 스트로크에 딱 맞게(아주 얇은 여유만) + 드래그 중 미리보기 이동
+            val pad = 6f
+            val l = minX - pad + dx; val tp = minY - pad + dy
             val w = (maxX - minX) + pad * 2; val h = (maxY - minY) + pad * 2
-            val cr = 14f
-            // 뉴모피즘: 파란 그림자 우하 + 밝은 글로우 좌상 (얇게)
-            drawIntoCanvas { canvas ->
-                val dark = android.graphics.Paint().apply {
-                    isAntiAlias = true; color = android.graphics.Color.WHITE
-                    setShadowLayer(9f, 4f, 4f, android.graphics.Color.argb(120, 37, 84, 160))
-                }
-                canvas.nativeCanvas.drawRoundRect(l, tp, l + w, tp + h, cr, cr, dark)
-                val light = android.graphics.Paint().apply {
-                    isAntiAlias = true; color = android.graphics.Color.WHITE
-                    setShadowLayer(9f, -4f, -4f, android.graphics.Color.argb(150, 190, 220, 255))
-                }
-                canvas.nativeCanvas.drawRoundRect(l, tp, l + w, tp + h, cr, cr, light)
-            }
-            // 흰 불투명 채움 + 얇은 파란 테두리
-            drawRoundRect(Color.White, topLeft = Offset(l, tp), size = Size(w, h),
+            val cr = 10f
+            // 반투명 흰 채움(60%) — 뒤 화면 보임
+            drawRoundRect(Color.White.copy(alpha = 0.6f), topLeft = Offset(l, tp), size = Size(w, h),
                 cornerRadius = CornerRadius(cr, cr))
-            drawRoundRect(TraceStart.copy(alpha = 0.95f), topLeft = Offset(l, tp), size = Size(w, h),
-                cornerRadius = CornerRadius(cr, cr), style = DrawStroke(width = 2f))
+            // 테두리(키움) + 안쪽 얇은 밝은 라인으로 입체
+            drawRoundRect(TraceStart, topLeft = Offset(l, tp), size = Size(w, h),
+                cornerRadius = CornerRadius(cr, cr), style = DrawStroke(width = 3.5f))
+            drawRoundRect(Color.White.copy(alpha = 0.55f), topLeft = Offset(l + 2.6f, tp + 2.6f),
+                size = Size((w - 5.2f).coerceAtLeast(0f), (h - 5.2f).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius(cr - 2f, cr - 2f), style = DrawStroke(width = 1.2f))
         }
     }
 }
@@ -404,10 +402,13 @@ private fun sampleAt(samples: List<TouchSample>, t: Long): Pair<Float, Float>? {
 private fun fmt(ms: Long): String {
     val s = ms / 1000; return "%d:%02d.%02d".format(s / 60, s % 60, (ms % 1000) / 10)
 }
+
+/** 초 단위 평문(입력 필드 기본값). */
+private fun fmtPlain(ms: Long): String = "%.2f".format(ms / 1000.0)
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "fix: neu() 파라미터 color->base (Paint.color 대입 충돌). 뉴모피즘/회전보정/드래그박스"
+git commit -m "뉴모피즘 재구현(배경색 기준, 가장자리 밀착) + 컬러블록 그라데이션 입체 + 박스 딱맞게/반투명/드래그 수정 + 시간입력 키보드"
 git push
 echo "푸시 완료!"
 
