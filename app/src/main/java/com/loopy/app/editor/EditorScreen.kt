@@ -200,6 +200,10 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 
     val contentAspect = if (hasVideo) videoAspect else screenAspect
+    val totalMs: Long = run {
+        val d = player?.duration ?: 0L
+        if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
+    }
 
     // 프리뷰 높이: 영상 종횡비에 맞춰 조정(가로 영상일 때 쪼그라들지 않게)
     val screenWDp = remember {

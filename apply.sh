@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 3/3 (OverlayService 회전 리스너)
+# 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
@@ -748,7 +748,7 @@ class OverlayService : Service() {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "회전 타임라인(녹화중 회전 이벤트 기록->편집기 시점별 좌표매핑) + 박스 드래그 실시간 + 키보드 완료시 닫힘 + 블록 zIndex"
+git commit -m "fix: totalMs 선언 복원 + 회전 타임라인/드래그 실시간/키보드/zIndex"
 git push
 echo "푸시 완료!"
 
