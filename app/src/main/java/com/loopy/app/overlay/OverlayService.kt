@@ -36,6 +36,7 @@ import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
 import com.loopy.app.macro.MacroStore
+import com.loopy.app.macro.RotationEvent
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.Playlist
 import com.loopy.app.macro.PlaylistStore
@@ -65,6 +66,9 @@ class OverlayService : Service() {
     private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
+    /** 녹화 중 회전 변화 기록. (매크로 기준 ms, 회전값) */
+    private val rotEvents = ArrayList<RotationEvent>()
+    private var rotListener: DisplayManager.DisplayListener? = null
     private var videoEnabled = false
     private var currentVideoPath: String? = null
     private val screenRecorder by lazy { ScreenRecorder(this) }
@@ -434,6 +438,8 @@ class OverlayService : Service() {
         currentVideoPath = videoPath
         recorder.reset()
         recording = true
+        rotEvents.clear()
+        registerRotationListener()
         recordBtn.setImageResource(R.drawable.ic_ov_stop)
         status.visibility = View.VISIBLE
         status.text = if (videoPath != null) "● 녹화중 (영상 포함)" else "● 녹화중 — 평소처럼 플레이해"
@@ -443,6 +449,7 @@ class OverlayService : Service() {
     private fun stopRecord() {
         reader.stop()
         recording = false
+        unregisterRotationListener()
         recordBtn.setImageResource(R.drawable.ic_ov_record)
         val videoStart = if (screenRecorder.active) screenRecorder.startUptime else 0L
         val vpath = if (screenRecorder.active) screenRecorder.stopRecording() else currentVideoPath
@@ -454,9 +461,44 @@ class OverlayService : Service() {
         }
         val offset = if (vpath != null && videoStart > 0 && recorder.baseUptime > 0)
             (recorder.baseUptime - videoStart).coerceAtLeast(0L) else 0L
-        val rot = runCatching { @Suppress("DEPRECATION") wm.defaultDisplay.rotation * 90 }.getOrDefault(0)
-        val m = MacroStore.saveNew(this, snap, vpath, offset, rot)
+        val rot = runCatching {
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.rotation * 90
+        }.getOrDefault(0)
+        val evts = ArrayList<RotationEvent>()
+        evts.add(RotationEvent(0L, rot))
+        evts.addAll(rotEvents.filter { it.tMs > 0L })
+        val m = MacroStore.saveNew(this, snap, vpath, offset, rot, evts)
         status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
+    }
+
+    /** 녹화 중 화면 회전 변화를 타임스탬프와 함께 기록. */
+    private fun registerRotationListener() {
+        val dm = getSystemService(DISPLAY_SERVICE) as DisplayManager
+        var lastRot = displayObj.rotation * 90
+        val l = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+            override fun onDisplayChanged(displayId: Int) {
+                if (!recording || displayId != Display.DEFAULT_DISPLAY) return
+                val r = displayObj.rotation * 90
+                if (r == lastRot) return
+                lastRot = r
+                val base = recorder.baseUptime
+                val tMs = if (base > 0) (android.os.SystemClock.uptimeMillis() - base)
+                    .coerceAtLeast(0L) else 0L
+                rotEvents.add(RotationEvent(tMs, r))
+            }
+        }
+        dm.registerDisplayListener(l, null)
+        rotListener = l
+    }
+
+    private fun unregisterRotationListener() {
+        rotListener?.let {
+            runCatching { (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(it) }
+        }
+        rotListener = null
     }
 
     // ── 재생 ──

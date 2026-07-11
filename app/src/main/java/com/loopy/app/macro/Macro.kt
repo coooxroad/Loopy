@@ -13,5 +13,13 @@ data class Macro(
     val strokes: List<Stroke>,
     val videoPath: String? = null,
     val videoOffsetMs: Long = 0L,
-    val rotation: Int = 0, // 녹화 시 화면 회전(0/90/180/270°) — 편집기 트레이서 정렬용
+    val rotation: Int = 0, // 녹화 시작 시 화면 회전(0/90/180/270°)
+    /**
+     * 녹화 중 회전 변화 타임라인. (매크로 기준 ms, 회전값).
+     * 첫 항목은 보통 (0, rotation). 재생/편집 시 해당 시각의 회전을 찾아 좌표를 매핑한다.
+     */
+    val rotationEvents: List<RotationEvent> = emptyList(),
 )
+
+/** 회전 변화 지점. tMs = 매크로 시작 기준 ms, rotation = 0/90/180/270. */
+data class RotationEvent(val tMs: Long, val rotation: Int)

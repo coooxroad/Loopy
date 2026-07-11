@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package com.loopy.app.editor
 
 import android.app.Activity
@@ -74,6 +76,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -165,6 +174,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var playing by remember { mutableStateOf(false) }
     var timeEditing by remember { mutableStateOf(false) }
     var timeText by remember { mutableStateOf("0.00") }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val timeFocus = remember { FocusRequester() }
     var positionMs by remember { mutableStateOf(0L) }
     var userScrubbing by remember { mutableStateOf(false) }
 
@@ -188,22 +200,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 
     val contentAspect = if (hasVideo) videoAspect else screenAspect
-    // 영상이 현재 가로인지(회전 구간인지) — 종횡비로 판단
-    val videoLandscape = contentAspect > 1f
-    // 패널 좌표(회전 불변)를 현재 영상 방향에 맞게 매핑할 회전값
-    val effectiveRot = remember(videoLandscape, macro.rotation) {
-        if (videoLandscape) {
-            // 영상이 가로 → 기기가 90 또는 270으로 돌아간 상태.
-            // 매크로 rotation이 이미 가로면 그대로, 아니면 90으로 가정.
-            if (macro.rotation == 90 || macro.rotation == 270) macro.rotation else 90
-        } else {
-            if (macro.rotation == 90 || macro.rotation == 270) 0 else macro.rotation
-        }
-    }
-    val totalMs: Long = run {
-        val d = player?.duration ?: 0L
-        if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
-    }
+
     // 프리뷰 높이: 영상 종횡비에 맞춰 조정(가로 영상일 때 쪼그라들지 않게)
     val screenWDp = remember {
         val dm = context.resources.displayMetrics
@@ -267,6 +264,8 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
 
     val playheadStrokeMs = positionMs - macro.videoOffsetMs
+    // 현재 재생 시각의 화면 회전(녹화 중 기록된 회전 타임라인에서 조회)
+    val currentRot = rotationAt(macro, playheadStrokeMs)
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
     val coScope = rememberCoroutineScope()
@@ -346,15 +345,21 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     fun doMove(i: Int, newStartMs: Long) {
         pushUndo(); strokes[i] = strokes[i].copy(startMs = newStartMs.coerceAtLeast(0L)); persist()
     }
-    /** 영상 위 박스 드래그 종료: 스트로크 전체를 평행이동(모든 샘플에 같은 dx,dy). */
-    fun doNudge(i: Int, dnx: Float, dny: Float) {
+    /** 박스 드래그 중: 실시간으로 스트로크를 평행이동(부드럽게 따라옴). */
+    var nudging by remember { mutableStateOf(false) }
+    fun nudgeLive(i: Int, dnx: Float, dny: Float) {
         if (dnx == 0f && dny == 0f) return
+        if (!nudging) { pushUndo(); nudging = true } // 드래그 시작 시 한 번만 undo 기록
         val s = strokes[i]
         val moved = s.samples.map {
             it.copy(nx = (it.nx + dnx).coerceIn(0f, 1f), ny = (it.ny + dny).coerceIn(0f, 1f))
         }
-        pushUndo()
         strokes[i] = s.copy(samples = moved)
+    }
+    /** 드래그 종료: 저장. */
+    fun nudgeCommit() {
+        if (!nudging) return
+        nudging = false
         persist()
     }
 
@@ -401,12 +406,13 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     if (si < strokes.size) {
                         StrokeMoveBox(
                             stroke = strokes[si], contentAspect = contentAspect,
-                            defaultRot = effectiveRot,
-                            onCommit = { dnx, dny -> doNudge(si, dnx, dny) },
+                            defaultRot = currentRot,
+                            onDragDelta = { dnx, dny -> nudgeLive(si, dnx, dny) },
+                            onDragEnd = { nudgeCommit() },
                         )
                     }
                 }
-                TraceOverlay(strokes, playheadStrokeMs, contentAspect, effectiveRot)
+                TraceOverlay(strokes, playheadStrokeMs, contentAspect, macro, currentRot)
             }
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
@@ -434,9 +440,20 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 color = TextHi, fontSize = 12.sp, fontWeight = FontWeight.Medium,
                             ),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done,
+                            ),
+                            keyboardActions = KeyboardActions(onDone = {
+                                parseTime(timeText, totalMs)?.let { ms ->
+                                    playing = false; player?.playWhenReady = false; seekTo(ms)
+                                }
+                                focusManager.clearFocus()
+                                keyboard?.hide()
+                            }),
                             cursorBrush = androidx.compose.ui.graphics.SolidColor(TraceStart),
                             modifier = Modifier.width(52.dp)
+                                .focusRequester(timeFocus)
                                 .onFocusChanged { fs ->
                                     timeEditing = fs.isFocused
                                     if (fs.isFocused) timeText = fmtPlain(positionMs)
@@ -966,6 +983,7 @@ private fun Timeline(
                             selected = selected == i,
                             added = s.added,
                             onClick = { onSelect(i) },
+                            zIndexValue = if (selected == i) 2f else 1f,
                             modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH)
                                 .pointerInput(i, pxPerMs) {
                                     detectDragGesturesAfterLongPress(
@@ -1004,11 +1022,14 @@ private fun Timeline(
 
 /** 스트로크 블록. 그림자가 이웃 블록을 침범하지 않도록 안쪽 여백 안에서만 그린다. */
 @Composable
-private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun StrokeBlock(
+    selected: Boolean, added: Boolean, zIndexValue: Float,
+    onClick: () -> Unit, modifier: Modifier,
+) {
     val shape = RoundedCornerShape(7.dp)
     val base = if (added) AddedGreen else TraceStart
-    // 바깥 Box = 히트영역 / 안쪽 Box = 실제 블록(그림자 여백만큼 축소)
-    Box(modifier.clickable { onClick() }, contentAlignment = Alignment.Center) {
+    // zIndex로 선택 블록을 위로 → 그림자가 이웃에 가려지지 않고, 이웃을 덮지도 않음
+    Box(modifier.zIndex(zIndexValue).clickable { onClick() }, contentAlignment = Alignment.Center) {
         Box(
             Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
                 .clip(shape)
@@ -1026,35 +1047,29 @@ private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, 
 @Composable
 private fun StrokeMoveBox(
     stroke: Stroke, contentAspect: Float, defaultRot: Int,
-    onCommit: (Float, Float) -> Unit,
+    onDragDelta: (Float, Float) -> Unit, onDragEnd: () -> Unit,
 ) {
     val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
-    var dx by remember(stroke) { mutableStateOf(0f) }
-    var dy by remember(stroke) { mutableStateOf(0f) }
     Box(
         Modifier.fillMaxSize().pointerInput(rotDeg, contentAspect) {
             detectDragGestures(
                 onDrag = { change, amount ->
                     change.consume()
-                    dx += amount.x; dy += amount.y
-                },
-                onDragEnd = {
                     val bw = size.width.toFloat(); val bh = size.height.toFloat()
                     val boxAspect = bw / bh
                     val dispW: Float; val dispH: Float
                     if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
                     else { dispH = bh; dispW = bh * contentAspect }
-                    val sx = dx / dispW; val sy = dy / dispH
+                    val sx = amount.x / dispW; val sy = amount.y / dispH
                     val (dnx, dny) = when (rotDeg) {
                         90 -> (-sy) to sx
                         180 -> (-sx) to (-sy)
                         270 -> sy to (-sx)
                         else -> sx to sy
                     }
-                    onCommit(dnx, dny)
-                    dx = 0f; dy = 0f
+                    onDragDelta(dnx, dny) // 실시간 반영 → 부드럽게 따라옴
                 },
-                onDragCancel = { dx = 0f; dy = 0f },
+                onDragEnd = { onDragEnd() },
             )
         },
     ) {
@@ -1076,7 +1091,7 @@ private fun StrokeMoveBox(
             }
             // 스트로크에 딱 맞게(아주 얇은 여유만) + 드래그 중 미리보기 이동
             val pad = 6f
-            val l = minX - pad + dx; val tp = minY - pad + dy
+            val l = minX - pad; val tp = minY - pad
             val w = (maxX - minX) + pad * 2; val h = (maxY - minY) + pad * 2
             val cr = 10f
             // 반투명 흰 채움(60%) — 뒤 화면 보임
@@ -1090,6 +1105,17 @@ private fun StrokeMoveBox(
                 cornerRadius = CornerRadius(cr - 2f, cr - 2f), style = DrawStroke(width = 1.2f))
         }
     }
+}
+
+/** 매크로 시각 tMs에서의 화면 회전(녹화 중 기록된 타임라인 조회). */
+private fun rotationAt(macro: Macro, tMs: Long): Int {
+    val evts = macro.rotationEvents
+    if (evts.isEmpty()) return macro.rotation
+    var rot = evts.first().rotation
+    for (e in evts) {
+        if (e.tMs <= tMs) rot = e.rotation else break
+    }
+    return rot
 }
 
 /** 정규화 좌표를 화면 회전에 맞게 변환. */
@@ -1142,7 +1168,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
 }
 
 @Composable
-private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, rotationDeg: Int) {
+private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, macro: Macro, rotationDeg: Int) {
     Canvas(Modifier.fillMaxSize()) {
         val bw = size.width; val bh = size.height
         val boxAspect = bw / bh
@@ -1165,7 +1191,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             if (edge <= 0f) continue
             val samples = s.samples
             if (samples.isEmpty()) continue
-            val sRot = if (s.rotation >= 0) s.rotation else rotationDeg
+            val sRot = if (s.rotation >= 0) s.rotation else rotationAt(macro, s.startMs)
             val cStart = if (s.added) AddedGreen else TraceStart
             val cEnd = if (s.added) AddedEnd else TraceEnd
             val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
