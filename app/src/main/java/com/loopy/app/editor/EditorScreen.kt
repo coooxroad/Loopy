@@ -37,6 +37,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -100,6 +101,7 @@ import kotlin.math.ceil
 
 private val TraceStart = Color(0xFF3B82F6)
 private val AddedGreen = Color(0xFF20C997)
+private val AddedEnd = Color(0xFFF2FFFB)
 private val TraceEnd = Color(0xFFEFF5FF)
 private const val WINDOW_MS = 150L
 private const val DP_PER_SEC = 68f
@@ -240,6 +242,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var captureStarted by remember { mutableStateOf(false) }
     var captureMsg by remember { mutableStateOf("") }
     var captureBaseStrokeMs by remember { mutableStateOf(0L) }
+    val liveTouches = remember { mutableStateMapOf<Int, Offset>() }
 
     fun startCapture() {
         val devs = runCatching { reader.probe() }.getOrDefault(emptyList())
@@ -258,6 +261,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 captureStarted = true
                 coScope.launch { player?.playWhenReady = true; playing = true }
             }
+            coScope.launch {
+                if (p.down) liveTouches[p.slot] = Offset(p.nx, p.ny) else liveTouches.remove(p.slot)
+            }
             recorder.onPoint(p)
         }
     }
@@ -274,7 +280,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 persist()
             }
         }
-        capturing = false; captureStarted = false
+        capturing = false; captureStarted = false; liveTouches.clear()
     }
 
     DisposableEffect(Unit) { onDispose { reader.stop() } }
@@ -432,6 +438,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         if (capturing) {
             CaptureOverlay(
                 player = player, message = captureMsg, started = captureStarted,
+                live = liveTouches, rotationDeg = macro.rotation, contentAspect = contentAspect,
                 onSave = { finishCapture(true) }, onCancel = { finishCapture(false) },
             )
         }
@@ -441,6 +448,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 @Composable
 private fun CaptureOverlay(
     player: ExoPlayer?, message: String, started: Boolean,
+    live: Map<Int, Offset>, rotationDeg: Int, contentAspect: Float,
     onSave: () -> Unit, onCancel: () -> Unit,
 ) {
     Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
@@ -459,6 +467,26 @@ private fun CaptureOverlay(
         }
         // 회색 반투명 오버레이
         Box(Modifier.fillMaxSize().background(Color(0x59202020)))
+        // 촬영 중 현재 터치 위치 실시간 트래킹(초록)
+        Canvas(Modifier.fillMaxSize()) {
+            if (live.isEmpty()) return@Canvas
+            val bw = size.width; val bh = size.height
+            val boxAspect = bw / bh
+            val dispW: Float; val dispH: Float
+            if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
+            else { dispH = bh; dispW = bh * contentAspect }
+            val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
+            for ((_, n) in live) {
+                val (rx, ry) = when (rotationDeg) {
+                    90 -> n.y to (1f - n.x)
+                    180 -> (1f - n.x) to (1f - n.y)
+                    270 -> (1f - n.y) to n.x
+                    else -> n.x to n.y
+                }
+                val p = Offset(offX + rx * dispW, offY + ry * dispH)
+                drawTouchDot(p, 1f, AddedGreen, Triple(32, 201, 151))
+            }
+        }
         if (!started) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(message, color = Color(0xFFEFF1F6), fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -817,6 +845,40 @@ private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, 
     }
 }
 
+/** 현재 눌림 표시: 흰 점 + 강한 글로우 + 얇은 테두리(테두리→중심으로 아주 옅게 페이드). */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
+    p: Offset, edge: Float, ring: Color, rgb: Triple<Int, Int, Int>,
+) {
+    val r = 11f
+    // 글로우(강화): 흰 코어 + 넓고 진한 컬러 글로우
+    drawIntoCanvas { canvas ->
+        val a = (255 * edge).toInt().coerceIn(0, 255)
+        val paint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.WHITE
+            setShadowLayer(75f, 0f, 0f, android.graphics.Color.argb(a, rgb.first, rgb.second, rgb.third))
+        }
+        canvas.nativeCanvas.drawCircle(p.x, p.y, r, paint)
+    }
+    // 테두리 안쪽으로 아주 옅게 스며드는 그라데이션
+    val rOuter = r + 3.5f
+    drawCircle(
+        brush = Brush.radialGradient(
+            colorStops = arrayOf(
+                0.0f to Color.Transparent,
+                0.55f to ring.copy(alpha = 0.05f * edge),
+                0.86f to ring.copy(alpha = 0.22f * edge),
+                1.0f to ring.copy(alpha = 0.0f),
+            ),
+            center = p, radius = rOuter,
+        ),
+        radius = rOuter, center = p,
+    )
+    // 얇은 테두리 링
+    drawCircle(ring.copy(alpha = 0.9f * edge), radius = r + 1.6f, center = p,
+        style = DrawStroke(width = 1.8f))
+}
+
 @Composable
 private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, rotationDeg: Int) {
     Canvas(Modifier.fillMaxSize()) {
@@ -847,6 +909,9 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             if (edge <= 0f) continue
             val samples = s.samples
             if (samples.isEmpty()) continue
+            val cStart = if (s.added) AddedGreen else TraceStart
+            val cEnd = if (s.added) AddedEnd else TraceEnd
+            val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
             val revealT = relT.coerceIn(0L, s.durationMs)
             val dur = s.durationMs.coerceAtLeast(1L)
             val pressing = relT in 0..s.durationMs
@@ -856,7 +921,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
                 val p = mapPt(smp.nx, smp.ny)
                 val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
                 if (prev != null) {
-                    val c = lerp(TraceStart, TraceEnd, (prevFrac + frac) / 2f)
+                    val c = lerp(cStart, cEnd, (prevFrac + frac) / 2f)
                         .copy(alpha = edge * (if (pressing) 1f else 0.5f))
                     drawLine(c, prev, p, strokeWidth = if (pressing) 9f else 6f)
                 }
@@ -865,21 +930,8 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             val cur = sampleAt(samples, revealT)
             if (cur != null) {
                 val p = mapPt(cur.first, cur.second)
-                if (pressing) {
-                    drawIntoCanvas { canvas ->
-                        val glow = (255 * edge).toInt().coerceIn(0, 255)
-                        val paint = android.graphics.Paint().apply {
-                            isAntiAlias = true
-                            color = android.graphics.Color.WHITE
-                            setShadowLayer(50f, 0f, 0f, android.graphics.Color.argb(glow, 59, 130, 246))
-                        }
-                        canvas.nativeCanvas.drawCircle(p.x, p.y, 13f, paint)
-                    }
-                    drawCircle(TraceStart.copy(alpha = 0.85f * edge), radius = 15f, center = p,
-                        style = DrawStroke(width = 3f))
-                } else {
-                    drawCircle(TraceEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
-                }
+                if (pressing) drawTouchDot(p, edge, cStart, rgb)
+                else drawCircle(cEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
             }
         }
     }

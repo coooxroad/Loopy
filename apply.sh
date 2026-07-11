@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# + 촬영 2/2 (EditorScreen 이어붙임)
+# 트레이서 개선+촬영 트래킹 2/2
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
@@ -343,6 +343,40 @@ private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, 
     }
 }
 
+/** 현재 눌림 표시: 흰 점 + 강한 글로우 + 얇은 테두리(테두리→중심으로 아주 옅게 페이드). */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
+    p: Offset, edge: Float, ring: Color, rgb: Triple<Int, Int, Int>,
+) {
+    val r = 11f
+    // 글로우(강화): 흰 코어 + 넓고 진한 컬러 글로우
+    drawIntoCanvas { canvas ->
+        val a = (255 * edge).toInt().coerceIn(0, 255)
+        val paint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = android.graphics.Color.WHITE
+            setShadowLayer(75f, 0f, 0f, android.graphics.Color.argb(a, rgb.first, rgb.second, rgb.third))
+        }
+        canvas.nativeCanvas.drawCircle(p.x, p.y, r, paint)
+    }
+    // 테두리 안쪽으로 아주 옅게 스며드는 그라데이션
+    val rOuter = r + 3.5f
+    drawCircle(
+        brush = Brush.radialGradient(
+            colorStops = arrayOf(
+                0.0f to Color.Transparent,
+                0.55f to ring.copy(alpha = 0.05f * edge),
+                0.86f to ring.copy(alpha = 0.22f * edge),
+                1.0f to ring.copy(alpha = 0.0f),
+            ),
+            center = p, radius = rOuter,
+        ),
+        radius = rOuter, center = p,
+    )
+    // 얇은 테두리 링
+    drawCircle(ring.copy(alpha = 0.9f * edge), radius = r + 1.6f, center = p,
+        style = DrawStroke(width = 1.8f))
+}
+
 @Composable
 private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, rotationDeg: Int) {
     Canvas(Modifier.fillMaxSize()) {
@@ -373,6 +407,9 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             if (edge <= 0f) continue
             val samples = s.samples
             if (samples.isEmpty()) continue
+            val cStart = if (s.added) AddedGreen else TraceStart
+            val cEnd = if (s.added) AddedEnd else TraceEnd
+            val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
             val revealT = relT.coerceIn(0L, s.durationMs)
             val dur = s.durationMs.coerceAtLeast(1L)
             val pressing = relT in 0..s.durationMs
@@ -382,7 +419,7 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
                 val p = mapPt(smp.nx, smp.ny)
                 val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
                 if (prev != null) {
-                    val c = lerp(TraceStart, TraceEnd, (prevFrac + frac) / 2f)
+                    val c = lerp(cStart, cEnd, (prevFrac + frac) / 2f)
                         .copy(alpha = edge * (if (pressing) 1f else 0.5f))
                     drawLine(c, prev, p, strokeWidth = if (pressing) 9f else 6f)
                 }
@@ -391,21 +428,8 @@ private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentA
             val cur = sampleAt(samples, revealT)
             if (cur != null) {
                 val p = mapPt(cur.first, cur.second)
-                if (pressing) {
-                    drawIntoCanvas { canvas ->
-                        val glow = (255 * edge).toInt().coerceIn(0, 255)
-                        val paint = android.graphics.Paint().apply {
-                            isAntiAlias = true
-                            color = android.graphics.Color.WHITE
-                            setShadowLayer(50f, 0f, 0f, android.graphics.Color.argb(glow, 59, 130, 246))
-                        }
-                        canvas.nativeCanvas.drawCircle(p.x, p.y, 13f, paint)
-                    }
-                    drawCircle(TraceStart.copy(alpha = 0.85f * edge), radius = 15f, center = p,
-                        style = DrawStroke(width = 3f))
-                } else {
-                    drawCircle(TraceEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
-                }
+                if (pressing) drawTouchDot(p, edge, cStart, rgb)
+                else drawCircle(cEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
             }
         }
     }
@@ -464,7 +488,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "+ 추가촬영: Shizuku 캡처 오버레이(영상 재생헤드부터, 첫터치 시 재생), 저장 시 초록 블록 추가, 밝은초록 + 버튼"
+git commit -m "트레이서: 추가스트로크 초록 그라데이션+초록 터치표시, 터치점 축소/글로우강화/얇은 그라데이션 테두리, 촬영중 실시간 터치 트래킹"
 git push
 echo "푸시 완료!"
 
