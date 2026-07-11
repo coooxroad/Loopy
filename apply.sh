@@ -1,759 +1,570 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 3/3 (OverlayService: 회전 타임스탬프 fix)
+# Phase 0-1: 확장 가능한 기반 (Material 공리 / 실행엔진 / Io 통로 / 좌표통합 / 뉴모피즘통합)
 set -e
-if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
-cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
-package com.loopy.app.overlay
+if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더에서 실행"; exit 1; fi
+mkdir -p app/src/main/java/com/loopy/app/core/geom app/src/main/java/com/loopy/app/core/io app/src/main/java/com/loopy/app/core/material app/src/main/java/com/loopy/app/core/exec
+cat > "app/src/main/java/com/loopy/app/core/geom/Coords.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.geom
 
-import android.app.Activity
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.Service
-import android.content.Context
-import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.Rect
-import android.media.projection.MediaProjectionManager
-import android.graphics.drawable.GradientDrawable
-import android.hardware.display.DisplayManager
-import android.os.Build
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
-import android.util.DisplayMetrics
-import android.util.TypedValue
-import android.view.Display
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.Surface
-import android.view.View
-import android.view.ViewConfiguration
-import android.view.WindowManager
-import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.ScrollView
-import android.widget.LinearLayout
-import android.widget.TextView
-import com.loopy.app.R
-import com.loopy.app.input.RawRecorder
-import com.loopy.app.input.GeteventReader
-import com.loopy.app.input.TouchDevice
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.RotationEvent
-import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.Playlist
-import com.loopy.app.macro.PlaylistStore
-import com.loopy.app.service.LoopyService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.hypot
+import androidx.compose.ui.geometry.Offset
 
 /**
- * 매크로/플레이리스트 컨트롤 오버레이.
- *  - 녹화: getevent → RawRecorder(좌표 타임라인). 정지 시 자동 저장.
- *  - 재생: 저장 매크로 하나, 또는 플레이리스트(셔플백 + N회/무한)를 injectInputEvent 로 주입.
+ * 좌표 변환의 단일 진실 공급원.
+ *
+ * 터치 샘플의 nx/ny 는 **터치 패널 기준 정규화 좌표**다. 기기를 돌려도 값이 변하지 않는다.
+ * 반대로 화면·영상은 회전에 따라 배치가 달라지므로, 그릴 때마다 그 시점의 회전으로 변환해야 한다.
+ * 변환 로직이 여러 곳에 흩어지면 회전 규칙을 바꿀 때마다 전부 고쳐야 하므로 여기 하나로 모은다.
  */
-class OverlayService : Service() {
+object Coords {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private lateinit var wm: WindowManager
-
-    private val reader = GeteventReader()
-    private val recorder = RawRecorder()
-    private var device: TouchDevice? = null
-    private var recording = false
-    /** 녹화 중 회전 변화 기록. (절대 uptimeMs, 회전값) — 저장 시 baseUptime 기준 상대시각으로 변환 */
-    private val rotEventsRaw = ArrayList<Pair<Long, Int>>()
-    private var rotListener: DisplayManager.DisplayListener? = null
-    private var videoEnabled = false
-    private var currentVideoPath: String? = null
-    private val screenRecorder by lazy { ScreenRecorder(this) }
-    private var videoBtn: ImageButton? = null
-
-    companion object {
-        const val ACTION_START_VIDEO = "com.loopy.app.START_VIDEO"
-        const val ACTION_START_MACRO_ONLY = "com.loopy.app.START_MACRO_ONLY"
-        const val ACTION_SET_SESSION = "com.loopy.app.SET_SESSION"
-        const val ACTION_END_SESSION = "com.loopy.app.END_SESSION"
-        const val EX_CODE = "code"
-        const val EX_DATA = "data"
-    }
-    private var playJob: Job? = null
-
-    private lateinit var bar: LinearLayout
-    private lateinit var barParams: WindowManager.LayoutParams
-    private lateinit var fab: FabLogoView
-    private lateinit var panel: LinearLayout
-    private lateinit var listHolder: LinearLayout
-    private var expanded = false
-    private var hintView: TextView? = null
-    private var dimView: View? = null
-    private var deepLocked = false
-    private lateinit var status: TextView
-    private lateinit var recordBtn: ImageButton
-    private lateinit var stopPlayBtn: TextView
-    private var listPanel: LinearLayout? = null
-
-    private val displayObj by lazy {
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
+    /** 패널 좌표 → 회전된 화면 좌표(0~1). 재생 측 좌표 변환과 반드시 같은 규칙이어야 한다. */
+    fun rotate(nx: Float, ny: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
+        90 -> ny to (1f - nx)
+        180 -> (1f - nx) to (1f - ny)
+        270 -> (1f - ny) to nx
+        else -> nx to ny
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_SET_SESSION -> setupSession()
-            ACTION_END_SESSION -> {
-                screenRecorder.endSession()
-                VideoSession.active = false
-            }
-            ACTION_START_VIDEO -> beginVideoThenRecord(intent) // 세션 없을 때 팝업 폴백
-            ACTION_START_MACRO_ONLY -> startRecord(null)
-            else -> ensureOverlay() // "오버레이 켜기"(action 없음) 또는 재시작
-        }
-        return START_STICKY
+    /** 화면 델타 → 패널 델타. rotate 의 역변환. */
+    fun unrotateDelta(dx: Float, dy: Float, rotDeg: Int): Pair<Float, Float> = when (rotDeg) {
+        90 -> (-dy) to dx
+        180 -> (-dx) to (-dy)
+        270 -> dy to (-dx)
+        else -> dx to dy
     }
 
-    /** 앱에서 받은 권한으로 MediaProjection 세션을 시작해 보관(재사용). */
-    private fun setupSession() {
-        runCatching { promoteForegroundForProjection() }
-        val code = VideoSession.code
-        val data = VideoSession.data
-        if (code == Activity.RESULT_OK && data != null) {
-            val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
-            if (proj != null) {
-                screenRecorder.setSession(proj)
-                VideoSession.active = true
-                return
-            }
-        }
-        VideoSession.active = false
-    }
+    fun isLandscape(rotDeg: Int) = rotDeg == 90 || rotDeg == 270
 
-    override fun onCreate() {
-        super.onCreate()
-        startAsForeground()
-        LoopyService.bind(this)
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        recorder.shouldIgnore = { u, v -> if (::bar.isInitialized) barContains(u, v) else false }
-        // 오버레이는 여기서 만들지 않음 — SET_SESSION 등 세션 전용 시작 시 오버레이가 안 뜨게.
-        // "오버레이 켜기"(action 없는 시작)일 때만 onStartCommand 에서 생성.
-    }
-
-    private var overlayBuilt = false
-    private fun ensureOverlay() {
-        if (overlayBuilt) return
-        buildOverlay()
-        overlayBuilt = true
-    }
-
-    private fun dp(v: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
-    ).toInt()
-
-    private fun buildOverlay() {
-        // 루트: 세로. 위=[FAB + 가로 슬림 패널], 아래=상태/힌트/목록.
-        bar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.START
-            // 그림자가 창 밖으로 안 짤리게 여백 + clip 해제
-            clipChildren = false
-            clipToPadding = false
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-
-        // 접힌 상태의 동그란 FAB
-        val fabSize = dp(46)
-        fab = FabLogoView(this)
-        fab.elevation = dp(6).toFloat()
-
-        // 펼치면 FAB 옆으로 길게 나오는 슬림 가로 pill
-        panel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            background = pill(0xFFFFFFFF.toInt(), dp(22))
-            elevation = dp(6).toFloat()
-            visibility = View.GONE
-        }
-        recordBtn = iconBtn(R.drawable.ic_ov_record, 0xFFFF5A4E.toInt(), 0x22FF5A4E) { toggleRecord() }
-        val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
-        val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
-        val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
-            setDeepSLock(true)
-            if (expanded) toggleExpand()
-        }
-        val vBtn = iconBtn(R.drawable.ic_ov_video, videoTint(), videoBg()) { toggleVideo() }
-        videoBtn = vBtn
-        panel.addView(recordBtn)
-        panel.addView(playBtn, marginLeft(dp(8)))
-        panel.addView(vBtn, marginLeft(dp(8)))
-        panel.addView(listBtn, marginLeft(dp(8)))
-        panel.addView(moonBtn, marginLeft(dp(8)))
-
-        val hRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            clipChildren = false
-            clipToPadding = false
-        }
-        hRow.addView(fab, LinearLayout.LayoutParams(fabSize, fabSize))
-        hRow.addView(panel, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { leftMargin = dp(8) })
-
-        status = TextView(this).apply {
-            setTextColor(0xFF8A8DA0.toInt()); textSize = 11f; text = "녹화를 눌러 시작"
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-        }
-        stopPlayBtn = TextView(this).apply {
-            text = "■ 재생 정지"; setTextColor(0xFFFF5A4E.toInt()); textSize = 12f
-            setPadding(dp(6), dp(6), 0, 0)
-            visibility = View.GONE
-            setOnClickListener { stopPlayback("정지됨") }
-        }
-        val hintTv = TextView(this).apply {
-            text = "탭: 접기 · 길게 눌러 종료"
-            setTextColor(0xFFB6B9C9.toInt()); textSize = 10f
-            setPadding(dp(6), dp(4), 0, 0)
-            visibility = View.GONE
-        }
-        hintView = hintTv
-
-        // 목록 카드가 들어갈 자리 — 패널(hRow) 바로 아래, 오른쪽 정렬
-        listHolder = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        bar.addView(hRow)
-        bar.addView(listHolder, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ))
-        bar.addView(status)
-        bar.addView(stopPlayBtn)
-        bar.addView(hintTv)
-
-        barParams = baseParams().apply { x = dp(-4); y = dp(64) }
-        setupFabTouch()
-        wm.addView(bar, barParams)
-    }
-
-    /** 원형 아이콘 버튼 — 아이콘 tint + 옅은 원형 배경으로 airy 하게. */
-    private fun iconBtn(iconRes: Int, tint: Int, bgTint: Int, onClick: () -> Unit) =
-        ImageButton(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(tint)
-            background = circleBg(bgTint)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val sz = dp(42)
-            layoutParams = LinearLayout.LayoutParams(sz, sz)
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            setOnClickListener { onClick() }
-        }
-
-    private fun circleBg(color: Int) = android.graphics.drawable.GradientDrawable().apply {
-        shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(color)
-    }
-
-    /** Deep SLock: 검은 레이어(non-touchable, 매크로 통과) + 최소 밝기. 달 버튼/FAB 재탭으로 토글. */
-    private fun setDeepSLock(on: Boolean) {
-        if (on) {
-            if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
-            val p = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
-            runCatching { wm.addView(v, p) }
-            dimView = v
-            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
-            runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.setMoon(true)
-            deepLocked = true
+    /** 뷰 안에 종횡비 aspect 인 내용을 letterbox 로 맞춘 사각형. */
+    fun fitRect(viewW: Float, viewH: Float, aspect: Float): Rect {
+        val viewAspect = viewW / viewH
+        return if (aspect > viewAspect) {
+            val h = viewW / aspect
+            Rect(0f, (viewH - h) / 2f, viewW, h)
         } else {
-            dimView?.let { runCatching { wm.removeView(it) } }
-            dimView = null
-            fab.setMoon(false)
-            deepLocked = false
+            val w = viewH * aspect
+            Rect((viewW - w) / 2f, 0f, w, viewH)
         }
     }
 
-    /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
-    private fun toggleExpand() {
-        expanded = !expanded
-        val vis = if (expanded) View.VISIBLE else View.GONE
-        panel.visibility = vis
-        status.visibility = vis
-        hintView?.visibility = vis
-        if (!expanded) {
-            stopPlayBtn.visibility = View.GONE
-            listPanel?.let { listHolder.removeView(it); listPanel = null }
-        }
+    /**
+     * 스트로크를 그릴 실제 영역.
+     *
+     * 화면 녹화 영상은 프레임 해상도가 고정(보통 세로)이라, 녹화 중 기기를 돌리면 가로 화면이
+     * 그 세로 프레임 **안에** 축소되어 배치된다. 따라서 회전 구간의 스트로크는 프레임 전체가
+     * 아니라 그 축소된 영역에 매핑해야 한다.
+     *
+     * @param videoRect 영상 프레임이 뷰에 그려진 사각형
+     * @param screenAspect 기기 세로 화면의 종횡비(w/h)
+     */
+    fun contentRect(videoRect: Rect, rotDeg: Int, screenAspect: Float): Rect {
+        if (!isLandscape(rotDeg)) return videoRect
+        val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
+        val inner = fitRect(videoRect.w, videoRect.h, landAspect)
+        return Rect(videoRect.x + inner.x, videoRect.y + inner.y, inner.w, inner.h)
     }
 
-    /** FAB: 탭=접기/펼치기, 드래그=이동, 길게=종료. */
-    private fun setupFabTouch() {
-        val slop = ViewConfiguration.get(this).scaledTouchSlop
-        val handler = Handler(Looper.getMainLooper())
-        var downRawX = 0f
-        var downRawY = 0f
-        var startX = 0
-        var startY = 0
-        var dragged = false
-        var longFired = false
-        val longPress = Runnable { longFired = true; stopSelf() }
+    /** 패널 좌표 → 뷰 픽셀. 회전·레터박스·회전구간 축소를 모두 반영한다. */
+    fun toView(nx: Float, ny: Float, rotDeg: Int, videoRect: Rect, screenAspect: Float): Offset {
+        val (rx, ry) = rotate(nx, ny, rotDeg)
+        val area = contentRect(videoRect, rotDeg, screenAspect)
+        return Offset(area.x + rx * area.w, area.y + ry * area.h)
+    }
 
-        fab.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downRawX = e.rawX; downRawY = e.rawY
-                    startX = barParams.x; startY = barParams.y
-                    dragged = false; longFired = false
-                    handler.postDelayed(longPress, 600)
-                    true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - downRawX
-                    val dy = e.rawY - downRawY
-                    if (!dragged && hypot(dx, dy) > slop) {
-                        dragged = true
-                        handler.removeCallbacks(longPress)
-                    }
-                    if (dragged) {
-                        barParams.x = startX + dx.toInt()
-                        barParams.y = startY + dy.toInt()
-                        runCatching { wm.updateViewLayout(bar, barParams) }
-                    }
-                    true
-                }
-                MotionEvent.ACTION_UP -> {
-                    handler.removeCallbacks(longPress)
-                    if (!dragged && !longFired) {
-                        if (deepLocked) setDeepSLock(false) else toggleExpand()
-                    }
-                    true
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    handler.removeCallbacks(longPress); true
-                }
-                else -> false
+    /** 뷰 픽셀 델타 → 패널 정규화 델타. 드래그로 스트로크를 옮길 때 사용. */
+    fun deltaToPanel(
+        dx: Float, dy: Float, rotDeg: Int, videoRect: Rect, screenAspect: Float,
+    ): Pair<Float, Float> {
+        val area = contentRect(videoRect, rotDeg, screenAspect)
+        return unrotateDelta(dx / area.w, dy / area.h, rotDeg)
+    }
+}
+
+data class Rect(val x: Float, val y: Float, val w: Float, val h: Float) {
+    val right get() = x + w
+    val bottom get() = y + h
+}
+LOOPY_EOF
+cat > "app/src/main/java/com/loopy/app/core/io/Io.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.io
+
+import com.loopy.app.macro.Stroke
+
+/**
+ * 시스템에 실제로 손을 대는 모든 경로의 단일 통로.
+ *
+ * Shizuku(ADB 권한)가 있으면 접근성 서비스로는 불가능한 일들이 가능해진다.
+ * 터치 주입, 설정 변경, 화면 캡처, 앱 제어가 전부 여기를 거치므로,
+ * 이후 추가될 Material(이미지 인식, 스크립트, API 연동)도 같은 통로만 알면 된다.
+ *
+ * 구현을 인터페이스 뒤에 두는 이유:
+ *  - 테스트 시 가짜 구현으로 대체 가능
+ *  - Shizuku 외 백엔드(루트, 접근성)를 나중에 붙일 여지
+ */
+interface Io {
+
+    val available: Boolean
+
+    // ── 입력 ──
+
+    /** 스트로크들을 실제 터치로 주입. startMs 가 겹치면 멀티터치로 동시 재생된다. */
+    suspend fun playStrokes(strokes: List<Stroke>, rotationAt: (Long) -> Int)
+
+    /** 진행 중인 주입을 중단. 킬 스위치가 어디서든 동작하려면 필요하다. */
+    fun stopPlayback()
+
+    /** 터치 캡처 시작. 콜백은 패널 정규화 좌표(회전 불변)를 넘긴다. */
+    fun startCapture(onPoint: (slot: Int, nx: Float, ny: Float, down: Boolean) -> Unit)
+
+    fun stopCapture()
+
+    // ── 화면 ──
+
+    /** 현재 화면 회전(0/90/180/270). */
+    fun rotation(): Int
+
+    /** 화면 픽셀 크기. */
+    fun screenSize(): Pair<Int, Int>
+
+    /**
+     * 현재 화면 캡처. 이미지 인식 Material 이 여기에 의존한다.
+     * 아직 구현하지 않았지만, 자리를 비워둬야 나중에 호출부가 흔들리지 않는다.
+     */
+    suspend fun captureScreen(): ScreenShot?
+
+    // ── 시스템 ──
+
+    /** `settings put` 계열. 밝기·볼륨 등 Material 이 사용한다. */
+    suspend fun putSetting(namespace: String, key: String, value: String): Boolean
+
+    suspend fun getSetting(namespace: String, key: String): String?
+
+    /** 임의 셸 명령. 마지막 수단이자, 아직 전용 API 가 없는 기능의 임시 통로. */
+    suspend fun shell(cmd: String): String?
+
+    /** 앱 실행 / 종료. 트리거·액션 양쪽에서 쓰인다. */
+    suspend fun launchApp(pkg: String): Boolean
+
+    suspend fun forceStop(pkg: String): Boolean
+
+    /** 현재 최상위 앱 패키지. 트리거(앱 실행 감지)와 조건에서 쓰인다. */
+    suspend fun foregroundApp(): String?
+}
+
+/** 캡처된 화면. 이미지 인식이 이 위에서 템플릿 매칭을 수행한다. */
+class ScreenShot(
+    val width: Int,
+    val height: Int,
+    val pixels: IntArray,
+    val rotation: Int,
+)
+LOOPY_EOF
+cat > "app/src/main/java/com/loopy/app/core/material/Material.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.material
+
+/**
+ * Loopy 의 유일한 공리.
+ *
+ * 터치 매크로도, 대기도, 조건도, 반복도, 트리거도, 그리고 그것들을 모아 만든 빌드까지도
+ * 전부 Material 이다. 빌드가 Material 이므로 빌드 안에 빌드를 넣을 수 있고,
+ * 그래서 플레이리스트 같은 별도 개념이 필요 없다.
+ *
+ * 새 기능을 추가할 때 이 구조는 바뀌지 않는다. 새 [MaterialType] 과 그에 맞는
+ * Params · 실행기 · 편집기를 등록할 뿐이다. 스크립트든 API 연동이든 마찬가지다.
+ */
+data class Material(
+    val id: String,
+    val typeId: String,
+    val params: Params,
+    val children: List<Material> = emptyList(),
+    val meta: Meta = Meta(),
+    /** 개별 블록만 잠시 꺼두기. 삭제하지 않고 실험할 수 있어야 한다. */
+    val enabled: Boolean = true,
+) {
+    val type: MaterialType get() = MaterialRegistry.require(typeId)
+}
+
+data class Meta(
+    val name: String = "",
+    val note: String = "",
+    val favorite: Boolean = false,
+    val folder: String? = null,
+    val createdAt: Long = 0L,
+)
+
+/** 타입별 설정값. 각 타입이 자기 Params 를 정의한다. */
+interface Params {
+    /** 저장을 위한 직렬화. 타입마다 자기 형식을 안다. */
+    fun toMap(): Map<String, Any?>
+}
+
+object NoParams : Params {
+    override fun toMap(): Map<String, Any?> = emptyMap()
+}
+
+/**
+ * 블록의 성격.
+ *
+ * HAT 은 스크래치의 모자 블록처럼 위에 아무것도 붙일 수 없다. 트리거가 여기 속하며,
+ * 그래서 "매크로 중간에 트리거가 있는" 상태가 구조적으로 불가능해진다.
+ */
+enum class Kind { HAT, ACTION, CONTROL }
+
+/** 이 Material 을 어떻게 편집하는가. 타입마다 편집 UI 가 다르다는 사실을 구조에 못 박는다. */
+enum class EditorKind {
+    /** 시간축 — 촬영 매크로. 스트로크가 특정 시각에 배치된다. */
+    TIMELINE,
+
+    /** 순서축 — 빌드. 블록을 세로로 쌓고 가지친다. */
+    BLOCKS,
+
+    /** 블록 안에서 바로 값만 고침. 대기 시간 등. */
+    INLINE,
+
+    /** 바텀시트 폼. 항목이 여럿인 설정. */
+    SHEET,
+
+    /** 코드 에디터. 스크립트 Material 용. */
+    CODE,
+}
+
+interface MaterialType {
+    val id: String
+    val kind: Kind
+    val editor: EditorKind
+    val label: String
+
+    /** 저장된 맵에서 Params 복원. */
+    fun parse(map: Map<String, Any?>): Params
+
+    /** CONTROL 이면 children 을 가진다. */
+    val hasChildren: Boolean get() = kind == Kind.CONTROL
+}
+
+/**
+ * 타입 레지스트리.
+ *
+ * 런타임 등록이므로 새 타입을 추가해도 기존 코드를 건드리지 않는다.
+ * 나중에 플러그인이 자기 타입을 여기에 밀어 넣는 것도 같은 방식이다.
+ */
+object MaterialRegistry {
+    private val types = LinkedHashMap<String, MaterialType>()
+
+    fun register(type: MaterialType) {
+        types[type.id] = type
+    }
+
+    fun find(id: String): MaterialType? = types[id]
+
+    fun require(id: String): MaterialType =
+        types[id] ?: error("등록되지 않은 Material 타입: $id")
+
+    fun all(): List<MaterialType> = types.values.toList()
+
+    fun byKind(kind: Kind): List<MaterialType> = types.values.filter { it.kind == kind }
+}
+LOOPY_EOF
+cat > "app/src/main/java/com/loopy/app/core/exec/Engine.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.exec
+
+import com.loopy.app.core.io.Io
+import com.loopy.app.core.material.Material
+import kotlinx.coroutines.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * 실행 중 흐름 제어.
+ *
+ * 실행기는 자기 일을 끝낸 뒤 다음에 무엇을 할지 반환한다. 제어 블록(반복·조건)이
+ * 이 값을 보고 흐름을 바꾼다. 점프 대신 이 방식을 쓰는 이유는, 중첩 구조를
+ * 그대로 따라가야 스크래치식 가지치기가 코드와 UI 양쪽에서 같은 모양이 되기 때문이다.
+ */
+sealed interface Flow {
+    /** 다음 블록으로. */
+    object Next : Flow
+
+    /** 가장 가까운 반복을 빠져나감. */
+    object Break : Flow
+
+    /** 가장 가까운 반복의 다음 회차로. */
+    object Continue : Flow
+
+    /** 실행 전체 종료. 킬 스위치. */
+    object Stop : Flow
+}
+
+/** 어디서든 실행을 멈출 수 있어야 한다. 킬 스위치와 사용자 취소가 같은 신호를 쓴다. */
+class CancelSignal {
+    private val cancelled = AtomicBoolean(false)
+
+    fun cancel() {
+        cancelled.set(true)
+    }
+
+    val isCancelled: Boolean get() = cancelled.get()
+
+    fun throwIfCancelled() {
+        if (isCancelled) throw CancellationException("실행 취소됨")
+    }
+}
+
+/**
+ * 변수 스코프.
+ *
+ * 지역 변수는 빌드 1회 실행 동안만 살아 있고, 전역 변수는 앱 전체에서 공유된다.
+ * 반복 카운터처럼 실행마다 초기화되어야 하는 값과, 매크로 사이에 상태를 넘겨야 하는
+ * 값의 수명이 다르기 때문이다.
+ */
+class VarScope(private val global: MutableMap<String, String>) {
+    private val local = HashMap<String, String>()
+
+    operator fun get(name: String): String? = local[name] ?: global[name]
+
+    fun setLocal(name: String, value: String) {
+        local[name] = value
+    }
+
+    fun setGlobal(name: String, value: String) {
+        global[name] = value
+    }
+
+    /** 문자열 안의 {name} 을 값으로 치환. 파라미터 어디서든 변수를 쓸 수 있게 한다. */
+    fun expand(text: String): String =
+        Regex("\\{(\\w+)}").replace(text) { m -> this[m.groupValues[1]] ?: m.value }
+
+    fun child(): VarScope = VarScope(global).also { it.local.putAll(local) }
+}
+
+/** 실행 이력. 디버깅과 "왜 안 돌았지"에 답하기 위해 남긴다. */
+class ExecLog {
+    private val entries = ArrayList<Entry>()
+
+    data class Entry(val at: Long, val materialId: String, val message: String)
+
+    fun add(materialId: String, message: String) {
+        entries.add(Entry(System.currentTimeMillis(), materialId, message))
+    }
+
+    fun snapshot(): List<Entry> = entries.toList()
+
+    fun clear() = entries.clear()
+}
+
+/** 실행기에 넘어가는 모든 맥락. 새 Material 이 필요로 할 것들이 전부 여기 모인다. */
+class ExecContext(
+    val io: Io,
+    val scope: VarScope,
+    val cancel: CancelSignal,
+    val log: ExecLog,
+)
+
+/** 타입별 실행 규칙. 새 Material 은 이것만 구현해 등록하면 된다. */
+interface Executor {
+    val typeId: String
+    suspend fun run(material: Material, ctx: ExecContext): Flow
+}
+
+object ExecutorRegistry {
+    private val executors = HashMap<String, Executor>()
+
+    fun register(executor: Executor) {
+        executors[executor.typeId] = executor
+    }
+
+    fun find(typeId: String): Executor? = executors[typeId]
+}
+
+/**
+ * 엔진.
+ *
+ * 자식 목록을 순서대로 실행하고, 각 실행기가 돌려준 Flow 에 따라 흐름을 정한다.
+ * 제어 블록은 이 runChildren 을 재귀 호출해 자기 자식들을 돌린다.
+ */
+object Engine {
+
+    suspend fun run(root: Material, ctx: ExecContext): Flow {
+        ctx.cancel.throwIfCancelled()
+        if (!root.enabled) return Flow.Next
+
+        val executor = ExecutorRegistry.find(root.typeId)
+        if (executor == null) {
+            ctx.log.add(root.id, "실행기 없음: ${root.typeId}")
+            return Flow.Next
+        }
+        return executor.run(root, ctx)
+    }
+
+    /** 자식들을 순서대로. 제어 블록이 자기 body 를 돌릴 때 쓴다. */
+    suspend fun runChildren(children: List<Material>, ctx: ExecContext): Flow {
+        for (child in children) {
+            when (val flow = run(child, ctx)) {
+                Flow.Next -> continue
+                else -> return flow
             }
         }
-    }
-
-    private fun marginLeft(px: Int) = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-    ).apply { leftMargin = px }
-
-    private fun baseParams(): WindowManager.LayoutParams =
-        WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            android.graphics.PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.START }
-
-    // ── 녹화 ──
-    private fun videoTint() = if (videoEnabled) 0xFF20C997.toInt() else 0xFF9AA0B4.toInt()
-    private fun videoBg() = if (videoEnabled) 0x2220C997 else 0x14000000
-
-    private fun toggleVideo() {
-        videoEnabled = !videoEnabled
-        videoBtn?.apply {
-            setColorFilter(videoTint())
-            background = circleBg(videoBg())
-        }
-        status.visibility = View.VISIBLE
-        status.text = if (videoEnabled) "영상 녹화 ON (녹화 시 화면도 저장)" else "영상 녹화 OFF"
-    }
-
-    private fun toggleRecord() {
-        if (recording) { stopRecord(); return }
-        if (videoEnabled) {
-            if (screenRecorder.hasSession()) {
-                // 세션 재사용 — 팝업/앱전환 없이 즉시
-                val ok = screenRecorder.startRecording()
-                startRecord(if (ok) screenRecorder.currentUri else null)
-            } else {
-                // 세션 없음 → 예외적으로 팝업 1회(이후 세션으로 유지됨)
-                val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(i)
-            }
-        } else {
-            startRecord(null)
-        }
-    }
-
-    /** 세션 없을 때 팝업 폴백: 받은 권한을 세션으로 승격 후 녹화(다음부턴 팝업 없음). */
-    private fun beginVideoThenRecord(intent: Intent) {
-        val code = intent.getIntExtra(EX_CODE, Activity.RESULT_CANCELED)
-        @Suppress("DEPRECATION")
-        val data = intent.getParcelableExtra<Intent>(EX_DATA)
-        if (code != Activity.RESULT_OK || data == null) { startRecord(null); return }
-        runCatching { promoteForegroundForProjection() }
-        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
-        if (proj == null) { startRecord(null); return }
-        screenRecorder.setSession(proj)
-        VideoSession.active = true
-        val ok = screenRecorder.startRecording()
-        startRecord(if (ok) screenRecorder.currentUri else null)
-    }
-
-    private fun promoteForegroundForProjection() {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(
-                1, buildNotif(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
-        }
-    }
-
-    private fun startRecord(videoPath: String?) {
-        stopPlayback(null)
-        val devs = reader.probe()
-        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { status.text = "터치 디바이스를 못 찾음"; return }
-        device = dev
-        currentVideoPath = videoPath
-        recorder.reset()
-        recording = true
-        rotEventsRaw.clear()
-        registerRotationListener()
-        recordBtn.setImageResource(R.drawable.ic_ov_stop)
-        status.visibility = View.VISIBLE
-        status.text = if (videoPath != null) "● 녹화중 (영상 포함)" else "● 녹화중 — 평소처럼 플레이해"
-        reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
-    }
-
-    private fun stopRecord() {
-        reader.stop()
-        recording = false
-        unregisterRotationListener()
-        recordBtn.setImageResource(R.drawable.ic_ov_record)
-        val videoStart = if (screenRecorder.active) screenRecorder.startUptime else 0L
-        val vpath = if (screenRecorder.active) screenRecorder.stopRecording() else currentVideoPath
-        currentVideoPath = null
-        val snap = recorder.snapshot()
-        if (snap.isEmpty()) {
-            status.text = "행동 없음 (저장 안 함)"
-            return
-        }
-        val offset = if (vpath != null && videoStart > 0 && recorder.baseUptime > 0)
-            (recorder.baseUptime - videoStart).coerceAtLeast(0L) else 0L
-        val rot = runCatching {
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.rotation * 90
-        }.getOrDefault(0)
-        // 회전 이벤트: 절대 uptime → 매크로 시작(baseUptime) 기준 상대 ms
-        val base = recorder.baseUptime
-        val startRot = rotEventsRaw.lastOrNull { it.first <= base }?.second ?: rot
-        val evts = ArrayList<RotationEvent>()
-        evts.add(RotationEvent(0L, startRot))
-        if (base > 0) {
-            for ((up, r) in rotEventsRaw) {
-                val rel = up - base
-                if (rel > 0L) evts.add(RotationEvent(rel, r))
-            }
-        }
-        val m = MacroStore.saveNew(this, snap, vpath, offset, startRot, evts)
-        status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
-    }
-
-    /** 녹화 중 화면 회전 변화를 타임스탬프와 함께 기록. */
-    private fun registerRotationListener() {
-        val dm = getSystemService(DISPLAY_SERVICE) as DisplayManager
-        var lastRot = displayObj.rotation * 90
-        val l = object : DisplayManager.DisplayListener {
-            override fun onDisplayAdded(displayId: Int) {}
-            override fun onDisplayRemoved(displayId: Int) {}
-            override fun onDisplayChanged(displayId: Int) {
-                if (!recording || displayId != Display.DEFAULT_DISPLAY) return
-                val r = displayObj.rotation * 90
-                if (r == lastRot) return
-                lastRot = r
-                rotEventsRaw.add(android.os.SystemClock.uptimeMillis() to r)
-            }
-        }
-        dm.registerDisplayListener(l, null)
-        rotListener = l
-    }
-
-    private fun unregisterRotationListener() {
-        rotListener?.let {
-            runCatching { (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(it) }
-        }
-        rotListener = null
-    }
-
-    // ── 재생 ──
-    private fun playRecorded() {
-        if (recording) stopRecord()
-        startSingle(recorder.snapshot(), "지금 녹화")
-    }
-
-    private fun startSingle(strokes: List<Stroke>, label: String) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        if (strokes.isEmpty()) { status.text = "재생할 게 없어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        status.text = "▶ 재생중… $label"
-        playJob = scope.launch {
-            runStrokes(strokes)
-            status.text = "재생 끝 · $label"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun playPlaylist(pl: Playlist) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        val macros = HashMap<String, Macro>()
-        pl.macroIds.toSet().forEach { id -> MacroStore.read(this, id)?.let { macros[id] = it } }
-        if (macros.isEmpty()) { status.text = "매크로가 비어있어"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        playJob = scope.launch {
-            var cycle = 0
-            while (isActive && (pl.cycles == 0 || cycle < pl.cycles)) {
-                val order = if (pl.shuffle) pl.macroIds.shuffled() else pl.macroIds
-                for (id in order) {
-                    if (!isActive) break
-                    val m = macros[id] ?: continue
-                    val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
-                    status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
-                    runStrokes(m.strokes)
-                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
-                }
-                cycle++
-            }
-            status.text = "플레이리스트 끝 · ${pl.name}"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
-
-    private fun stopPlayback(msg: String?) {
-        playJob?.cancel()
-        playJob = null
-        stopPlayBtn.visibility = View.GONE
-        if (msg != null) status.text = msg
-    }
-
-    /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
-    /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
-    private suspend fun runStrokes(strokes: List<Stroke>) {
-        if (strokes.isEmpty()) return
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val w = m.widthPixels
-        val h = m.heightPixels
-        val rot = displayObj.rotation
-
-        val nStroke = strokes.size
-        // 손가락 id 배정: 겹치지 않는 스트로크끼리는 같은 id 재사용(활성 포인터 수 최소화).
-        val fingerIds = IntArray(nStroke)
-        val idFreeAt = ArrayList<Long>()
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
-            var assigned = -1
-            for (id in idFreeAt.indices) {
-                if (idFreeAt[id] + 12L <= s.startMs) { assigned = id; break }
-            }
-            if (assigned == -1) { assigned = idFreeAt.size; idFreeAt.add(end) } else idFreeAt[assigned] = end
-            fingerIds[k] = assigned
-        }
-
-        val totalSamples = strokes.sumOf { it.samples.size }
-        val startArr = LongArray(nStroke)
-        val durArr = LongArray(nStroke)
-        val counts = IntArray(nStroke)
-        val xs = IntArray(totalSamples)
-        val ys = IntArray(totalSamples)
-        val times = LongArray(totalSamples)
-        var off = 0
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            startArr[k] = s.startMs
-            durArr[k] = s.durationMs
-            counts[k] = s.samples.size
-            for (i in s.samples.indices) {
-                val (px, py) = toPx(s.samples[i].nx, s.samples[i].ny, w, h, rot)
-                xs[off] = px; ys[off] = py; times[off] = s.samples[i].t
-                off++
-            }
-        }
-        withContext(Dispatchers.IO) {
-            LoopyService.playMulti(fingerIds, startArr, durArr, counts, xs, ys, times)
-        }
-    }
-
-    // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
-    private fun toggleList() {
-        listPanel?.let { listHolder.removeView(it); listPanel = null; return }
-        val playlists = PlaylistStore.list(this)
-        val macros = MacroStore.list(this)
-        val lp = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = pill(0xFFFFFFFF.toInt(), dp(18))
-            elevation = dp(8).toFloat()
-            minimumWidth = dp(210)
-        }
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (playlists.isEmpty() && macros.isEmpty()) {
-            content.addView(hint("저장된 게 없어"))
-        } else {
-            if (playlists.isNotEmpty()) {
-                content.addView(hint("─ 플레이리스트 ─"))
-                for (pl in playlists) {
-                    content.addView(listRow("${pl.name}  ·  ${pl.macroIds.size}스텝", 0xFF6C7BFF.toInt()) {
-                        toggleList(); playPlaylist(pl)
-                    })
-                }
-            }
-            if (macros.isNotEmpty()) {
-                content.addView(hint("─ 매크로 ─"))
-                for (mac in macros) {
-                    content.addView(listRow("${mac.name}  ·  ${mac.strokes.size}", 0xFF2B2D42.toInt()) {
-                        toggleList(); startSingle(mac.strokes, mac.name)
-                    })
-                }
-            }
-        }
-        // 화면 절반 넘으면 스크롤
-        val maxH = (resources.displayMetrics.heightPixels * 0.5f).toInt()
-        val sv = MaxHeightScrollView(this, maxH).apply {
-            overScrollMode = View.OVER_SCROLL_NEVER
-            isVerticalScrollBarEnabled = false
-        }
-        sv.addView(content)
-        lp.addView(sv)
-        listHolder.addView(lp, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(8) })
-        listPanel = lp
-    }
-
-    /** 최대 높이를 넘으면 스크롤되는 ScrollView. */
-    private class MaxHeightScrollView(context: Context, private val maxH: Int) : ScrollView(context) {
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            val h = MeasureSpec.makeMeasureSpec(maxH, MeasureSpec.AT_MOST)
-            super.onMeasure(widthMeasureSpec, h)
-        }
-    }
-
-    private fun hint(t: String) = TextView(this).apply {
-        text = t; setTextColor(0xFF9AA0B4.toInt()); textSize = 10f
-        setPadding(dp(2), dp(8), 0, dp(4))
-        letterSpacing = 0.06f
-    }
-
-    private fun listRow(t: String, color: Int, onClick: () -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(9), dp(10), dp(9))
-        background = pill(0x0A000000, dp(12)) // 아주 옅은 행 배경
-        val dot = View(this@OverlayService).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(color)
-            }
-        }
-        addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)))
-        addView(TextView(this@OverlayService).apply {
-            text = t; setTextColor(0xFF2B2D42.toInt()); textSize = 13f
-            setPadding(dp(10), 0, 0, 0)
-        })
-        setOnClickListener { onClick() }
-    }
-
-    private fun toPx(u: Float, v: Float, w: Int, h: Int, rotation: Int): Pair<Int, Int> = when (rotation) {
-        Surface.ROTATION_90 -> (v * w).toInt() to ((1 - u) * h).toInt()
-        Surface.ROTATION_180 -> ((1 - u) * w).toInt() to ((1 - v) * h).toInt()
-        Surface.ROTATION_270 -> ((1 - v) * w).toInt() to (u * h).toInt()
-        else -> (u * w).toInt() to (v * h).toInt()
-    }
-
-    private fun barContains(u: Float, v: Float): Boolean {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
-        val loc = IntArray(2)
-        bar.getLocationOnScreen(loc)
-        return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
-    }
-
-
-    private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = radius.toFloat()
-    }
-
-    private fun buildNotif(): Notification {
-        val channelId = "loopy_overlay"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(
-                NotificationChannel(channelId, "Loopy 오버레이", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-        return Notification.Builder(this, channelId)
-            .setContentTitle("Loopy 실행 중")
-            .setContentText("매크로 컨트롤이 화면에 떠 있어요")
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .setOngoing(true)
-            .build()
-    }
-
-    private fun startAsForeground() {
-        val notif = buildNotif()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(1, notif)
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        reader.stop()
-        runCatching { screenRecorder.endSession() }
-        VideoSession.active = false
-        scope.cancel()
-        dimView?.let { runCatching { wm.removeView(it) } }
-        runCatching { wm.removeView(bar) }
+        return Flow.Next
     }
 }
 LOOPY_EOF
-echo "3/3 완료."
+cat > "app/src/main/java/com/loopy/app/ui/theme/Neu.kt" << 'LOOPY_EOF'
+package com.loopy.app.ui.theme
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+
+/**
+ * 뉴모피즘 단일 구현.
+ *
+ * 광원은 왼쪽 위. 요소는 배경과 같은 재질이 솟거나(raised) 파인(recessed) 것처럼 보여야 하므로,
+ * 그림자·글로우는 **요소 색이 아니라 표면(surface) 색**에서 파생된다.
+ * 컬러 요소(fill)는 그 위에 자기 색 발광과 안쪽 그라데이션이 얹힌다.
+ */
+fun Modifier.neu(
+    surface: Color = NeuBase,
+    fill: Color? = null,
+    corner: Dp = 12.dp,
+    offset: Dp = 2.5.dp,
+    blur: Dp = 5.dp,
+    raised: Boolean = true,
+): Modifier = this.drawBehind {
+    val off = offset.toPx()
+    val bl = blur.toPx()
+    val cr = corner.toPx()
+    val body = fill ?: surface
+    val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+
+    if (raised) {
+        drawIntoCanvas { canvas ->
+            val fw = canvas.nativeCanvas
+            val shadow = android.graphics.Paint().apply {
+                isAntiAlias = true
+                color = body.toArgb()
+                setShadowLayer(bl, off, off, surface.shade(0.78f).toArgb())
+            }
+            fw.drawRoundRect(rect, cr, cr, shadow)
+
+            val glow = android.graphics.Paint().apply {
+                isAntiAlias = true
+                color = body.toArgb()
+                setShadowLayer(bl, -off, -off, android.graphics.Color.WHITE)
+            }
+            fw.drawRoundRect(rect, cr, cr, glow)
+
+            if (fill != null) {
+                val tint = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    color = body.toArgb()
+                    setShadowLayer(bl * 1.05f, 0f, off * 0.4f, fill.copy(alpha = 0.45f).toArgb())
+                }
+                fw.drawRoundRect(rect, cr, cr, tint)
+            }
+        }
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                listOf(body.tint(0.20f), body, body.shade(0.91f)),
+            ),
+            cornerRadius = CornerRadius(cr, cr),
+        )
+        drawRoundRect(
+            brush = Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.26f),
+                0.32f to Color.Transparent,
+            ),
+            cornerRadius = CornerRadius(cr, cr),
+        )
+    } else {
+        // 파임: 표면색으로 채운 뒤 안쪽에만 그림자를 그린다(clip 필수).
+        drawRoundRect(body, cornerRadius = CornerRadius(cr, cr))
+        drawIntoCanvas { canvas ->
+            val fw = canvas.nativeCanvas
+            val saved = fw.save()
+            fw.clipPath(
+                android.graphics.Path().apply {
+                    addRoundRect(rect, cr, cr, android.graphics.Path.Direction.CW)
+                },
+            )
+            val outer = android.graphics.RectF(
+                -off * 2f, -off * 2f, size.width + off * 2f, size.height + off * 2f,
+            )
+            val inner = android.graphics.Paint().apply {
+                isAntiAlias = true
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = off * 2.2f
+                color = android.graphics.Color.TRANSPARENT
+                setShadowLayer(bl, off, off, surface.shade(0.72f).toArgb())
+            }
+            fw.drawRoundRect(outer, cr, cr, inner)
+
+            val reflect = android.graphics.Paint().apply {
+                isAntiAlias = true
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = off * 2.2f
+                color = android.graphics.Color.TRANSPARENT
+                setShadowLayer(bl, -off, -off, android.graphics.Color.WHITE)
+            }
+            fw.drawRoundRect(outer, cr, cr, reflect)
+            fw.restoreToCount(saved)
+        }
+    }
+}
+
+/**
+ * 가로로 꽉 찬 바. 좌우 여백이 없어 대각선 그림자를 줄 자리가 없으므로 수직 방향만 쓴다.
+ * 위/아래 층 구분이 목적이라 뉴모피즘 카드와는 의도가 다르다.
+ */
+fun Modifier.neuBar(surface: Color = NeuBase): Modifier = this.drawBehind {
+    val off = 3.dp.toPx()
+    val bl = 7.dp.toPx()
+    val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+    drawIntoCanvas { canvas ->
+        val fw = canvas.nativeCanvas
+        val shadow = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = surface.toArgb()
+            setShadowLayer(bl, 0f, off, surface.shade(0.90f).toArgb())
+        }
+        fw.drawRect(rect, shadow)
+        val glow = android.graphics.Paint().apply {
+            isAntiAlias = true
+            color = surface.toArgb()
+            setShadowLayer(bl * 0.7f, 0f, -off * 0.7f, 0x66FFFFFF)
+        }
+        fw.drawRect(rect, glow)
+    }
+}
+
+/** 뉴모피즘 + 클립 + 배경을 한 번에. 대부분의 호출부는 이걸 쓰면 된다. */
+fun Modifier.neuSurface(
+    surface: Color = NeuBase,
+    fill: Color? = null,
+    corner: Dp = 12.dp,
+    offset: Dp = 2.5.dp,
+    blur: Dp = 5.dp,
+    raised: Boolean = true,
+): Modifier = this
+    .neu(surface, fill, corner, offset, blur, raised)
+    .clip(RoundedCornerShape(corner))
+    .background(if (raised) (fill ?: surface) else Color.Transparent)
+
+fun Color.shade(f: Float) = Color(red * f, green * f, blue * f, alpha)
+
+fun Color.tint(f: Float) =
+    Color(red + (1f - red) * f, green + (1f - green) * f, blue + (1f - blue) * f, alpha)
+LOOPY_EOF
+echo "기반 파일 5개 생성 완료."
 git add -A
-git commit -m "회전 완전수정: 이벤트 타임스탬프(절대uptime->상대) + 회전구간 스트로크를 프레임내 축소 가로영역에 매핑"
+git commit -m "Phase 0-1: 확장 기반 — Material 공리, 실행 엔진 계약, Io 통로, 좌표 매핑 통합, 뉴모피즘 단일화"
 git push
-echo "푸시 완료!"
+echo "푸시 완료"
 
