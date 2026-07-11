@@ -63,7 +63,7 @@ object MacroStore {
                     JSONObject().put("t", p.t).put("x", p.nx.toDouble()).put("y", p.ny.toDouble())
                 )
             }
-            strokes.put(JSONObject().put("startMs", s.startMs).put("durationMs", s.durationMs).put("samples", samples))
+            strokes.put(JSONObject().put("startMs", s.startMs).put("durationMs", s.durationMs).put("added", s.added).put("samples", samples))
         }
         return JSONObject()
             .put("id", m.id).put("name", m.name).put("createdAt", m.createdAt)
@@ -86,7 +86,7 @@ object MacroStore {
                 val p = sampArr.getJSONObject(j)
                 samples.add(TouchSample(p.getLong("t"), p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
             }
-            strokes.add(Stroke(so.optLong("startMs", 0L), so.optLong("durationMs", 0L), samples))
+            strokes.add(Stroke(so.optLong("startMs", 0L), so.optLong("durationMs", 0L), samples, so.optBoolean("added", false)))
         }
         val vp = if (o.isNull("videoPath")) null else o.optString("videoPath", "").ifEmpty { null }
         return Macro(o.getString("id"), o.getString("name"), o.getLong("createdAt"), strokes, vp, o.optLong("videoOffsetMs", 0L), o.optInt("rotation", 0))

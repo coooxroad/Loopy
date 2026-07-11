@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -81,6 +82,8 @@ import com.loopy.app.macro.Macro
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.Stroke
 import com.loopy.app.macro.TouchSample
+import com.loopy.app.input.GeteventReader
+import com.loopy.app.input.RawRecorder
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.CardStroke
@@ -90,11 +93,13 @@ import com.loopy.app.ui.theme.TextHi
 import com.loopy.app.ui.theme.TextLo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
 
 private val TraceStart = Color(0xFF3B82F6)
+private val AddedGreen = Color(0xFF20C997)
 private val TraceEnd = Color(0xFFEFF5FF)
 private const val WINDOW_MS = 150L
 private const val DP_PER_SEC = 68f
@@ -227,6 +232,53 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
     val playheadStrokeMs = positionMs - macro.videoOffsetMs
 
+    // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
+    val coScope = rememberCoroutineScope()
+    val reader = remember { GeteventReader() }
+    val recorder = remember { RawRecorder() }
+    var capturing by remember { mutableStateOf(false) }
+    var captureStarted by remember { mutableStateOf(false) }
+    var captureMsg by remember { mutableStateOf("") }
+    var captureBaseStrokeMs by remember { mutableStateOf(0L) }
+
+    fun startCapture() {
+        val devs = runCatching { reader.probe() }.getOrDefault(emptyList())
+        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
+        if (dev == null) { captureMsg = "터치 디바이스를 못 찾음 (Shizuku 확인)"; capturing = true; return }
+        captureBaseStrokeMs = playheadStrokeMs.coerceAtLeast(0L)
+        recorder.reset()
+        // 하단 저장/취소 버튼 영역(아래 12%)은 스트로크로 잡지 않음
+        recorder.shouldIgnore = { _, v -> v > 0.88f }
+        captureStarted = false
+        captureMsg = "화면을 터치하면 촬영 시작"
+        capturing = true
+        playing = false; player?.playWhenReady = false; player?.seekTo(positionMs)
+        reader.stream(coScope, listOf(dev)) { _, p ->
+            if (!captureStarted && p.down) {
+                captureStarted = true
+                coScope.launch { player?.playWhenReady = true; playing = true }
+            }
+            recorder.onPoint(p)
+        }
+    }
+    fun finishCapture(save: Boolean) {
+        reader.stop()
+        playing = false; player?.playWhenReady = false
+        if (save) {
+            val snap = recorder.snapshot()
+            if (snap.isNotEmpty()) {
+                pushUndo()
+                for (s in snap) {
+                    strokes.add(Stroke(captureBaseStrokeMs + s.startMs, s.durationMs, s.samples, added = true))
+                }
+                persist()
+            }
+        }
+        capturing = false; captureStarted = false
+    }
+
+    DisposableEffect(Unit) { onDispose { reader.stop() } }
+
     // 편집 연산 (재생헤드 기준)
     fun doDelete() {
         val i = selectedStroke ?: return
@@ -286,6 +338,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                                 resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                             }
                         },
+                        update = { it.player = if (capturing) null else player },
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -349,9 +402,90 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 }
             }
 
+            // + 추가 촬영 버튼 (밝은 초록 뉴모피즘)
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.size(56.dp)
+                        .shadow(6.dp, CircleShape)
+                        .clip(CircleShape).background(AddedGreen)
+                        .clickable { startCapture() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Canvas(Modifier.size(24.dp)) {
+                        val c = Color.White; val sw = size.width * 0.13f
+                        drawLine(c, Offset(size.width / 2f, size.height * 0.18f),
+                            Offset(size.width / 2f, size.height * 0.82f), sw, cap = StrokeCap.Round)
+                        drawLine(c, Offset(size.width * 0.18f, size.height / 2f),
+                            Offset(size.width * 0.82f, size.height / 2f), sw, cap = StrokeCap.Round)
+                    }
+                }
+            }
+
             Spacer(Modifier.weight(1f))
         }
+
+        // 전체화면 캡처 오버레이
+        if (capturing) {
+            CaptureOverlay(
+                player = player, message = captureMsg, started = captureStarted,
+                onSave = { finishCapture(true) }, onCancel = { finishCapture(false) },
+            )
+        }
     }
+}
+
+@Composable
+private fun CaptureOverlay(
+    player: ExoPlayer?, message: String, started: Boolean,
+    onSave: () -> Unit, onCancel: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
+        if (player != null) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        this.player = player
+                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // 회색 반투명 오버레이
+        Box(Modifier.fillMaxSize().background(Color(0x59202020)))
+        if (!started) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(message, color = Color(0xFFEFF1F6), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+        // 하단 저장/취소
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Bottom) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                CaptureButton("취소", Color(0xFF3A3F50), Color(0xFFCFD4E0)) { onCancel() }
+                CaptureButton("저장", AddedGreen, Color.White) { onSave() }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.weight(1f).height(50.dp)
+            .shadow(5.dp, RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(14.dp)).background(bg)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
 }
 
 @Composable
@@ -628,6 +762,7 @@ private fun Timeline(
                         val yDp = laneStep * lane + (laneStep - blockH) / 2
                         StrokeBlock(
                             selected = selected == i,
+                            added = s.added,
                             onClick = { onSelect(i) },
                             modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH)
                                 .pointerInput(i, pxPerMs) {
@@ -665,18 +800,19 @@ private fun Timeline(
     }
 }
 
-/** 스트로크 블록: 기본 푸른색 볼록, 선택 시 흰색 + 푸른 테두리가 약간 커짐. */
+/** 스트로크 블록: 캡처=파란색, 편집기 추가=초록색. 선택 시 흰색 + 색 테두리 확대. */
 @Composable
-private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
+    val base = if (added) AddedGreen else TraceStart
     Box(modifier.clickable { onClick() }) {
         val inset = if (selected) 0.dp else 2.dp
         Box(
             Modifier.fillMaxSize().padding(inset)
                 .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
                 .clip(shape)
-                .background(if (selected) Color.White else TraceStart)
-                .then(if (selected) Modifier.border(2.5.dp, TraceStart, shape) else Modifier),
+                .background(if (selected) Color.White else base)
+                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
         )
     }
 }

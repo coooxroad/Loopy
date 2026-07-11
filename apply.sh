@@ -1,8 +1,69 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 순서수정 최종 2/2
+# + 촬영 2/2 (EditorScreen 이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
+@Composable
+private fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.weight(1f).height(50.dp)
+            .shadow(5.dp, RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(14.dp)).background(bg)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+}
+
+@Composable
+private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.weight(1f).height(52.dp)
+            .shadow(3.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp)).background(NeuBase)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Canvas(Modifier.size(20.dp)) { drawEditIcon(kind, tint) }
+            Spacer(Modifier.height(3.dp))
+            Text(label, color = tint, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditIcon(kind: String, col: Color) {
+    val w = size.width; val h = size.height; val sw = w * 0.09f
+    when (kind) {
+        "trimLeft", "trimRight" -> {
+            val left = kind == "trimLeft"
+            val barX = if (left) w * 0.6f else w * 0.4f
+            drawLine(col, Offset(barX, h * 0.16f), Offset(barX, h * 0.84f), sw, cap = StrokeCap.Round)
+            val blkL = if (left) barX + w * 0.08f else w * 0.16f
+            val blkR = if (left) w * 0.86f else barX - w * 0.08f
+            drawRoundRect(col.copy(alpha = 0.9f), topLeft = Offset(blkL, h * 0.32f),
+                size = Size(blkR - blkL, h * 0.36f), cornerRadius = CornerRadius(3f))
+        }
+        "split" -> {
+            drawRoundRect(col, topLeft = Offset(w * 0.1f, h * 0.32f),
+                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
+            drawRoundRect(col, topLeft = Offset(w * 0.6f, h * 0.32f),
+                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
+            drawLine(col, Offset(w / 2f, h * 0.12f), Offset(w / 2f, h * 0.88f), sw * 0.9f, cap = StrokeCap.Round)
+        }
+        "delete" -> {
+            drawLine(col, Offset(w * 0.18f, h * 0.28f), Offset(w * 0.82f, h * 0.28f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.4f, h * 0.28f), Offset(w * 0.4f, h * 0.18f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.4f, h * 0.18f), Offset(w * 0.6f, h * 0.18f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.6f, h * 0.18f), Offset(w * 0.6f, h * 0.28f), sw, cap = StrokeCap.Round)
+            drawRoundRect(col, topLeft = Offset(w * 0.26f, h * 0.34f),
+                size = Size(w * 0.48f, h * 0.48f), cornerRadius = CornerRadius(4f),
+                style = DrawStroke(width = sw))
+            drawLine(col, Offset(w * 0.42f, h * 0.44f), Offset(w * 0.42f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.58f, h * 0.44f), Offset(w * 0.58f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
+        }
+    }
+}
+
 /** UNDO(↶) / REDO(↷) 곡선 화살표 벡터. */
 @Composable
 private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
@@ -227,6 +288,7 @@ private fun Timeline(
                         val yDp = laneStep * lane + (laneStep - blockH) / 2
                         StrokeBlock(
                             selected = selected == i,
+                            added = s.added,
                             onClick = { onSelect(i) },
                             modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH)
                                 .pointerInput(i, pxPerMs) {
@@ -264,18 +326,19 @@ private fun Timeline(
     }
 }
 
-/** 스트로크 블록: 기본 푸른색 볼록, 선택 시 흰색 + 푸른 테두리가 약간 커짐. */
+/** 스트로크 블록: 캡처=파란색, 편집기 추가=초록색. 선택 시 흰색 + 색 테두리 확대. */
 @Composable
-private fun StrokeBlock(selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun StrokeBlock(selected: Boolean, added: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(7.dp)
+    val base = if (added) AddedGreen else TraceStart
     Box(modifier.clickable { onClick() }) {
         val inset = if (selected) 0.dp else 2.dp
         Box(
             Modifier.fillMaxSize().padding(inset)
                 .shadow(if (selected) 5.dp else 2.dp, shape, clip = false)
                 .clip(shape)
-                .background(if (selected) Color.White else TraceStart)
-                .then(if (selected) Modifier.border(2.5.dp, TraceStart, shape) else Modifier),
+                .background(if (selected) Color.White else base)
+                .then(if (selected) Modifier.border(2.5.dp, base, shape) else Modifier),
         )
     }
 }
@@ -401,7 +464,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "fix: selectedStroke 선언 순서(undo/redo 위)"
+git commit -m "+ 추가촬영: Shizuku 캡처 오버레이(영상 재생헤드부터, 첫터치 시 재생), 저장 시 초록 블록 추가, 밝은초록 + 버튼"
 git push
 echo "푸시 완료!"
 
