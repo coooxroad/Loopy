@@ -54,6 +54,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -106,6 +108,26 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     // 편집 가능한 스트로크 상태
     val strokes = remember { mutableStateListOf<Stroke>().apply { addAll(macro.strokes) } }
     fun persist() { MacroStore.updateStrokes(context, macro.id, strokes.toList()) }
+
+    // UNDO / REDO 히스토리
+    val undoStack = remember { mutableStateListOf<List<Stroke>>() }
+    val redoStack = remember { mutableStateListOf<List<Stroke>>() }
+    fun pushUndo() { undoStack.add(strokes.toList()); redoStack.clear() }
+    fun applyStrokes(list: List<Stroke>) {
+        strokes.clear(); strokes.addAll(list); persist()
+    }
+    fun undo() {
+        if (undoStack.isEmpty()) return
+        redoStack.add(strokes.toList())
+        val prev = undoStack.removeAt(undoStack.size - 1)
+        applyStrokes(prev); selectedStroke = null
+    }
+    fun redo() {
+        if (redoStack.isEmpty()) return
+        undoStack.add(strokes.toList())
+        val next = redoStack.removeAt(redoStack.size - 1)
+        applyStrokes(next); selectedStroke = null
+    }
 
     DisposableEffect(Unit) {
         val window = (context as? Activity)?.window
@@ -208,25 +230,27 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     // 편집 연산 (재생헤드 기준)
     fun doDelete() {
         val i = selectedStroke ?: return
-        strokes.removeAt(i); selectedStroke = null; persist()
+        pushUndo(); strokes.removeAt(i); selectedStroke = null; persist()
     }
     fun doTrimLeft() {
         val i = selectedStroke ?: return
-        trimLeft(strokes[i], playheadStrokeMs)?.let { strokes[i] = it; persist() }
+        val r = trimLeft(strokes[i], playheadStrokeMs) ?: return
+        pushUndo(); strokes[i] = r; persist()
     }
     fun doTrimRight() {
         val i = selectedStroke ?: return
-        trimRight(strokes[i], playheadStrokeMs)?.let { strokes[i] = it; persist() }
+        val r = trimRight(strokes[i], playheadStrokeMs) ?: return
+        pushUndo(); strokes[i] = r; persist()
     }
     fun doSplit() {
         val i = selectedStroke ?: return
         val s = strokes[i]
         if (playheadStrokeMs <= s.startMs || playheadStrokeMs >= s.startMs + s.durationMs) return
         val pair = splitStroke(s, playheadStrokeMs) ?: return
-        strokes[i] = pair.first; strokes.add(i + 1, pair.second); persist()
+        pushUndo(); strokes[i] = pair.first; strokes.add(i + 1, pair.second); persist()
     }
     fun doMove(i: Int, newStartMs: Long) {
-        strokes[i] = strokes[i].copy(startMs = newStartMs.coerceAtLeast(0L)); persist()
+        pushUndo(); strokes[i] = strokes[i].copy(startMs = newStartMs.coerceAtLeast(0L)); persist()
     }
 
     Box(Modifier.fillMaxSize().background(NeuBase)) {
@@ -280,6 +304,15 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     PlayPauseFilled(playing) { togglePlay() }
                 }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    UndoRedoIcon(redo = false, enabled = undoStack.isNotEmpty()) { undo() }
+                    Spacer(Modifier.width(4.dp))
+                    UndoRedoIcon(redo = true, enabled = redoStack.isNotEmpty()) { redo() }
+                }
             }
 
             // 편집공간(오목) + 타임라인
@@ -309,10 +342,10 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    EditToolButton("◀ 자르기", TextHi) { doTrimLeft() }
-                    EditToolButton("분할", TraceStart) { doSplit() }
-                    EditToolButton("자르기 ▶", TextHi) { doTrimRight() }
-                    EditToolButton("삭제", Color(0xFFE06A6A)) { doDelete() }
+                    EditToolButton("trimLeft", "왼쪽 자르기", TextHi) { doTrimLeft() }
+                    EditToolButton("split", "분할", TraceStart) { doSplit() }
+                    EditToolButton("trimRight", "오른쪽 자르기", TextHi) { doTrimRight() }
+                    EditToolButton("delete", "삭제", Color(0xFFE06A6A)) { doDelete() }
                 }
             }
 
@@ -322,14 +355,81 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 }
 
 @Composable
-private fun RowScope.EditToolButton(label: String, tint: Color, onClick: () -> Unit) {
+private fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
     Box(
-        Modifier.weight(1f).height(44.dp)
+        Modifier.weight(1f).height(52.dp)
             .shadow(3.dp, RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp)).background(NeuBase)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
-    ) { Text(label, color = tint, fontSize = 12.sp, fontWeight = FontWeight.Medium) }
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Canvas(Modifier.size(20.dp)) { drawEditIcon(kind, tint) }
+            Spacer(Modifier.height(3.dp))
+            Text(label, color = tint, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditIcon(kind: String, col: Color) {
+    val w = size.width; val h = size.height; val sw = w * 0.09f
+    when (kind) {
+        "trimLeft", "trimRight" -> {
+            val left = kind == "trimLeft"
+            val barX = if (left) w * 0.6f else w * 0.4f
+            drawLine(col, Offset(barX, h * 0.16f), Offset(barX, h * 0.84f), sw, cap = StrokeCap.Round)
+            val blkL = if (left) barX + w * 0.08f else w * 0.16f
+            val blkR = if (left) w * 0.86f else barX - w * 0.08f
+            drawRoundRect(col.copy(alpha = 0.9f), topLeft = Offset(blkL, h * 0.32f),
+                size = Size(blkR - blkL, h * 0.36f), cornerRadius = CornerRadius(3f))
+        }
+        "split" -> {
+            drawRoundRect(col, topLeft = Offset(w * 0.1f, h * 0.32f),
+                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
+            drawRoundRect(col, topLeft = Offset(w * 0.6f, h * 0.32f),
+                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
+            drawLine(col, Offset(w / 2f, h * 0.12f), Offset(w / 2f, h * 0.88f), sw * 0.9f, cap = StrokeCap.Round)
+        }
+        "delete" -> {
+            drawLine(col, Offset(w * 0.18f, h * 0.28f), Offset(w * 0.82f, h * 0.28f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.4f, h * 0.28f), Offset(w * 0.4f, h * 0.18f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.4f, h * 0.18f), Offset(w * 0.6f, h * 0.18f), sw, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.6f, h * 0.18f), Offset(w * 0.6f, h * 0.28f), sw, cap = StrokeCap.Round)
+            drawRoundRect(col, topLeft = Offset(w * 0.26f, h * 0.34f),
+                size = Size(w * 0.48f, h * 0.48f), cornerRadius = CornerRadius(4f),
+                style = DrawStroke(width = sw))
+            drawLine(col, Offset(w * 0.42f, h * 0.44f), Offset(w * 0.42f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
+            drawLine(col, Offset(w * 0.58f, h * 0.44f), Offset(w * 0.58f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
+        }
+    }
+}
+
+/** UNDO(↶) / REDO(↷) 곡선 화살표 벡터. */
+@Composable
+private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(30.dp).clickable(enabled = enabled) { onClick() }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(18.dp)) {
+            val col = if (enabled) Color(0xFF2B2D42) else Color(0xFFC2C6D2)
+            val w = size.width; val h = size.height; val sw = w * 0.11f
+            withTransform({ if (redo) scale(-1f, 1f, pivot = Offset(w / 2f, h / 2f)) }) {
+                val cx = w / 2f; val cy = h * 0.52f; val r = w * 0.30f
+                val startDeg = 30f; val sweep = 250f
+                drawArc(col, startAngle = startDeg, sweepAngle = sweep, useCenter = false,
+                    topLeft = Offset(cx - r, cy - r), size = Size(2 * r, 2 * r),
+                    style = DrawStroke(width = sw, cap = StrokeCap.Round))
+                val endRad = Math.toRadians((startDeg + sweep).toDouble())
+                val px = (cx + r * Math.cos(endRad)).toFloat()
+                val py = (cy + r * Math.sin(endRad)).toFloat()
+                val tx = (-Math.sin(endRad)).toFloat(); val ty = Math.cos(endRad).toFloat()
+                val nx = Math.cos(endRad).toFloat(); val ny = Math.sin(endRad).toFloat()
+                val len = w * 0.26f; val ww = w * 0.17f
+                val tip = Offset(px + tx * len, py + ty * len)
+                val b1 = Offset(px + nx * ww, py + ny * ww)
+                val b2 = Offset(px - nx * ww, py - ny * ww)
+                drawPath(Path().apply { moveTo(tip.x, tip.y); lineTo(b1.x, b1.y); lineTo(b2.x, b2.y); close() }, col)
+            }
+        }
+    }
 }
 
 /** 볼록 뉴모피즘(좌우 꽉 찬 바용): 수직 하이라이트/그림자. */
@@ -440,7 +540,7 @@ private fun Timeline(
         }
     }
 
-    LaunchedEffect(scrollState) {
+    LaunchedEffect(scrollState, dpPerSec) {
         snapshotFlow { scrollState.value to scrollState.isScrollInProgress }
             .collect { (px, inProgress) ->
                 onScrubbingChange(inProgress)

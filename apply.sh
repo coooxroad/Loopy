@@ -1,8 +1,55 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 편집기 편집코어+핀치 2/2 (EditorScreen 이어붙임)
+# 편집기 undo/redo 2/2 (이어붙임)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat >> "app/src/main/java/com/loopy/app/editor/EditorScreen.kt" << 'LOOPY_EOF'
+/** UNDO(↶) / REDO(↷) 곡선 화살표 벡터. */
+@Composable
+private fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Box(Modifier.size(30.dp).clickable(enabled = enabled) { onClick() }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(18.dp)) {
+            val col = if (enabled) Color(0xFF2B2D42) else Color(0xFFC2C6D2)
+            val w = size.width; val h = size.height; val sw = w * 0.11f
+            withTransform({ if (redo) scale(-1f, 1f, pivot = Offset(w / 2f, h / 2f)) }) {
+                val cx = w / 2f; val cy = h * 0.52f; val r = w * 0.30f
+                val startDeg = 30f; val sweep = 250f
+                drawArc(col, startAngle = startDeg, sweepAngle = sweep, useCenter = false,
+                    topLeft = Offset(cx - r, cy - r), size = Size(2 * r, 2 * r),
+                    style = DrawStroke(width = sw, cap = StrokeCap.Round))
+                val endRad = Math.toRadians((startDeg + sweep).toDouble())
+                val px = (cx + r * Math.cos(endRad)).toFloat()
+                val py = (cy + r * Math.sin(endRad)).toFloat()
+                val tx = (-Math.sin(endRad)).toFloat(); val ty = Math.cos(endRad).toFloat()
+                val nx = Math.cos(endRad).toFloat(); val ny = Math.sin(endRad).toFloat()
+                val len = w * 0.26f; val ww = w * 0.17f
+                val tip = Offset(px + tx * len, py + ty * len)
+                val b1 = Offset(px + nx * ww, py + ny * ww)
+                val b2 = Offset(px - nx * ww, py - ny * ww)
+                drawPath(Path().apply { moveTo(tip.x, tip.y); lineTo(b1.x, b1.y); lineTo(b2.x, b2.y); close() }, col)
+            }
+        }
+    }
+}
+
+/** 볼록 뉴모피즘(좌우 꽉 찬 바용): 수직 하이라이트/그림자. */
+private fun Modifier.neuRaised() = this.drawBehind {
+    val off = 3.dp.toPx(); val blur = 7.dp.toPx()
+    drawIntoCanvas { canvas ->
+        val fw = canvas.nativeCanvas
+        val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
+        val dark = android.graphics.Paint().apply {
+            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, 0f, off, 0xFFD3D9E4.toInt())
+        }
+        fw.drawRect(rect, dark)
+        val light = android.graphics.Paint().apply {
+            isAntiAlias = true; color = 0xFFEEF1F7.toInt()
+            setShadowLayer(blur, 0f, -off, 0xFFFFFFFF.toInt())
+        }
+        fw.drawRect(rect, light)
+    }
+}
+
 @Composable
 private fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
     Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
@@ -92,7 +139,7 @@ private fun Timeline(
         }
     }
 
-    LaunchedEffect(scrollState) {
+    LaunchedEffect(scrollState, dpPerSec) {
         snapshotFlow { scrollState.value to scrollState.isScrollInProgress }
             .collect { (px, inProgress) ->
                 onScrubbingChange(inProgress)
@@ -354,7 +401,7 @@ private fun fmt(ms: Long): String {
 LOOPY_EOF
 echo "2/2 완료."
 git add -A
-git commit -m "편집기 편집코어: 편집가능 스트로크+저장, 선택 스냅, 삭제/좌우자르기/분할 툴바, 홀드드래그 이동+레인정리, 핀치 줌"
+git commit -m "편집기: 핀치 텔포 수정(dpPerSec 키) + 편집버튼 아이콘+라벨 벡터 + 인포바 undo/redo 벡터"
 git push
 echo "푸시 완료!"
 
