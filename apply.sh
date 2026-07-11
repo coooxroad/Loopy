@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 3/3
+# 3/3 (OverlayService: 회전 타임스탬프 fix)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
@@ -71,8 +71,8 @@ class OverlayService : Service() {
     private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
-    /** 녹화 중 회전 변화 기록. (매크로 기준 ms, 회전값) */
-    private val rotEvents = ArrayList<RotationEvent>()
+    /** 녹화 중 회전 변화 기록. (절대 uptimeMs, 회전값) — 저장 시 baseUptime 기준 상대시각으로 변환 */
+    private val rotEventsRaw = ArrayList<Pair<Long, Int>>()
     private var rotListener: DisplayManager.DisplayListener? = null
     private var videoEnabled = false
     private var currentVideoPath: String? = null
@@ -443,7 +443,7 @@ class OverlayService : Service() {
         currentVideoPath = videoPath
         recorder.reset()
         recording = true
-        rotEvents.clear()
+        rotEventsRaw.clear()
         registerRotationListener()
         recordBtn.setImageResource(R.drawable.ic_ov_stop)
         status.visibility = View.VISIBLE
@@ -470,10 +470,18 @@ class OverlayService : Service() {
             @Suppress("DEPRECATION")
             wm.defaultDisplay.rotation * 90
         }.getOrDefault(0)
+        // 회전 이벤트: 절대 uptime → 매크로 시작(baseUptime) 기준 상대 ms
+        val base = recorder.baseUptime
+        val startRot = rotEventsRaw.lastOrNull { it.first <= base }?.second ?: rot
         val evts = ArrayList<RotationEvent>()
-        evts.add(RotationEvent(0L, rot))
-        evts.addAll(rotEvents.filter { it.tMs > 0L })
-        val m = MacroStore.saveNew(this, snap, vpath, offset, rot, evts)
+        evts.add(RotationEvent(0L, startRot))
+        if (base > 0) {
+            for ((up, r) in rotEventsRaw) {
+                val rel = up - base
+                if (rel > 0L) evts.add(RotationEvent(rel, r))
+            }
+        }
+        val m = MacroStore.saveNew(this, snap, vpath, offset, startRot, evts)
         status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
     }
 
@@ -489,10 +497,7 @@ class OverlayService : Service() {
                 val r = displayObj.rotation * 90
                 if (r == lastRot) return
                 lastRot = r
-                val base = recorder.baseUptime
-                val tMs = if (base > 0) (android.os.SystemClock.uptimeMillis() - base)
-                    .coerceAtLeast(0L) else 0L
-                rotEvents.add(RotationEvent(tMs, r))
+                rotEventsRaw.add(android.os.SystemClock.uptimeMillis() to r)
             }
         }
         dm.registerDisplayListener(l, null)
@@ -748,7 +753,7 @@ class OverlayService : Service() {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "fix: totalMs 선언 복원 + 회전 타임라인/드래그 실시간/키보드/zIndex"
+git commit -m "회전 완전수정: 이벤트 타임스탬프(절대uptime->상대) + 회전구간 스트로크를 프레임내 축소 가로영역에 매핑"
 git push
 echo "푸시 완료!"
 

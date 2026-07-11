@@ -410,13 +410,13 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     if (si < strokes.size) {
                         StrokeMoveBox(
                             stroke = strokes[si], contentAspect = contentAspect,
-                            defaultRot = currentRot,
+                            defaultRot = currentRot, screenAspect = screenAspect,
                             onDragDelta = { dnx, dny -> nudgeLive(si, dnx, dny) },
                             onDragEnd = { nudgeCommit() },
                         )
                     }
                 }
-                TraceOverlay(strokes, playheadStrokeMs, contentAspect, macro, currentRot)
+                TraceOverlay(strokes, playheadStrokeMs, contentAspect, macro, currentRot, screenAspect)
             }
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
@@ -1050,7 +1050,7 @@ private fun StrokeBlock(
  */
 @Composable
 private fun StrokeMoveBox(
-    stroke: Stroke, contentAspect: Float, defaultRot: Int,
+    stroke: Stroke, contentAspect: Float, defaultRot: Int, screenAspect: Float,
     onDragDelta: (Float, Float) -> Unit, onDragEnd: () -> Unit,
 ) {
     val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
@@ -1064,7 +1064,15 @@ private fun StrokeMoveBox(
                     val dispW: Float; val dispH: Float
                     if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
                     else { dispH = bh; dispW = bh * contentAspect }
-                    val sx = amount.x / dispW; val sy = amount.y / dispH
+                    // 회전 구간이면 축소된 가로 영역 크기 기준으로 델타 환산
+                    val land = rotDeg == 90 || rotDeg == 270
+                    val landAsp = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
+                    val aW: Float; val aH: Float
+                    if (land) {
+                        if (landAsp > (dispW / dispH)) { aW = dispW; aH = dispW / landAsp }
+                        else { aH = dispH; aW = dispH * landAsp }
+                    } else { aW = dispW; aH = dispH }
+                    val sx = amount.x / aW; val sy = amount.y / aH
                     val (dnx, dny) = when (rotDeg) {
                         90 -> (-sy) to sx
                         180 -> (-sx) to (-sy)
@@ -1085,11 +1093,23 @@ private fun StrokeMoveBox(
             else { dispH = bh; dispW = bh * contentAspect }
             val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
             if (stroke.samples.isEmpty()) return@Canvas
+            // 회전 구간: 프레임 안의 축소된 가로 영역
+            val landscape = rotDeg == 90 || rotDeg == 270
+            val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
+            val areaW: Float; val areaH: Float; val areaX: Float; val areaY: Float
+            if (landscape) {
+                if (landAspect > (dispW / dispH)) { areaW = dispW; areaH = dispW / landAspect }
+                else { areaH = dispH; areaW = dispH * landAspect }
+                areaX = offX + (dispW - areaW) / 2f
+                areaY = offY + (dispH - areaH) / 2f
+            } else {
+                areaW = dispW; areaH = dispH; areaX = offX; areaY = offY
+            }
             var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
             var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
             for (smp in stroke.samples) {
                 val (rx, ry) = rotNorm(smp.nx, smp.ny, rotDeg)
-                val x = offX + rx * dispW; val y = offY + ry * dispH
+                val x = areaX + rx * areaW; val y = areaY + ry * areaH
                 if (x < minX) minX = x; if (x > maxX) maxX = x
                 if (y < minY) minY = y; if (y > maxY) maxY = y
             }
@@ -1172,17 +1192,41 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
 }
 
 @Composable
-private fun TraceOverlay(strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float, macro: Macro, rotationDeg: Int) {
+private fun TraceOverlay(
+    strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float,
+    macro: Macro, rotationDeg: Int, screenAspect: Float,
+) {
     Canvas(Modifier.fillMaxSize()) {
         val bw = size.width; val bh = size.height
         val boxAspect = bw / bh
+        // 1) 영상 프레임이 화면에 그려지는 사각형(letterbox 보정)
         val dispW: Float; val dispH: Float
         if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
         else { dispH = bh; dispW = bh * contentAspect }
         val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
+
+        /**
+         * 2) 회전 구간 보정.
+         * 화면녹화 영상은 프레임 크기가 고정(세로)이라, 기기를 돌리면 가로 화면이
+         * 그 세로 프레임 '안에' 폭 맞춤으로 축소되어 세로 중앙에 배치된다.
+         * 따라서 회전(90/270) 구간의 스트로크는 프레임 전체가 아니라
+         * 그 축소된 가로 영역에 매핑해야 한다.
+         */
         fun mapPt(nx: Float, ny: Float, rotDeg: Int): Offset {
             val (rx, ry) = rotNorm(nx, ny, rotDeg)
-            return Offset(offX + rx * dispW, offY + ry * dispH)
+            val landscape = rotDeg == 90 || rotDeg == 270
+            if (!landscape) {
+                return Offset(offX + rx * dispW, offY + ry * dispH)
+            }
+            // 가로 화면의 종횡비 = 1/screenAspect (세로화면 비의 역수)
+            val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
+            // 프레임(dispW x dispH) 안에 가로 화면을 fit
+            val innerW: Float; val innerH: Float
+            if (landAspect > (dispW / dispH)) { innerW = dispW; innerH = dispW / landAspect }
+            else { innerH = dispH; innerW = dispH * landAspect }
+            val inX = offX + (dispW - innerW) / 2f
+            val inY = offY + (dispH - innerH) / 2f
+            return Offset(inX + rx * innerW, inY + ry * innerH)
         }
         for (s in strokes) {
             val relT = playheadStrokeMs - s.startMs
