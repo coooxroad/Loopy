@@ -64,9 +64,14 @@ class VarScope(private val global: MutableMap<String, String>) {
         global[name] = value
     }
 
-    /** 문자열 안의 {name} 을 값으로 치환. 파라미터 어디서든 변수를 쓸 수 있게 한다. */
+    /**
+     * 문자열 안의 {name} 을 값으로 치환.
+     *
+     * 없는 변수는 빈 문자열이 된다. 원래 표기를 남겨두면 "{slock} != 1" 같은 비교가
+     * 문자열 비교로 우연히 참이 되어, 왜 그렇게 도는지 알 수 없는 매크로가 된다.
+     */
     fun expand(text: String): String =
-        Regex("\\{(\\w+)}").replace(text) { m -> this[m.groupValues[1]] ?: m.value }
+        Regex("\\{(\\w+)}").replace(text) { m -> this[m.groupValues[1]] ?: "" }
 
     fun child(): VarScope = VarScope(global).also { it.local.putAll(local) }
 }

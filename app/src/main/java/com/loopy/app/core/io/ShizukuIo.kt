@@ -28,9 +28,16 @@ class ShizukuIo(
 
     private val reader = GeteventReader()
 
-    private companion object {
+    companion object {
         /** UP 직후 같은 id 를 재사용하기까지의 최소 간격. 연타가 하나로 합쳐지는 것을 막는다. */
-        const val FINGER_REUSE_GAP_MS = 12L
+        private const val FINGER_REUSE_GAP_MS = 12L
+
+        /** 오버레이 서비스가 자기 구현을 여기에 걸어둔다. */
+        @Volatile
+        var dimHandler: ((Boolean) -> Unit)? = null
+
+        @Volatile
+        var dimState: Boolean = false
     }
 
     override val available: Boolean
@@ -157,6 +164,22 @@ class ShizukuIo(
     override suspend fun shell(cmd: String): String? = withContext(Dispatchers.IO) {
         runCatching { Shell.run(cmd) }.getOrNull()
     }
+
+    /**
+     * 화면 가리기.
+     *
+     * 윈도우를 띄우는 일은 오버레이 서비스만 할 수 있으므로, 실제 동작은 그쪽이 등록한
+     * 핸들러에 위임한다. Io 를 쓰는 쪽(Material 실행기)은 서비스의 존재를 몰라도 된다.
+     */
+    override fun setDim(on: Boolean) {
+        dimHandler?.invoke(on)
+    }
+
+    override fun isDimmed(): Boolean = dimState
+
+    override suspend fun dismissAlarm(): Boolean =
+        shell("am broadcast -a com.android.deskclock.ALARM_DISMISS") != null ||
+            shell("input keyevent KEYCODE_STOP") != null
 
     override suspend fun launchApp(pkg: String): Boolean =
         shell("monkey -p $pkg -c android.intent.category.LAUNCHER 1") != null

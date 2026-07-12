@@ -31,15 +31,22 @@ object MaterialStore {
         val f = file(ctx)
         if (!f.exists()) {
             // 첫 실행이거나 구버전 사용자. 기존 매크로/플레이리스트를 Material 로 옮긴다.
-            val migrated = Migration.fromLegacy(ctx)
-            if (migrated.isNotEmpty()) save(ctx, migrated)
-            return migrated
+            val initial = Presets.all() + Migration.fromLegacy(ctx)
+            save(ctx, initial)
+            return initial
         }
-        return runCatching {
+        val stored = runCatching {
             val root = JSONObject(f.readText())
             val arr = root.optJSONArray("materials") ?: JSONArray()
             (0 until arr.length()).map { readMaterial(arr.getJSONObject(it)) }
         }.getOrDefault(emptyList())
+
+        // 앱 업데이트로 새 프리셋이 생겼을 수 있다. 사용자가 고친 것은 건드리지 않는다.
+        val missing = Presets.all().filter { p -> stored.none { it.id == p.id } }
+        if (missing.isEmpty()) return stored
+        val merged = stored + missing
+        save(ctx, merged)
+        return merged
     }
 
     fun save(ctx: Context, materials: List<Material>) {

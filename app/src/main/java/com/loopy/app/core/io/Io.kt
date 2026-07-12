@@ -54,6 +54,19 @@ interface Io {
     /** 임의 셸 명령. 마지막 수단이자, 아직 전용 API 가 없는 기능의 임시 통로. */
     suspend fun shell(cmd: String): String?
 
+    /**
+     * 화면 위 검은 레이어.
+     *
+     * 터치는 통과시켜야 한다. 화면을 가린 채로도 매크로가 계속 돌아야 하기 때문이다.
+     * 오버레이 서비스만이 윈도우를 띄울 수 있으므로, 구현은 그쪽에 연결된다.
+     */
+    fun setDim(on: Boolean)
+
+    fun isDimmed(): Boolean
+
+    /** 울리는 알람 정지. */
+    suspend fun dismissAlarm(): Boolean
+
     /** 앱 실행 / 종료. 트리거·액션 양쪽에서 쓰인다. */
     suspend fun launchApp(pkg: String): Boolean
 

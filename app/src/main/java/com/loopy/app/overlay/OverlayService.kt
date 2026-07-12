@@ -46,6 +46,7 @@ import com.loopy.app.core.exec.ExecLog
 import com.loopy.app.core.exec.VarScope
 import com.loopy.app.core.material.Material
 import com.loopy.app.data.MaterialStore
+import com.loopy.app.data.Presets
 import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,7 +68,13 @@ class OverlayService : Service() {
     private lateinit var wm: WindowManager
 
     private val reader = GeteventReader()
-    private val io by lazy { ShizukuIo(this, scope) }
+    private val io by lazy {
+        ShizukuIo(this, scope).also {
+            // 윈도우를 띄우는 일은 서비스만 할 수 있으므로 Io 가 이쪽으로 되돌아오게 연결한다.
+            ShizukuIo.dimHandler = { on -> mainHandler.post { setDim(on) } }
+        }
+    }
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var buildCancel: CancelSignal? = null
     private val globalVars = HashMap<String, String>()
     private val recorder = RawRecorder()
@@ -192,7 +199,7 @@ class OverlayService : Service() {
         val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
         val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
         val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
-            setDeepSLock(true)
+            runPreset(Presets.DEEP_SLOCK)
             if (expanded) toggleExpand()
         }
         val vBtn = iconBtn(R.drawable.ic_ov_video, videoTint(), videoBg()) { toggleVideo() }
@@ -272,11 +279,18 @@ class OverlayService : Service() {
         setColor(color)
     }
 
-    /** Deep SLock: 검은 레이어(non-touchable, 매크로 통과) + 최소 밝기. 달 버튼/FAB 재탭으로 토글. */
-    private fun setDeepSLock(on: Boolean) {
+    /**
+     * 화면 가리기.
+     *
+     * 윈도우를 띄우는 일만 한다. 밝기 조절이나 상태 기억은 Material 이 맡는다.
+     * 그래서 사용자가 Deep SLock 빌드를 열어 "무엇을 어떤 순서로 하는지" 볼 수 있다.
+     *
+     * 레이어는 터치를 통과시킨다. 화면을 가린 채로도 매크로가 계속 돌아야 하기 때문이다.
+     */
+    private fun setDim(on: Boolean) {
         if (on) {
             if (dimView != null) return
-            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) } // ~97% 블랙(최대한 어둡게)
+            val v = View(this).apply { setBackgroundColor(0xF7000000.toInt()) }
             val p = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -286,19 +300,18 @@ class OverlayService : Service() {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 android.graphics.PixelFormat.TRANSLUCENT,
-            ).apply { screenBrightness = 0.01f } // 최소 밝기(0=화면꺼짐 위험이라 살짝 남김)
+            )
             runCatching { wm.addView(v, p) }
             dimView = v
-            // FAB를 검은 레이어 위로 올려 다시 누를 수 있게 + 달 아이콘으로 교체
+            // 가려진 뒤에도 컨트롤을 누를 수 있어야 하므로 바를 레이어 위로 다시 올린다.
             runCatching { wm.removeViewImmediate(bar); wm.addView(bar, barParams) }
-            fab.setMoon(true)
-            deepLocked = true
         } else {
             dimView?.let { runCatching { wm.removeView(it) } }
             dimView = null
-            fab.setMoon(false)
-            deepLocked = false
         }
+        fab.setMoon(on)
+        deepLocked = on
+        ShizukuIo.dimState = on
     }
 
     /** 접기/펼치기. 펼치면 FAB 옆 슬림 패널 + 상태/힌트가 나온다. */
@@ -352,7 +365,7 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
                     if (!dragged && !longFired) {
-                        if (deepLocked) setDeepSLock(false) else toggleExpand()
+                        if (deepLocked) runPreset(Presets.DEEP_SLOCK) else toggleExpand()
                     }
                     true
                 }
@@ -561,6 +574,12 @@ class OverlayService : Service() {
             playJob = null
             buildCancel = null
         }
+    }
+
+    /** 저장된 Material 을 id 로 실행. 오버레이 버튼이 이것을 통해 무엇이든 실행할 수 있다. */
+    private fun runPreset(id: String) {
+        val m = MaterialStore.get(this, id) ?: return
+        playBuild(m)
     }
 
     private fun stopPlayback(msg: String?) {

@@ -4,7 +4,9 @@ import android.app.Application
 import com.loopy.app.core.exec.TouchExecutor
 import com.loopy.app.core.exec.registerBuiltinExecutors
 import com.loopy.app.core.exec.ExecutorRegistry
+import com.loopy.app.core.exec.registerSystemExecutors
 import com.loopy.app.core.material.registerBuiltins
+import com.loopy.app.core.material.registerSystemTypes
 
 /**
  * 앱 시작 지점.
@@ -18,7 +20,9 @@ class LoopyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         registerBuiltins()
+        registerSystemTypes()
         registerBuiltinExecutors()
+        registerSystemExecutors()
         ExecutorRegistry.register(TouchExecutor(this))
     }
 }
