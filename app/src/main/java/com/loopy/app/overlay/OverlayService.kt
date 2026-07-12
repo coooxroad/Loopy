@@ -523,7 +523,7 @@ class OverlayService : Service() {
     private fun startSingle(strokes: List<Stroke>, label: String) {
         if (recording) stopRecord()
         stopPlayback(null)
-        if (strokes.isEmpty()) { status.text = "재생할 게 없어"; return }
+        if (strokes.isEmpty()) { status.text = "재생할 내용 없음"; return }
         stopPlayBtn.visibility = View.VISIBLE
         status.text = "▶ 재생중… $label"
         playJob = scope.launch {
@@ -592,7 +592,7 @@ class OverlayService : Service() {
         }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (builds.isEmpty() && macros.isEmpty()) {
-            content.addView(hint("저장된 게 없어"))
+            content.addView(hint("저장된 항목 없음"))
         } else {
             if (builds.isNotEmpty()) {
                 content.addView(hint("─ 빌드 ─"))
