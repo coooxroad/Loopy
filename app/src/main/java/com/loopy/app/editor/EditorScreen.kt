@@ -108,7 +108,7 @@ fun MacroEditorScreen(build: Material, onBack: () -> Unit) {
     val undoStack = remember { mutableStateListOf<List<PlacedStroke>>() }
     val redoStack = remember { mutableStateListOf<List<PlacedStroke>>() }
     fun pushUndo() { undoStack.add(strokes.toList()); redoStack.clear() }
-    fun applyStrokes(list: List<Stroke>) {
+    fun applyStrokes(list: List<PlacedStroke>) {
         strokes.clear(); strokes.addAll(list); persist()
     }
     fun undo() {
@@ -133,7 +133,7 @@ fun MacroEditorScreen(build: Material, onBack: () -> Unit) {
         onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
     }
 
-    val macroDurationMs = (strokes.maxOfOrNull { it.startMs + it.durationMs } ?: 0L).coerceAtLeast(1L)
+    val macroDurationMs = (strokes.maxOfOrNull { it.startMs + it.stroke.durationMs } ?: 0L).coerceAtLeast(1L)
 
     val player = remember(model.videoPath) {
         if (!hasVideo) null else ExoPlayer.Builder(context).build().apply {

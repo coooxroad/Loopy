@@ -119,11 +119,4 @@ object MaterialStore {
 
     fun newId(): String = UUID.randomUUID().toString()
 
-    /** 촬영 매크로를 가리키는 Material 하나 만들기. 라이브러리와 빌드 양쪽에서 쓴다. */
-    fun touchMaterial(macroId: String, name: String, createdAt: Long): Material = Material(
-        id = newId(),
-        typeId = "touch",
-        params = TouchParams(macroId),
-        meta = Meta(name = name, createdAt = createdAt),
-    )
 }
