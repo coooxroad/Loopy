@@ -936,7 +936,7 @@ private fun StrokeBlock(
             Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
                 .clip(shape)
                 .neu(NeuBase, fill = if (selected) Color.White else base,
-                    cornerDp = 7f, offDp = 1.6f, blurDp = 3.2f)
+                    corner = 7.dp, offset = 1.6.dp, blur = 3.2.dp)
                 .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }

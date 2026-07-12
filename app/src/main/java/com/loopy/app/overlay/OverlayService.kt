@@ -35,6 +35,7 @@ import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
+import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.RotationEvent
@@ -649,10 +650,13 @@ class OverlayService : Service() {
     }
 
 
+    /** 패널 좌표가 컨트롤 바 위인지. 바를 누른 터치는 매크로로 기록하지 않는다. */
     private fun barContains(u: Float, v: Float): Boolean {
         val m = DisplayMetrics()
         displayObj.getRealMetrics(m)
-        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
+        val (rx, ry) = Coords.rotate(u, v, displayObj.rotation * 90)
+        val px = (rx * m.widthPixels).toInt()
+        val py = (ry * m.heightPixels).toInt()
         val loc = IntArray(2)
         bar.getLocationOnScreen(loc)
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)

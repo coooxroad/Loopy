@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 3/3 (OverlayService + AI 말투 정리분)
+# 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
@@ -40,6 +40,7 @@ import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
 import com.loopy.app.macro.Macro
+import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.RotationEvent
@@ -654,10 +655,13 @@ class OverlayService : Service() {
     }
 
 
+    /** 패널 좌표가 컨트롤 바 위인지. 바를 누른 터치는 매크로로 기록하지 않는다. */
     private fun barContains(u: Float, v: Float): Boolean {
         val m = DisplayMetrics()
         displayObj.getRealMetrics(m)
-        val (px, py) = toPx(u, v, m.widthPixels, m.heightPixels, displayObj.rotation)
+        val (rx, ry) = Coords.rotate(u, v, displayObj.rotation * 90)
+        val px = (rx * m.widthPixels).toInt()
+        val py = (ry * m.heightPixels).toInt()
         val loc = IntArray(2)
         bar.getLocationOnScreen(loc)
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
@@ -706,7 +710,7 @@ class OverlayService : Service() {
 LOOPY_EOF
 echo "3/3 완료."
 git add -A
-git commit -m "Phase 0-3: 중복 제거 — 뉴모피즘/좌표/캡처/재생을 새 기반으로 위임, 손가락 id 재사용 로직 Io로 이식, AI 말투 정리"
+git commit -m "Phase 0-3: 중복 제거(뉴모피즘/좌표/캡처/재생 위임), 손가락 id 재사용 이식, barContains를 Coords로, AI 말투 정리"
 git push
 echo "푸시 완료"
 
