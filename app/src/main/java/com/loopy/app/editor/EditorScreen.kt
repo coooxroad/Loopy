@@ -104,6 +104,7 @@ import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.CardStroke
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.core.geom.Coords
+import com.loopy.app.core.stroke.StrokeOps
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.neu
 import com.loopy.app.ui.theme.neuBar
@@ -272,7 +273,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
     val playheadStrokeMs = positionMs - macro.videoOffsetMs
     // 현재 재생 시각의 화면 회전(녹화 중 기록된 회전 타임라인에서 조회)
-    val currentRot = rotationAt(macro, playheadStrokeMs)
+    val currentRot = StrokeOps.rotationAt(macro, playheadStrokeMs)
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
     val coScope = rememberCoroutineScope()
@@ -343,19 +344,19 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     }
     fun doTrimLeft() {
         val i = selectedStroke ?: return
-        val r = trimLeft(strokes[i], playheadStrokeMs) ?: return
+        val r = StrokeOps.trimLeft(strokes[i], playheadStrokeMs) ?: return
         pushUndo(); strokes[i] = r; persist()
     }
     fun doTrimRight() {
         val i = selectedStroke ?: return
-        val r = trimRight(strokes[i], playheadStrokeMs) ?: return
+        val r = StrokeOps.trimRight(strokes[i], playheadStrokeMs) ?: return
         pushUndo(); strokes[i] = r; persist()
     }
     fun doSplit() {
         val i = selectedStroke ?: return
         val s = strokes[i]
         if (playheadStrokeMs <= s.startMs || playheadStrokeMs >= s.startMs + s.durationMs) return
-        val pair = splitStroke(s, playheadStrokeMs) ?: return
+        val pair = StrokeOps.split(s, playheadStrokeMs) ?: return
         pushUndo(); strokes[i] = pair.first; strokes.add(i + 1, pair.second); persist()
     }
     fun doMove(i: Int, newStartMs: Long) {
@@ -366,11 +367,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     fun nudgeLive(i: Int, dnx: Float, dny: Float) {
         if (dnx == 0f && dny == 0f) return
         if (!nudging) { pushUndo(); nudging = true } // 드래그 시작 시 한 번만 undo 기록
-        val s = strokes[i]
-        val moved = s.samples.map {
-            it.copy(nx = (it.nx + dnx).coerceIn(0f, 1f), ny = (it.ny + dny).coerceIn(0f, 1f))
-        }
-        strokes[i] = s.copy(samples = moved)
+        strokes[i] = StrokeOps.move(strokes[i], dnx, dny)
     }
     /** 드래그 종료: 저장. */
     fun nudgeCommit() {
@@ -761,7 +758,7 @@ private fun Timeline(
     val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
     val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
 
-    val lanes = assignLanes(strokes)
+    val lanes = StrokeOps.assignLanes(strokes)
     val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
     val strokeTrackH = laneStep * laneCount
     val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
@@ -1030,16 +1027,6 @@ private fun StrokeMoveBox(
 }
 
 /** 매크로 시각 tMs에서의 화면 회전(녹화 중 기록된 타임라인 조회). */
-private fun rotationAt(macro: Macro, tMs: Long): Int {
-    val evts = macro.rotationEvents
-    if (evts.isEmpty()) return macro.rotation
-    var rot = evts.first().rotation
-    for (e in evts) {
-        if (e.tMs <= tMs) rot = e.rotation else break
-    }
-    return rot
-}
-
 /** 현재 화면 회전(0/90/180/270). */
 private fun currentRotation(ctx: android.content.Context): Int {
     val wm = ctx.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
@@ -1129,7 +1116,7 @@ private fun TraceOverlay(
             if (edge <= 0f) continue
             val samples = s.samples
             if (samples.isEmpty()) continue
-            val sRot = if (s.rotation >= 0) s.rotation else rotationAt(macro, s.startMs)
+            val sRot = if (s.rotation >= 0) s.rotation else StrokeOps.rotationAt(macro, s.startMs)
             val cStart = if (s.added) AddedGreen else TraceStart
             val cEnd = if (s.added) AddedEnd else TraceEnd
             val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
@@ -1148,7 +1135,7 @@ private fun TraceOverlay(
                 }
                 prev = p; prevFrac = frac
             }
-            val cur = sampleAt(samples, revealT)
+            val cur = StrokeOps.sampleAt(samples, revealT)
             if (cur != null) {
                 val p = mapPt(cur.first, cur.second, sRot)
                 if (pressing) drawTouchDot(p, edge, cStart, rgb)
@@ -1156,53 +1143,6 @@ private fun TraceOverlay(
             }
         }
     }
-}
-
-// ── 스트로크 편집 연산 ──
-private fun trimLeft(s: Stroke, atStrokeMs: Long): Stroke? {
-    val rel = (atStrokeMs - s.startMs).coerceIn(0L, s.durationMs)
-    val kept = s.samples.filter { it.t >= rel }.map { it.copy(t = it.t - rel) }
-    if (kept.size < 2) return null
-    return Stroke(s.startMs + rel, s.durationMs - rel, kept)
-}
-private fun trimRight(s: Stroke, atStrokeMs: Long): Stroke? {
-    val rel = (atStrokeMs - s.startMs).coerceIn(0L, s.durationMs)
-    val kept = s.samples.filter { it.t <= rel }
-    if (kept.size < 2) return null
-    return Stroke(s.startMs, rel, kept)
-}
-private fun splitStroke(s: Stroke, atStrokeMs: Long): Pair<Stroke, Stroke>? {
-    val left = trimRight(s, atStrokeMs) ?: return null
-    val right = trimLeft(s, atStrokeMs) ?: return null
-    return left to right
-}
-
-/** 각 스트로크의 레인 번호(시간 겹치면 다음 레인). */
-private fun assignLanes(strokes: List<Stroke>): List<Int> {
-    val result = IntArray(strokes.size)
-    val laneEnd = ArrayList<Long>()
-    for (idx in strokes.indices.sortedBy { strokes[it].startMs }) {
-        val s = strokes[idx]
-        var lane = laneEnd.indexOfFirst { it <= s.startMs }
-        if (lane < 0) { lane = laneEnd.size; laneEnd.add(0L) }
-        laneEnd[lane] = s.startMs + s.durationMs
-        result[idx] = lane
-    }
-    return result.toList()
-}
-
-private fun sampleAt(samples: List<TouchSample>, t: Long): Pair<Float, Float>? {
-    if (samples.isEmpty()) return null
-    if (t <= samples.first().t) return samples.first().nx to samples.first().ny
-    if (t >= samples.last().t) return samples.last().nx to samples.last().ny
-    for (i in 1 until samples.size) {
-        val a = samples[i - 1]; val b = samples[i]
-        if (t in a.t..b.t) {
-            val fr = if (b.t == a.t) 0f else (t - a.t).toFloat() / (b.t - a.t)
-            return (a.nx + (b.nx - a.nx) * fr) to (a.ny + (b.ny - a.ny) * fr)
-        }
-    }
-    return samples.last().nx to samples.last().ny
 }
 
 private fun fmt(ms: Long): String {

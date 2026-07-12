@@ -53,8 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.loopy.app.macro.Macro
 import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.Playlist
-import com.loopy.app.macro.PlaylistStore
 import com.loopy.app.overlay.OverlayService
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -100,7 +98,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Tab(val label: String, val icon: String) {
-    HOME("홈", "🏠"), PLAYLIST("플레이리스트", "🎵"), LIBRARY("라이브러리", "📁"), SETTINGS("설정", "⚙️"),
+    DASHBOARD("대시보드", "◈"), LIBRARY("라이브러리", "▤"), SETTINGS("설정", "⚙"),
 }
 
 @Composable
@@ -133,10 +131,9 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var overlayMsg by remember { mutableStateOf("오버레이를 켜고 게임으로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
     var macros by remember { mutableStateOf(MacroStore.list(context)) }
-    var playlists by remember { mutableStateOf(PlaylistStore.list(context)) }
     var renaming by remember { mutableStateOf<Macro?>(null) }
     var nameField by remember { mutableStateOf("") }
-    var tab by remember { mutableStateOf(Tab.HOME) }
+    var tab by remember { mutableStateOf(Tab.DASHBOARD) }
 
     // 앱 시작 시 권한 안내 팝업 (Shizuku 우선, 그다음 오버레이)
     var showShizukuDialog by remember { mutableStateOf(state != ShizukuState.READY) }
@@ -155,20 +152,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
 
     fun refresh() {
         macros = MacroStore.list(context)
-        playlists = PlaylistStore.list(context)
     }
 
-    fun openEditor(pl: Playlist?) {
-        editorMacros = MacroStore.list(context)
-        editId = pl?.id
-        plName = pl?.name ?: ""
-        plShuffle = pl?.shuffle ?: false
-        plCycles = pl?.cycles?.takeIf { it > 0 }?.toString() ?: ""
-        plGap = pl?.gapMs?.takeIf { it > 0 }?.let { (it / 1000.0).toString() } ?: ""
-        pattern.clear()
-        pl?.macroIds?.let { pattern.addAll(it) }
-        editorOpen = true
-    }
 
     LaunchedEffect(Unit) {
         registerRefresh {
@@ -193,26 +178,6 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     }
 
     if (editorOpen) {
-        PlaylistEditor(
-            name = plName, onName = { plName = it },
-            shuffle = plShuffle, onShuffle = { plShuffle = it },
-            cycles = plCycles, onCycles = { plCycles = it.filter { c -> c.isDigit() } },
-            gap = plGap, onGap = { plGap = it.filter { c -> c.isDigit() || c == '.' } },
-            pattern = pattern,
-            macros = editorMacros,
-            onSave = {
-                if (plName.isNotBlank() && pattern.isNotEmpty()) {
-                    PlaylistStore.save(
-                        context, plName.trim(), pattern.toList(),
-                        plShuffle, plCycles.toIntOrNull() ?: 0,
-                        ((plGap.toDoubleOrNull() ?: 0.0) * 1000).toInt(), editId,
-                    )
-                    refresh()
-                    editorOpen = false
-                }
-            },
-            onCancel = { editorOpen = false },
-        )
         return
     }
 
@@ -240,9 +205,9 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             AnimatedBottomGradient()
 
             when (tab) {
-                Tab.HOME -> HomeTab(
+                Tab.DASHBOARD -> DashboardTab(
                     state = state, canOverlay = canOverlay, msg = overlayMsg,
-                    recentMacro = macros.firstOrNull(), recentPlaylist = playlists.firstOrNull(),
+                    recentMacro = macros.firstOrNull(),
                     onToggleOverlay = { turningOn ->
                         if (turningOn) {
                             context.startForegroundService(Intent(context, OverlayService::class.java))
@@ -254,12 +219,6 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     },
                     sessionActive = VideoSession.active,
                     onToggleSession = { toggleSession(it) },
-                )
-                Tab.PLAYLIST -> PlaylistTab(
-                    playlists = playlists,
-                    onNew = { openEditor(null) },
-                    onEdit = { openEditor(it) },
-                    onDelete = { PlaylistStore.delete(context, it.id); refresh() },
                 )
                 Tab.LIBRARY -> LibraryTab(
                     macros = macros,
@@ -300,7 +259,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { showShizukuDialog = false }) { Text("나중에", color = TextLo) } },
             title = { Text("Shizuku 연결 필요", color = TextHi) },
-            text = { Text("Loopy가 터치를 읽고 재현하려면 Shizuku 권한이 필요해. 설정 탭에서 허용해줘.", color = TextLo, fontSize = 13.sp) },
+            text = { Text("터치 재현에 Shizuku 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
             containerColor = LoopyCard,
         )
     } else if (showOverlayDialog && !canOverlay) {
@@ -313,7 +272,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { showOverlayDialog = false }) { Text("나중에", color = TextLo) } },
             title = { Text("오버레이 권한 필요", color = TextHi) },
-            text = { Text("게임 위에 컨트롤 바를 띄우려면 '다른 앱 위에 표시' 권한이 필요해.", color = TextLo, fontSize = 13.sp) },
+            text = { Text("화면 위에 컨트롤을 띄우려면 '다른 앱 위에 표시' 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
             containerColor = LoopyCard,
         )
     }
@@ -346,12 +305,11 @@ private fun ScreenColumn(content: @Composable androidx.compose.foundation.layout
 }
 
 @Composable
-private fun HomeTab(
+private fun DashboardTab(
     state: ShizukuState,
     canOverlay: Boolean,
     msg: String,
     recentMacro: Macro?,
-    recentPlaylist: Playlist?,
     onToggleOverlay: (Boolean) -> Unit,
     sessionActive: Boolean,
     onToggleSession: (Boolean) -> Unit,
@@ -378,7 +336,7 @@ private fun HomeTab(
             }
             if (!ready) {
                 Spacer(Modifier.height(8.dp))
-                Text("설정 탭에서 Shizuku·오버레이 권한을 먼저 허용해줘.", color = TextLo, fontSize = 11.sp)
+                Text("설정에서 권한을 허용하세요", color = TextLo, fontSize = 11.sp)
             }
         }
 
@@ -387,59 +345,15 @@ private fun HomeTab(
         SoftCard(Modifier.fillMaxWidth()) {
             Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
-            if (recentPlaylist == null && recentMacro == null) {
-                Text("아직 없어. 오버레이에서 녹화해봐.", color = TextLo, fontSize = 12.sp)
+            if (recentMacro == null) {
+                Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 12.sp)
             } else {
-                recentPlaylist?.let {
-                    Text("🎵 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${it.macroIds.size}스텝 플레이리스트", color = TextLo, fontSize = 11.sp)
-                    Spacer(Modifier.height(10.dp))
-                }
-                recentMacro?.let {
+                recentMacro.let {
                     Text("📄 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                     Text("${it.strokes.size} 스트로크", color = TextLo, fontSize = 11.sp)
                 }
                 Spacer(Modifier.height(6.dp))
-                Text("편집은 라이브러리·플레이리스트 탭에서 (곧 지원 예정).", color = TextLo, fontSize = 11.sp)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-}
 
-@Composable
-private fun PlaylistTab(
-    playlists: List<Playlist>,
-    onNew: () -> Unit,
-    onEdit: (Playlist) -> Unit,
-    onDelete: (Playlist) -> Unit,
-) {
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GradientTitle("플레이리스트", size = 28, modifier = Modifier.weight(1f))
-            Text("+ 새로 만들기", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onNew() })
-        }
-        if (playlists.isEmpty()) {
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("매크로를 2개 이상 저장한 뒤 플레이리스트를 만들어봐.", color = TextLo, fontSize = 13.sp)
-            }
-        } else {
-            playlists.forEach { pl ->
-                SoftCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(pl.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            val rep = if (pl.cycles == 0) "무한" else "${pl.cycles}회"
-                            val sh = if (pl.shuffle) " · 셔플" else ""
-                            val gp = if (pl.gapMs > 0) " · 대기 ${pl.gapMs / 1000.0}s" else ""
-                            Text("${pl.macroIds.size}스텝 · $rep$sh$gp", color = TextLo, fontSize = 12.sp)
-                        }
-                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(pl) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(pl) })
-                    }
-                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -462,7 +376,7 @@ private fun LibraryTab(
         }
         if (macros.isEmpty()) {
             SoftCard(Modifier.fillMaxWidth()) {
-                Text("아직 없어. 오버레이에서 녹화하면 여기 쌓여.", color = TextLo, fontSize = 13.sp)
+                Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 13.sp)
             }
         } else {
             macros.forEach { m ->
@@ -540,99 +454,6 @@ private fun SettingsTab(
 }
 
 @Composable
-private fun PlaylistEditor(
-    name: String, onName: (String) -> Unit,
-    shuffle: Boolean, onShuffle: (Boolean) -> Unit,
-    cycles: String, onCycles: (String) -> Unit,
-    gap: String, onGap: (String) -> Unit,
-    pattern: MutableList<String>,
-    macros: List<Macro>,
-    onSave: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    fun macroName(id: String) = macros.firstOrNull { it.id == id }?.name ?: "(삭제됨)"
-    Box(Modifier.fillMaxSize().background(NeuBase)) {
-        AnimatedBottomGradient()
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Spacer(Modifier.height(24.dp))
-            GradientTitle("플레이리스트 편집", size = 26)
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("이름", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = name, onValueChange = onName, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("셔플 (매 사이클 섞기)", color = TextHi, fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Switch(checked = shuffle, onCheckedChange = onShuffle)
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("반복 횟수 (비우면 무한)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = cycles, onValueChange = onCycles, singleLine = true,
-                    placeholder = { Text("무한") }, modifier = Modifier.width(140.dp))
-                Spacer(Modifier.height(10.dp))
-                Text("매크로 사이 대기 (초, 비우면 0)", color = TextLo, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(value = gap, onValueChange = onGap, singleLine = true,
-                    placeholder = { Text("0") }, modifier = Modifier.width(140.dp))
-            }
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("순서 (패턴)", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(2.dp))
-                Text("탭하면 삭제. 위에서부터 순서대로 실행돼.", color = TextLo, fontSize = 11.sp)
-                if (pattern.isEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text("아래에서 매크로를 탭해 추가해.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    pattern.forEachIndexed { i, id ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                .background(MeshLavender.copy(alpha = 0.35f)).padding(12.dp)
-                                .clickable { pattern.removeAt(i) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("${i + 1}. ${macroName(id)}", color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("✕", color = TextLo, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
-
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("매크로 추가", color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                if (macros.isEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text("저장된 매크로가 없어.", color = TextLo, fontSize = 12.sp)
-                } else {
-                    macros.forEach { m ->
-                        Spacer(Modifier.height(8.dp))
-                        Row(
-                            Modifier.fillMaxWidth().clickable { pattern.add(m.id) },
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(m.name, color = TextHi, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("+ 추가", color = Accent, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.weight(1f)) { LoopyButton("저장", onClick = onSave) }
-                Box(Modifier.weight(1f)) { LoopyButton("취소", filled = false, onClick = onCancel) }
-            }
-            Spacer(Modifier.height(24.dp))
-        }
-    }
-}
-
-@Composable
 private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
     SoftCard(Modifier.fillMaxWidth()) {
         Text("화면 녹화 세션", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -646,7 +467,7 @@ private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
         LoopyButton(text = if (active) "세션 끄기" else "세션 켜기", filled = !active) { onToggle(!active) }
         if (active) {
             Spacer(Modifier.height(8.dp))
-            Text("상태바에 화면 녹화(캐스트) 아이콘이 떠 있는 건 정상이야.", color = TextLo, fontSize = 11.sp)
+            Text("녹화 중에는 상태바에 캐스트 아이콘이 표시됩니다", color = TextLo, fontSize = 11.sp)
         }
     }
 }

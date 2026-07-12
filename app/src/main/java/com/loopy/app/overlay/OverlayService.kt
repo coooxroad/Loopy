@@ -40,16 +40,19 @@ import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.macro.MacroStore
 import com.loopy.app.macro.RotationEvent
 import com.loopy.app.macro.Stroke
-import com.loopy.app.macro.Playlist
-import com.loopy.app.macro.PlaylistStore
+import com.loopy.app.core.exec.CancelSignal
+import com.loopy.app.core.exec.Engine
+import com.loopy.app.core.exec.ExecContext
+import com.loopy.app.core.exec.ExecLog
+import com.loopy.app.core.exec.VarScope
+import com.loopy.app.core.material.Material
+import com.loopy.app.data.MaterialStore
 import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.hypot
@@ -66,6 +69,8 @@ class OverlayService : Service() {
 
     private val reader = GeteventReader()
     private val io by lazy { ShizukuIo(this, scope) }
+    private var buildCancel: CancelSignal? = null
+    private val globalVars = HashMap<String, String>()
     private val recorder = RawRecorder()
     private var device: TouchDevice? = null
     private var recording = false
@@ -529,34 +534,38 @@ class OverlayService : Service() {
         }
     }
 
-    private fun playPlaylist(pl: Playlist) {
+    /**
+     * 빌드 실행.
+     *
+     * 예전에는 셔플·사이클·간격을 여기서 직접 돌렸다. 지금은 그것들이 전부 Material 블록이므로
+     * 엔진에 트리를 넘기기만 하면 된다. 새 블록이 추가돼도 이 함수는 바뀌지 않는다.
+     */
+    private fun playBuild(build: Material) {
         if (recording) stopRecord()
         stopPlayback(null)
-        val macros = HashMap<String, Macro>()
-        pl.macroIds.toSet().forEach { id -> MacroStore.read(this, id)?.let { macros[id] = it } }
-        if (macros.isEmpty()) { status.text = "비어 있음"; return }
         stopPlayBtn.visibility = View.VISIBLE
+        val name = build.meta.name.ifEmpty { "빌드" }
+        status.text = "▶ $name"
+
+        val cancel = CancelSignal()
+        buildCancel = cancel
         playJob = scope.launch {
-            var cycle = 0
-            while (isActive && (pl.cycles == 0 || cycle < pl.cycles)) {
-                val order = if (pl.shuffle) pl.macroIds.shuffled() else pl.macroIds
-                for (id in order) {
-                    if (!isActive) break
-                    val m = macros[id] ?: continue
-                    val total = if (pl.cycles > 0) "/${pl.cycles}" else ""
-                    status.text = "▶ ${pl.name} · ${cycle + 1}$total · ${m.name}"
-                    runStrokes(m.strokes)
-                    if (pl.gapMs > 0) delay(pl.gapMs.toLong())
-                }
-                cycle++
-            }
-            status.text = "플레이리스트 끝 · ${pl.name}"
+            val ctx = ExecContext(
+                io = io,
+                scope = VarScope(globalVars),
+                cancel = cancel,
+                log = ExecLog(),
+            )
+            runCatching { Engine.run(build, ctx) }
+            status.text = "완료 · $name"
             stopPlayBtn.visibility = View.GONE
             playJob = null
+            buildCancel = null
         }
     }
 
     private fun stopPlayback(msg: String?) {
+        buildCancel?.cancel()
         playJob?.cancel()
         playJob = null
         stopPlayBtn.visibility = View.GONE
@@ -572,7 +581,7 @@ class OverlayService : Service() {
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
         listPanel?.let { listHolder.removeView(it); listPanel = null; return }
-        val playlists = PlaylistStore.list(this)
+        val builds = MaterialStore.load(this).filter { it.typeId == "build" }
         val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -582,14 +591,15 @@ class OverlayService : Service() {
             minimumWidth = dp(210)
         }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (playlists.isEmpty() && macros.isEmpty()) {
+        if (builds.isEmpty() && macros.isEmpty()) {
             content.addView(hint("저장된 게 없어"))
         } else {
-            if (playlists.isNotEmpty()) {
-                content.addView(hint("─ 플레이리스트 ─"))
-                for (pl in playlists) {
-                    content.addView(listRow("${pl.name}  ·  ${pl.macroIds.size}스텝", 0xFF6C7BFF.toInt()) {
-                        toggleList(); playPlaylist(pl)
+            if (builds.isNotEmpty()) {
+                content.addView(hint("─ 빌드 ─"))
+                for (b in builds) {
+                    val label = b.meta.name.ifEmpty { "빌드" }
+                    content.addView(listRow("$label  ·  ${b.children.size}블록", 0xFF6C7BFF.toInt()) {
+                        toggleList(); playBuild(b)
                     })
                 }
             }
