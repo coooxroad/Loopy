@@ -46,19 +46,4 @@ object Shell {
     }
 
     /** 진단용: 실행 후 exit 코드 + stderr + stdout 을 요약 문자열로 반환. */
-    fun execDiag(cmd: String): String {
-        return try {
-            val p = sh(cmd)
-            val out = p.inputStream.bufferedReader().readText()
-            val err = p.errorStream.bufferedReader().readText()
-            val code = p.waitFor()
-            buildString {
-                append("exit=").append(code)
-                if (err.isNotBlank()) append("\nERR: ").append(err.take(300))
-                if (out.isNotBlank()) append("\nOUT: ").append(out.take(200))
-            }
-        } catch (t: Throwable) {
-            "예외: ${t.message}"
-        }
-    }
 }

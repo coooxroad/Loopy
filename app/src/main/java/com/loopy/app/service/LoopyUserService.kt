@@ -102,8 +102,12 @@ class LoopyUserService : ILoopyService.Stub() {
             var downTime = t0
 
             for (ev in events) {
-                val wait = (t0 + (ev.time - base)) - SystemClock.uptimeMillis()
-                if (wait > 0) Thread.sleep(wait)
+                // sleep 은 수 ms 씩 늦게 깨어난다. 샘플이 촘촘한 스와이프에서는 그 오차가 쌓여
+                // 궤적이 늘어지므로, 마지막 구간만 바쁜 대기로 시각을 맞춘다.
+                val target = t0 + (ev.time - base)
+                val wait = target - SystemClock.uptimeMillis()
+                if (wait > 2) Thread.sleep(wait - 1)
+                while (SystemClock.uptimeMillis() < target) { /* spin */ }
                 when (ev.kind) {
                     0 -> { // DOWN
                         if (order.contains(ev.finger)) {
