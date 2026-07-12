@@ -4,7 +4,7 @@ import android.content.Context
 import android.view.Display
 import android.view.WindowManager
 import com.loopy.app.input.GeteventReader
-import com.loopy.app.macro.Stroke
+import com.loopy.app.core.record.Stroke
 import com.loopy.app.service.LoopyService
 import com.loopy.app.shizuku.Shell
 import com.loopy.app.shizuku.ShizukuManager
@@ -28,10 +28,10 @@ class ShizukuIo(
 
     private val reader = GeteventReader()
 
-    companion object {
-        /** UP 직후 같은 id 를 재사용하기까지의 최소 간격. 연타가 하나로 합쳐지는 것을 막는다. */
-        private const val FINGER_REUSE_GAP_MS = 12L
+    /** 동시에 주입 중인 손가락 번호들. parallel 갈래마다 다른 번호를 써야 뭉개지지 않는다. */
+    private val busyFingers = HashSet<Int>()
 
+    companion object {
         /** 오버레이 서비스가 자기 구현을 여기에 걸어둔다. */
         @Volatile
         var dimHandler: ((Boolean) -> Unit)? = null
@@ -45,62 +45,56 @@ class ShizukuIo(
 
     // ── 입력 ──
 
-    override suspend fun playStrokes(strokes: List<Stroke>, rotationAt: (Long) -> Int) {
-        if (strokes.isEmpty()) return
+    /**
+     * 궤적 하나 재생.
+     *
+     * parallel 갈래들이 동시에 이 함수를 부를 수 있으므로 손가락 id 를 겹치지 않게 배정한다.
+     * 같은 id 로 두 궤적을 주입하면 시스템이 하나의 손가락으로 보고 둘을 뭉갠다.
+     */
+    override suspend fun playStroke(stroke: Stroke) {
+        if (stroke.samples.isEmpty()) return
         val (w, h) = screenSize()
-        val n = strokes.size
+        val rot = if (stroke.rotation >= 0) stroke.rotation else rotation()
 
-        // 손가락 id 배정.
-        //
-        // 스트로크마다 새 id 를 주면 활성 포인터가 계속 늘어나 시스템이 입력을 뭉갠다.
-        // 시간이 겹치지 않는 스트로크끼리는 같은 id 를 재사용하되, UP 과 다음 DOWN 사이에
-        // 최소 간격(12ms)을 둔다. 이 간격이 없으면 빠른 연타가 하나의 터치로 합쳐진다.
-        val fingerIds = IntArray(n)
-        val freeAt = ArrayList<Long>()
-        for (k in strokes.indices) {
-            val s = strokes[k]
-            val end = s.startMs + maxOf(s.durationMs, s.samples.lastOrNull()?.t ?: 0L)
-            var assigned = -1
-            for (id in freeAt.indices) {
-                if (freeAt[id] + FINGER_REUSE_GAP_MS <= s.startMs) {
-                    assigned = id
-                    break
-                }
-            }
-            if (assigned == -1) {
-                assigned = freeAt.size
-                freeAt.add(end)
-            } else {
-                freeAt[assigned] = end
-            }
-            fingerIds[k] = assigned
+        val n = stroke.samples.size
+        val xs = IntArray(n)
+        val ys = IntArray(n)
+        val ts = LongArray(n)
+        for (i in 0 until n) {
+            val p = stroke.samples[i]
+            val (px, py) = toPixels(p.nx, p.ny, rot, w, h)
+            xs[i] = px
+            ys[i] = py
+            ts[i] = p.t
         }
 
-        val starts = LongArray(n) { strokes[it].startMs }
-        val durs = LongArray(n) { strokes[it].durationMs }
-        val counts = IntArray(n) { strokes[it].samples.size }
-
-        val total = counts.sum()
-        val xs = IntArray(total)
-        val ys = IntArray(total)
-        val ts = LongArray(total)
-
-        var k = 0
-        for (s in strokes) {
-            // 스트로크마다 그 시점의 회전으로 좌표를 푼다. 녹화 중 기기를 돌린 구간도 맞게 재생된다.
-            val rot = if (s.rotation >= 0) s.rotation else rotationAt(s.startMs)
-            for (p in s.samples) {
-                val (px, py) = toPixels(p.nx, p.ny, rot, w, h)
-                xs[k] = px
-                ys[k] = py
-                ts[k] = p.t
-                k++
+        val finger = acquireFinger()
+        try {
+            withContext(Dispatchers.IO) {
+                LoopyService.playMulti(
+                    intArrayOf(finger),
+                    longArrayOf(0L),
+                    longArrayOf(stroke.durationMs),
+                    intArrayOf(n),
+                    xs, ys, ts,
+                )
             }
+        } finally {
+            releaseFinger(finger)
         }
+    }
 
-        withContext(Dispatchers.IO) {
-            LoopyService.playMulti(fingerIds, starts, durs, counts, xs, ys, ts)
-        }
+    /** 지금 쓰이지 않는 가장 작은 손가락 번호. */
+    private fun acquireFinger(): Int = synchronized(busyFingers) {
+        var i = 0
+        while (i in busyFingers) i++
+        busyFingers.add(i)
+        i
+    }
+
+    private fun releaseFinger(id: Int) = synchronized(busyFingers) {
+        busyFingers.remove(id)
+        Unit
     }
 
     override fun stopPlayback() {

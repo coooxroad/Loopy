@@ -5,7 +5,6 @@ import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.MaterialRegistry
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.NoParams
-import com.loopy.app.core.material.TouchParams
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -14,8 +13,9 @@ import java.util.UUID
 /**
  * Material 트리 저장소.
  *
- * 촬영 매크로의 스트로크·영상은 무거우므로 [com.loopy.app.macro.MacroStore] 에 그대로 두고,
- * Material 은 그것을 id 로 참조만 한다. 빌드를 열 때마다 수 MB 를 읽지 않기 위해서다.
+ * 궤적과 영상은 무거우므로 [com.loopy.app.core.record.StrokeStore] 와
+ * [com.loopy.app.core.record.RecordingStore] 에 두고, Material 은 id 로 참조만 한다.
+ * 빌드를 목록에 띄울 때마다 수천 개의 좌표를 읽지 않기 위해서다.
  *
  * schema 필드를 두는 이유: 구조는 앞으로도 바뀐다. 바뀔 것을 알면서 버전을 안 붙이면
  * 나중에 사용자 데이터를 버리게 된다.
@@ -30,23 +30,15 @@ object MaterialStore {
     fun load(ctx: Context): List<Material> {
         val f = file(ctx)
         if (!f.exists()) {
-            // 첫 실행이거나 구버전 사용자. 기존 매크로/플레이리스트를 Material 로 옮긴다.
-            val initial = Presets.all() + Migration.fromLegacy(ctx)
-            save(ctx, initial)
-            return initial
+            val migrated = Migration.fromLegacy(ctx)
+            if (migrated.isNotEmpty()) save(ctx, migrated)
+            return migrated
         }
-        val stored = runCatching {
+        return runCatching {
             val root = JSONObject(f.readText())
             val arr = root.optJSONArray("materials") ?: JSONArray()
             (0 until arr.length()).map { readMaterial(arr.getJSONObject(it)) }
         }.getOrDefault(emptyList())
-
-        // 앱 업데이트로 새 프리셋이 생겼을 수 있다. 사용자가 고친 것은 건드리지 않는다.
-        val missing = Presets.all().filter { p -> stored.none { it.id == p.id } }
-        if (missing.isEmpty()) return stored
-        val merged = stored + missing
-        save(ctx, merged)
-        return merged
     }
 
     fun save(ctx: Context, materials: List<Material>) {

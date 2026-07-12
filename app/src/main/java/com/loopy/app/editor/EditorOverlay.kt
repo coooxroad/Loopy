@@ -46,8 +46,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.stroke.StrokeOps
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.Stroke
+import com.loopy.app.core.record.EditableTimeline
+import com.loopy.app.core.record.PlacedStroke
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.neu
 
@@ -226,9 +226,10 @@ internal fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
  */
 @Composable
 internal fun StrokeMoveBox(
-    stroke: Stroke, contentAspect: Float, defaultRot: Int, screenAspect: Float,
+    placed: PlacedStroke, contentAspect: Float, defaultRot: Int, screenAspect: Float,
     onDragDelta: (Float, Float) -> Unit, onDragEnd: () -> Unit,
 ) {
+    val stroke = placed.stroke
     val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
     Box(
         Modifier.fillMaxSize().pointerInput(rotDeg, contentAspect) {
@@ -345,8 +346,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
 
 @Composable
 internal fun TraceOverlay(
-    strokes: List<Stroke>, playheadStrokeMs: Long, contentAspect: Float,
-    macro: Macro, rotationDeg: Int, screenAspect: Float,
+    strokes: List<PlacedStroke>, playheadStrokeMs: Long, contentAspect: Float,
+    model: EditableTimeline, rotationDeg: Int, screenAspect: Float,
 ) {
     Canvas(Modifier.fillMaxSize()) {
         val bw = size.width; val bh = size.height
@@ -381,23 +382,25 @@ internal fun TraceOverlay(
             return Offset(inX + rx * innerW, inY + ry * innerH)
         }
         for (s in strokes) {
+            val stroke = s.stroke
+            val dur0 = stroke.durationMs
             val relT = playheadStrokeMs - s.startMs
-            if (relT < -WINDOW_MS || relT > s.durationMs + WINDOW_MS) continue
+            if (relT < -WINDOW_MS || relT > dur0 + WINDOW_MS) continue
             val edge = when {
                 relT < 0 -> 1f + relT / WINDOW_MS.toFloat()
-                relT > s.durationMs -> 1f - (relT - s.durationMs) / WINDOW_MS.toFloat()
+                relT > dur0 -> 1f - (relT - dur0) / WINDOW_MS.toFloat()
                 else -> 1f
             }.coerceIn(0f, 1f)
             if (edge <= 0f) continue
-            val samples = s.samples
+            val samples = stroke.samples
             if (samples.isEmpty()) continue
-            val sRot = if (s.rotation >= 0) s.rotation else StrokeOps.rotationAt(macro, s.startMs)
+            val sRot = if (stroke.rotation >= 0) stroke.rotation else model.rotationAt(s.startMs)
             val cStart = if (s.added) AddedGreen else TraceStart
             val cEnd = if (s.added) AddedEnd else TraceEnd
             val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
-            val revealT = relT.coerceIn(0L, s.durationMs)
-            val dur = s.durationMs.coerceAtLeast(1L)
-            val pressing = relT in 0..s.durationMs
+            val revealT = relT.coerceIn(0L, dur0)
+            val dur = dur0.coerceAtLeast(1L)
+            val pressing = relT in 0..dur0
             var prev: Offset? = null; var prevFrac = 0f
             for (smp in samples) {
                 if (smp.t > revealT + 40L) break

@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.loopy.app.core.stroke.StrokeOps
-import com.loopy.app.macro.Stroke
+import com.loopy.app.core.record.PlacedStroke
 import com.loopy.app.ui.theme.CardStroke
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
@@ -63,7 +63,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun Timeline(
-    strokes: List<Stroke>,
+    strokes: List<PlacedStroke>,
     totalMs: Long,
     positionMs: Long,
     videoOffsetMs: Long,
@@ -209,7 +209,7 @@ internal fun Timeline(
                         val startVideoMs = videoOffsetMs + s.startMs
                         val dxDp = if (dragIndex == i) with(density) { dragDx.toDp() } else 0.dp
                         val xDp = halfDp + with(density) { (startVideoMs * pxPerMs).toDp() } + dxDp
-                        val wDp = with(density) { (s.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
+                        val wDp = with(density) { (s.stroke.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
                         val yDp = laneStep * lane + (laneStep - blockH) / 2
                         StrokeBlock(
                             selected = selected == i,

@@ -2,13 +2,14 @@ package com.loopy.app.data
 
 import android.content.Context
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.Meta
-import com.loopy.app.core.material.LoopParams
-import com.loopy.app.core.material.NoParams
-import com.loopy.app.core.material.TouchParams
-import com.loopy.app.core.material.WaitParams
+import com.loopy.app.core.record.Recording
+import com.loopy.app.core.record.RecordingStore
+import com.loopy.app.core.record.RecordingToTree
+import com.loopy.app.core.record.RotationEvent
+import com.loopy.app.core.record.Stroke
+import com.loopy.app.core.record.TimedStroke
+import com.loopy.app.core.record.TouchSample
 import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.PlaylistStore
 
 /**
  * 구버전 데이터 이주.
@@ -26,65 +27,31 @@ object Migration {
 
         val macros = runCatching { MacroStore.list(ctx) }.getOrDefault(emptyList())
         for (m in macros) {
-            out.add(
-                Material(
-                    id = MaterialStore.newId(),
-                    typeId = "touch",
-                    params = TouchParams(m.id),
-                    meta = Meta(name = m.name, createdAt = m.createdAt),
+            // 옛 매크로는 궤적이 시작 시각을 들고 있었다. 새 구조에서는 시각이 순서와 대기가 되므로
+            // 트리로 변환한다. 영상과 회전 이력은 녹화 리소스로 옮긴다.
+            val recId = RecordingStore.newId()
+            RecordingStore.put(
+                ctx,
+                Recording(
+                    id = recId,
+                    videoPath = m.videoPath,
+                    videoOffsetMs = m.videoOffsetMs,
+                    rotationEvents = m.rotationEvents.map { RotationEvent(it.tMs, it.rotation) },
                 ),
             )
-        }
-
-        val playlists = runCatching { PlaylistStore.list(ctx) }.getOrDefault(emptyList())
-        for (p in playlists) {
-            val body = ArrayList<Material>()
-            for ((i, macroId) in p.macroIds.withIndex()) {
-                val macro = macros.firstOrNull { it.id == macroId } ?: continue
-                body.add(
-                    Material(
-                        id = MaterialStore.newId(),
-                        typeId = "touch",
-                        params = TouchParams(macroId),
-                        meta = Meta(name = macro.name, createdAt = macro.createdAt),
+            val timed = m.strokes.map { s ->
+                TimedStroke(
+                    startMs = s.startMs,
+                    stroke = Stroke(
+                        durationMs = s.durationMs,
+                        samples = s.samples.map { TouchSample(it.t, it.nx, it.ny) },
+                        rotation = s.rotation,
                     ),
                 )
-                // 매크로 사이 간격은 새 구조에서 대기 블록이다. 별도 설정 항목이 필요 없어진다.
-                if (p.gapMs > 0 && i < p.macroIds.lastIndex) {
-                    body.add(
-                        Material(
-                            id = MaterialStore.newId(),
-                            typeId = "wait",
-                            params = WaitParams(p.gapMs.toLong()),
-                        ),
-                    )
-                }
             }
-
-            // 반복 횟수도 마찬가지로 반복 블록이 된다.
-            val children = if (p.cycles > 1) {
-                listOf(
-                    Material(
-                        id = MaterialStore.newId(),
-                        typeId = "loop",
-                        params = LoopParams(count = p.cycles),
-                        children = body,
-                    ),
-                )
-            } else {
-                body
-            }
-
-            out.add(
-                Material(
-                    id = MaterialStore.newId(),
-                    typeId = "build",
-                    params = NoParams,
-                    children = children,
-                    meta = Meta(name = p.name, createdAt = p.createdAt),
-                ),
-            )
+            out.add(RecordingToTree.build(ctx, timed, recId, m.name))
         }
+
 
         return out
     }

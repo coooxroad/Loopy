@@ -33,20 +33,19 @@ import com.loopy.app.R
 import com.loopy.app.input.RawRecorder
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.input.TouchDevice
-import com.loopy.app.macro.Macro
 import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.io.ShizukuIo
-import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.RotationEvent
-import com.loopy.app.macro.Stroke
 import com.loopy.app.core.exec.CancelSignal
 import com.loopy.app.core.exec.Engine
 import com.loopy.app.core.exec.ExecContext
 import com.loopy.app.core.exec.ExecLog
 import com.loopy.app.core.exec.VarScope
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.record.Recording
+import com.loopy.app.core.record.RecordingStore
+import com.loopy.app.core.record.RecordingToTree
+import com.loopy.app.core.record.RotationEvent
 import com.loopy.app.data.MaterialStore
-import com.loopy.app.data.Presets
 import com.loopy.app.service.LoopyService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -199,7 +198,7 @@ class OverlayService : Service() {
         val playBtn = iconBtn(R.drawable.ic_ov_play, 0xFF6C7BFF.toInt(), 0x226C7BFF) { playRecorded() }
         val listBtn = iconBtn(R.drawable.ic_ov_list, 0xFF3A3D55.toInt(), 0x1A3A3D55) { toggleList() }
         val moonBtn = iconBtn(R.drawable.ic_ov_moon, 0xFFE0A81E.toInt(), 0x22E0A81E) {
-            runPreset(Presets.DEEP_SLOCK)
+            toggleDeepSLock()
             if (expanded) toggleExpand()
         }
         val vBtn = iconBtn(R.drawable.ic_ov_video, videoTint(), videoBg()) { toggleVideo() }
@@ -287,6 +286,25 @@ class OverlayService : Service() {
      *
      * 레이어는 터치를 통과시킨다. 화면을 가린 채로도 매크로가 계속 돌아야 하기 때문이다.
      */
+    /**
+     * Deep SLock 토글.
+     *
+     * 빌드 화면이 생기면 이것은 사용자가 조립하는 블록들로 대체된다. 그때까지는
+     * 기능이 동작하는 편이 낫다.
+     */
+    private fun toggleDeepSLock() {
+        val on = !deepLocked
+        setDim(on)
+        scope.launch {
+            if (on) {
+                io.putSetting("system", "screen_brightness_mode", "0")
+                io.putSetting("system", "screen_brightness", "0")
+            } else {
+                io.putSetting("system", "screen_brightness_mode", "1")
+            }
+        }
+    }
+
     private fun setDim(on: Boolean) {
         if (on) {
             if (dimView != null) return
@@ -365,7 +383,7 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
                     if (!dragged && !longFired) {
-                        if (deepLocked) runPreset(Presets.DEEP_SLOCK) else toggleExpand()
+                        if (deepLocked) toggleDeepSLock() else toggleExpand()
                     }
                     true
                 }
@@ -457,6 +475,7 @@ class OverlayService : Service() {
         device = dev
         currentVideoPath = videoPath
         recorder.reset()
+        recorder.currentRotation = { io.rotation() }
         recording = true
         rotEventsRaw.clear()
         registerRotationListener()
@@ -496,8 +515,21 @@ class OverlayService : Service() {
                 if (rel > 0L) evts.add(RotationEvent(rel, r))
             }
         }
-        val m = MacroStore.saveNew(this, snap, vpath, offset, startRot, evts)
-        status.text = "저장됨: ${m.name} · ${snap.size}개" + if (vpath != null) " · 영상" else ""
+        // 녹화 결과를 Material 트리로 바꾼다. 시각은 순서와 대기가 되고, 겹친 궤적은 parallel 이 된다.
+        val recId = RecordingStore.newId()
+        RecordingStore.put(
+            this,
+            Recording(id = recId, videoPath = vpath, videoOffsetMs = offset, rotationEvents = evts),
+        )
+        val name = autoName()
+        val build = RecordingToTree.build(this, snap, recId, name)
+        MaterialStore.upsert(this, build)
+        status.text = "저장됨: $name · ${snap.size}개" + if (vpath != null) " · 영상" else ""
+    }
+
+    private fun autoName(): String {
+        val f = java.text.SimpleDateFormat("MMM d a h:mm", java.util.Locale.getDefault())
+        return f.format(java.util.Date())
     }
 
     /** 녹화 중 화면 회전 변화를 타임스탬프와 함께 기록. */
@@ -527,24 +559,19 @@ class OverlayService : Service() {
     }
 
     // ── 재생 ──
+
+    /** 방금 녹화한 것을 바로 재생. 저장하지 않고 트리로만 만들어 돌린다. */
     private fun playRecorded() {
         if (recording) stopRecord()
-        startSingle(recorder.snapshot(), "지금 녹화")
+        val snap = recorder.snapshot()
+        if (snap.isEmpty()) {
+            status.text = "재생할 내용 없음"
+            return
+        }
+        playBuild(RecordingToTree.build(this, snap, null, "지금 녹화"))
     }
 
-    private fun startSingle(strokes: List<Stroke>, label: String) {
-        if (recording) stopRecord()
-        stopPlayback(null)
-        if (strokes.isEmpty()) { status.text = "재생할 내용 없음"; return }
-        stopPlayBtn.visibility = View.VISIBLE
-        status.text = "▶ 재생중… $label"
-        playJob = scope.launch {
-            runStrokes(strokes)
-            status.text = "재생 끝 · $label"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-        }
-    }
+
 
     /**
      * 빌드 실행.
@@ -576,12 +603,6 @@ class OverlayService : Service() {
         }
     }
 
-    /** 저장된 Material 을 id 로 실행. 오버레이 버튼이 이것을 통해 무엇이든 실행할 수 있다. */
-    private fun runPreset(id: String) {
-        val m = MaterialStore.get(this, id) ?: return
-        playBuild(m)
-    }
-
     private fun stopPlayback(msg: String?) {
         buildCancel?.cancel()
         playJob?.cancel()
@@ -592,15 +613,11 @@ class OverlayService : Service() {
 
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
     /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
-    private suspend fun runStrokes(strokes: List<Stroke>) {
-        io.playStrokes(strokes) { io.rotation() }
-    }
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
         listPanel?.let { listHolder.removeView(it); listPanel = null; return }
         val builds = MaterialStore.load(this).filter { it.typeId == "build" }
-        val macros = MacroStore.list(this)
         val lp = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -609,7 +626,7 @@ class OverlayService : Service() {
             minimumWidth = dp(210)
         }
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (builds.isEmpty() && macros.isEmpty()) {
+        if (builds.isEmpty()) {
             content.addView(hint("저장된 항목 없음"))
         } else {
             if (builds.isNotEmpty()) {
@@ -618,14 +635,6 @@ class OverlayService : Service() {
                     val label = b.meta.name.ifEmpty { "빌드" }
                     content.addView(listRow("$label  ·  ${b.children.size}블록", 0xFF6C7BFF.toInt()) {
                         toggleList(); playBuild(b)
-                    })
-                }
-            }
-            if (macros.isNotEmpty()) {
-                content.addView(hint("─ 매크로 ─"))
-                for (mac in macros) {
-                    content.addView(listRow("${mac.name}  ·  ${mac.strokes.size}", 0xFF2B2D42.toInt()) {
-                        toggleList(); startSingle(mac.strokes, mac.name)
                     })
                 }
             }

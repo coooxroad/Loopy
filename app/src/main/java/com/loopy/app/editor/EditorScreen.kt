@@ -67,9 +67,11 @@ import androidx.media3.ui.PlayerView
 import com.loopy.app.core.io.ShizukuIo
 import com.loopy.app.core.stroke.StrokeOps
 import com.loopy.app.input.RawRecorder
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
-import com.loopy.app.macro.Stroke
+import com.loopy.app.core.material.Material
+import com.loopy.app.core.record.EditableTimeline
+import com.loopy.app.core.record.PlacedStroke
+import com.loopy.app.core.record.StrokeStore
+import com.loopy.app.data.MaterialStore
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.AnimatedBottomGradient
 import com.loopy.app.ui.theme.CardStroke
@@ -84,21 +86,27 @@ import kotlin.math.abs
 import kotlinx.coroutines.launch
 
 @Composable
-fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
+fun MacroEditorScreen(build: Material, onBack: () -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val coScope = rememberCoroutineScope()
     val io = remember { ShizukuIo(context, coScope) }
-    val hasVideo = macro.videoPath != null
 
-    // 편집 가능한 스트로크 상태
-    val strokes = remember { mutableStateListOf<Stroke>().apply { addAll(macro.strokes) } }
+    // 트리를 시간축으로 펼친다. 저장할 때 다시 순서와 대기로 접는다.
+    val model = remember(build.id) { EditableTimeline.open(context, build) }
+    val hasVideo = model.videoPath != null
+
+    val strokes = remember { mutableStateListOf<PlacedStroke>().apply { addAll(model.strokes) } }
     var selectedStroke by remember { mutableStateOf<Int?>(null) }
-    fun persist() { MacroStore.updateStrokes(context, macro.id, strokes.toList()) }
 
-    // UNDO / REDO 히스토리
-    val undoStack = remember { mutableStateListOf<List<Stroke>>() }
-    val redoStack = remember { mutableStateListOf<List<Stroke>>() }
+    fun persist() {
+        model.strokes.clear()
+        model.strokes.addAll(strokes)
+        MaterialStore.upsert(context, model.toTree(context, build))
+    }
+
+    val undoStack = remember { mutableStateListOf<List<PlacedStroke>>() }
+    val redoStack = remember { mutableStateListOf<List<PlacedStroke>>() }
     fun pushUndo() { undoStack.add(strokes.toList()); redoStack.clear() }
     fun applyStrokes(list: List<Stroke>) {
         strokes.clear(); strokes.addAll(list); persist()
@@ -127,9 +135,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
 
     val macroDurationMs = (strokes.maxOfOrNull { it.startMs + it.durationMs } ?: 0L).coerceAtLeast(1L)
 
-    val player = remember(macro.videoPath) {
+    val player = remember(model.videoPath) {
         if (!hasVideo) null else ExoPlayer.Builder(context).build().apply {
-            val path = macro.videoPath!!
+            val path = model.videoPath!!
             val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
             setMediaItem(MediaItem.fromUri(uri)); prepare()
             setSeekParameters(SeekParameters.CLOSEST_SYNC)
@@ -168,7 +176,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val contentAspect = if (hasVideo) videoAspect else screenAspect
     val totalMs: Long = run {
         val d = player?.duration ?: 0L
-        if (hasVideo && d > 0) d else macroDurationMs + macro.videoOffsetMs
+        if (hasVideo && d > 0) d else macroDurationMs + model.videoOffsetMs
     }
 
     // 프리뷰 높이: 영상 종횡비에 맞춰 조정(가로 영상일 때 쪼그라들지 않게)
@@ -219,9 +227,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     // 블록 선택 시: 재생헤드를 블록 가장 가까운 가장자리로 스냅(닿게)
     fun selectAndSnap(i: Int) {
         selectedStroke = i
-        val s = strokes[i]
-        val leftV = macro.videoOffsetMs + s.startMs
-        val rightV = leftV + s.durationMs
+        val p = strokes[i]
+        val leftV = model.videoOffsetMs + p.startMs
+        val rightV = leftV + p.stroke.durationMs
         if (positionMs < leftV || positionMs > rightV) {
             val target = if (abs(positionMs - leftV) <= abs(positionMs - rightV)) leftV else rightV
             seekTo(target)
@@ -233,9 +241,9 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         if (!timeEditing) timeText = fmtPlain(positionMs)
     }
 
-    val playheadStrokeMs = positionMs - macro.videoOffsetMs
+    val playheadStrokeMs = positionMs - model.videoOffsetMs
     // 현재 재생 시각의 화면 회전(녹화 중 기록된 회전 타임라인에서 조회)
-    val currentRot = StrokeOps.rotationAt(macro, playheadStrokeMs)
+    val currentRot = model.rotationAt(playheadStrokeMs)
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
     val recorder = remember { RawRecorder() }
@@ -284,10 +292,17 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             val snap = recorder.snapshot()
             if (snap.isNotEmpty()) {
                 pushUndo()
-                val curRot = io.rotation()
-                for (s in snap) {
-                    strokes.add(Stroke(captureBaseStrokeMs + s.startMs, s.durationMs, s.samples,
-                        added = true, rotation = curRot))
+                for (ts in snap) {
+                    val id = StrokeStore.put(context, ts.stroke)
+                    strokes.add(
+                        PlacedStroke(
+                            materialId = java.util.UUID.randomUUID().toString(),
+                            strokeId = id,
+                            startMs = captureBaseStrokeMs + ts.startMs,
+                            stroke = ts.stroke,
+                            added = true,
+                        ),
+                    )
                 }
                 persist()
             }
@@ -298,36 +313,57 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     DisposableEffect(Unit) { onDispose { io.stopCapture() } }
 
     // 편집 연산 (재생헤드 기준)
+
     fun doDelete() {
         val i = selectedStroke ?: return
         pushUndo(); strokes.removeAt(i); selectedStroke = null; persist()
     }
+
     fun doTrimLeft() {
         val i = selectedStroke ?: return
-        val r = StrokeOps.trimLeft(strokes[i], playheadStrokeMs) ?: return
-        pushUndo(); strokes[i] = r; persist()
+        val p = strokes[i]
+        val (cut, newStart) = StrokeOps.trimLeft(p.stroke, p.startMs, playheadStrokeMs) ?: return
+        pushUndo()
+        strokes[i] = p.copy(stroke = cut, startMs = newStart)
+        persist()
     }
+
     fun doTrimRight() {
         val i = selectedStroke ?: return
-        val r = StrokeOps.trimRight(strokes[i], playheadStrokeMs) ?: return
-        pushUndo(); strokes[i] = r; persist()
+        val p = strokes[i]
+        val cut = StrokeOps.trimRight(p.stroke, p.startMs, playheadStrokeMs) ?: return
+        pushUndo()
+        strokes[i] = p.copy(stroke = cut)
+        persist()
     }
+
     fun doSplit() {
         val i = selectedStroke ?: return
-        val s = strokes[i]
-        if (playheadStrokeMs <= s.startMs || playheadStrokeMs >= s.startMs + s.durationMs) return
-        val pair = StrokeOps.split(s, playheadStrokeMs) ?: return
-        pushUndo(); strokes[i] = pair.first; strokes.add(i + 1, pair.second); persist()
+        val p = strokes[i]
+        val end = p.startMs + p.stroke.durationMs
+        if (playheadStrokeMs <= p.startMs || playheadStrokeMs >= end) return
+        val (left, right) = StrokeOps.split(p.stroke, p.startMs, playheadStrokeMs) ?: return
+        pushUndo()
+        // 뒷조각은 새 궤적이므로 저장소에 새로 넣어야 한다. 같은 id 를 쓰면 앞조각을 덮어쓴다.
+        val rightId = StrokeStore.put(context, right.first)
+        strokes[i] = p.copy(stroke = left.first, startMs = left.second)
+        strokes.add(i + 1, PlacedStroke(java.util.UUID.randomUUID().toString(), rightId, right.second, right.first))
+        persist()
     }
+
     fun doMove(i: Int, newStartMs: Long) {
-        pushUndo(); strokes[i] = strokes[i].copy(startMs = newStartMs.coerceAtLeast(0L)); persist()
+        pushUndo()
+        strokes[i] = strokes[i].copy(startMs = newStartMs.coerceAtLeast(0L))
+        persist()
     }
-    /** 박스 드래그 중: 실시간으로 스트로크를 평행이동(부드럽게 따라옴). */
+
+    /** 박스 드래그 중: 실시간으로 궤적을 평행이동(부드럽게 따라옴). */
     var nudging by remember { mutableStateOf(false) }
     fun nudgeLive(i: Int, dnx: Float, dny: Float) {
         if (dnx == 0f && dny == 0f) return
-        if (!nudging) { pushUndo(); nudging = true } // 드래그 시작 시 한 번만 undo 기록
-        strokes[i] = StrokeOps.move(strokes[i], dnx, dny)
+        if (!nudging) { pushUndo(); nudging = true }
+        val p = strokes[i]
+        strokes[i] = p.copy(stroke = StrokeOps.move(p.stroke, dnx, dny))
     }
     /** 드래그 종료: 저장. */
     fun nudgeCommit() {
@@ -350,7 +386,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                     contentAlignment = Alignment.Center,
                 ) { Text("‹", color = Accent, fontSize = 20.sp) }
                 Text(
-                    macro.name, color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                    model.name, color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center, modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.size(38.dp))
@@ -378,14 +414,14 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 selectedStroke?.let { si ->
                     if (si < strokes.size) {
                         StrokeMoveBox(
-                            stroke = strokes[si], contentAspect = contentAspect,
+                            placed = strokes[si], contentAspect = contentAspect,
                             defaultRot = currentRot, screenAspect = screenAspect,
                             onDragDelta = { dnx, dny -> nudgeLive(si, dnx, dny) },
                             onDragEnd = { nudgeCommit() },
                         )
                     }
                 }
-                TraceOverlay(strokes, playheadStrokeMs, contentAspect, macro, currentRot, screenAspect)
+                TraceOverlay(strokes, playheadStrokeMs, contentAspect, model, currentRot, screenAspect)
             }
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
@@ -460,7 +496,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
                 )
                 Timeline(
                     strokes = strokes, totalMs = totalMs, positionMs = positionMs,
-                    videoOffsetMs = macro.videoOffsetMs, videoPath = macro.videoPath,
+                    videoOffsetMs = model.videoOffsetMs, videoPath = model.videoPath,
                     density = density, selected = selectedStroke,
                     onScrubTime = { t -> playing = false; player?.playWhenReady = false; seekTo(t) },
                     onScrubbingChange = { userScrubbing = it }, userScrubbing = userScrubbing,

@@ -1,6 +1,6 @@
 package com.loopy.app.core.io
 
-import com.loopy.app.macro.Stroke
+import com.loopy.app.core.record.Stroke
 
 /**
  * 시스템에 실제로 손을 대는 모든 경로의 단일 통로.
@@ -19,8 +19,13 @@ interface Io {
 
     // ── 입력 ──
 
-    /** 스트로크들을 실제 터치로 주입. startMs 가 겹치면 멀티터치로 동시 재생된다. */
-    suspend fun playStrokes(strokes: List<Stroke>, rotationAt: (Long) -> Int)
+    /**
+     * 궤적 하나를 재생하고, 끝날 때까지 기다린다.
+     *
+     * 블로킹이어야 하는 이유: 트리의 순서가 곧 타이밍이기 때문이다. 궤적이 도는 동안
+     * 다음 블록이 시작해버리면 대기 블록의 값이 의미를 잃는다.
+     */
+    suspend fun playStroke(stroke: Stroke)
 
     /** 진행 중인 주입을 중단. 킬 스위치가 어디서든 동작하려면 필요하다. */
     fun stopPlayback()

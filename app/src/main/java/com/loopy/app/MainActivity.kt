@@ -51,8 +51,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.loopy.app.macro.Macro
-import com.loopy.app.macro.MacroStore
+import com.loopy.app.core.material.Material
+import com.loopy.app.data.MaterialStore
 import com.loopy.app.overlay.OverlayService
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -130,8 +130,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var state by remember { mutableStateOf(ShizukuManager.state()) }
     var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var overlayMsg by remember { mutableStateOf("오버레이를 켜고 게임으로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
-    var macros by remember { mutableStateOf(MacroStore.list(context)) }
-    var renaming by remember { mutableStateOf<Macro?>(null) }
+    var builds by remember { mutableStateOf(MaterialStore.load(context).filter { it.typeId == "build" }) }
+    var renaming by remember { mutableStateOf<Material?>(null) }
     var nameField by remember { mutableStateOf("") }
     var tab by remember { mutableStateOf(Tab.DASHBOARD) }
 
@@ -147,11 +147,10 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
     var plCycles by remember { mutableStateOf("") }
     var plGap by remember { mutableStateOf("") }
     val pattern = remember { mutableStateListOf<String>() }
-    var editorMacros by remember { mutableStateOf<List<Macro>>(emptyList()) }
-    var editingMacro by remember { mutableStateOf<Macro?>(null) }
+    var editingBuild by remember { mutableStateOf<Material?>(null) }
 
     fun refresh() {
-        macros = MacroStore.list(context)
+        builds = MaterialStore.load(context).filter { it.typeId == "build" }
     }
 
 
@@ -169,10 +168,10 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
         }
     }
 
-    if (editingMacro != null) {
+    if (editingBuild != null) {
         MacroEditorScreen(
-            macro = editingMacro!!,
-            onBack = { editingMacro = null; refresh() },
+            build = editingBuild!!,
+            onBack = { editingBuild = null; refresh() },
         )
         return
     }
@@ -207,7 +206,7 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             when (tab) {
                 Tab.DASHBOARD -> DashboardTab(
                     state = state, canOverlay = canOverlay, msg = overlayMsg,
-                    recentMacro = macros.firstOrNull(),
+                    recentBuild = builds.firstOrNull(),
                     onToggleOverlay = { turningOn ->
                         if (turningOn) {
                             context.startForegroundService(Intent(context, OverlayService::class.java))
@@ -221,11 +220,11 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     onToggleSession = { toggleSession(it) },
                 )
                 Tab.LIBRARY -> LibraryTab(
-                    macros = macros,
+                    builds = builds,
                     onRefresh = { refresh() },
-                    onRename = { renaming = it; nameField = it.name },
-                    onDelete = { MacroStore.delete(context, it.id); refresh() },
-                    onEdit = { editingMacro = it },
+                    onRename = { renaming = it; nameField = it.meta.name },
+                    onDelete = { MaterialStore.delete(context, it.id); refresh() },
+                    onEdit = { editingBuild = it },
                 )
                 Tab.SETTINGS -> SettingsTab(
                     state = state, canOverlay = canOverlay,
@@ -283,7 +282,12 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             onDismissRequest = { renaming = null },
             confirmButton = {
                 TextButton(onClick = {
-                    if (nameField.isNotBlank()) MacroStore.rename(context, editing.id, nameField.trim())
+                    if (nameField.isNotBlank()) {
+                        MaterialStore.upsert(
+                            context,
+                            editing.copy(meta = editing.meta.copy(name = nameField.trim())),
+                        )
+                    }
                     renaming = null; refresh()
                 }) { Text("저장", color = Accent) }
             },
@@ -309,7 +313,7 @@ private fun DashboardTab(
     state: ShizukuState,
     canOverlay: Boolean,
     msg: String,
-    recentMacro: Macro?,
+    recentBuild: Material?,
     onToggleOverlay: (Boolean) -> Unit,
     sessionActive: Boolean,
     onToggleSession: (Boolean) -> Unit,
@@ -345,15 +349,15 @@ private fun DashboardTab(
         SoftCard(Modifier.fillMaxWidth()) {
             Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
-            if (recentMacro == null) {
+            if (recentBuild == null) {
                 Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 12.sp)
             } else {
-                recentMacro.let {
-                    Text("📄 ${it.name}", color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                    Text("${it.strokes.size} 스트로크", color = TextLo, fontSize = 11.sp)
-                }
+                Text(
+                    recentBuild.meta.name.ifEmpty { "이름 없음" },
+                    color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                )
+                Text("${recentBuild.children.size}개 블록", color = TextLo, fontSize = 11.sp)
                 Spacer(Modifier.height(6.dp))
-
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -362,11 +366,11 @@ private fun DashboardTab(
 
 @Composable
 private fun LibraryTab(
-    macros: List<Macro>,
+    builds: List<Material>,
     onRefresh: () -> Unit,
-    onRename: (Macro) -> Unit,
-    onDelete: (Macro) -> Unit,
-    onEdit: (Macro) -> Unit,
+    onRename: (Material) -> Unit,
+    onDelete: (Material) -> Unit,
+    onEdit: (Material) -> Unit,
 ) {
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
@@ -374,17 +378,20 @@ private fun LibraryTab(
             GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
             Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
         }
-        if (macros.isEmpty()) {
+        if (builds.isEmpty()) {
             SoftCard(Modifier.fillMaxWidth()) {
                 Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 13.sp)
             }
         } else {
-            macros.forEach { m ->
+            builds.forEach { m ->
                 SoftCard(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(m.name, color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                            Text("${m.strokes.size} 스트로크", color = TextLo, fontSize = 12.sp)
+                            Text(
+                                m.meta.name.ifEmpty { "이름 없음" },
+                                color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                            )
+                            Text("${m.children.size}개 블록", color = TextLo, fontSize = 12.sp)
                         }
                         Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(m) })
                         Spacer(Modifier.width(14.dp))
