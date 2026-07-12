@@ -123,9 +123,19 @@ class ShizukuIo(
         return wm.defaultDisplay.rotation * 90
     }
 
+    /**
+     * 실제 화면 전체 크기.
+     *
+     * displayMetrics 는 네비게이션 바를 뺀 앱 영역만 준다. 터치는 그 바깥에서도 일어나므로
+     * 여기서는 반드시 getRealMetrics 를 써야 한다. 앱 영역 기준으로 좌표를 풀면 화면이
+     * 짧아진 만큼 터치가 위로 밀린다.
+     */
+    @Suppress("DEPRECATION")
     override fun screenSize(): Pair<Int, Int> {
-        val dm = context.resources.displayMetrics
-        return dm.widthPixels to dm.heightPixels
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val m = android.util.DisplayMetrics()
+        wm.defaultDisplay.getRealMetrics(m)
+        return m.widthPixels to m.heightPixels
     }
 
     /**

@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 2/2 (OverlayService)
+# 3/3
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/overlay/OverlayService.kt" << 'LOOPY_EOF'
@@ -21,7 +21,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Display
 import android.view.Gravity
@@ -580,7 +579,7 @@ class OverlayService : Service() {
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
     /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
     private suspend fun runStrokes(strokes: List<Stroke>) {
-        io.playStrokes(strokes) { displayObj.rotation * 90 }
+        io.playStrokes(strokes) { io.rotation() }
     }
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
@@ -667,11 +666,10 @@ class OverlayService : Service() {
 
     /** 패널 좌표가 컨트롤 바 위인지. 바를 누른 터치는 매크로로 기록하지 않는다. */
     private fun barContains(u: Float, v: Float): Boolean {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val (rx, ry) = Coords.rotate(u, v, displayObj.rotation * 90)
-        val px = (rx * m.widthPixels).toInt()
-        val py = (ry * m.heightPixels).toInt()
+        val (w, h) = io.screenSize()
+        val (rx, ry) = Coords.rotate(u, v, io.rotation())
+        val px = (rx * w).toInt()
+        val py = (ry * h).toInt()
         val loc = IntArray(2)
         bar.getLocationOnScreen(loc)
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
@@ -718,9 +716,9 @@ class OverlayService : Service() {
     }
 }
 LOOPY_EOF
-echo "2/2 완료."
+echo "3/3 완료."
 git add -A
-git commit -m "Phase 0-5: 스트로크 강제 분리 휴리스틱 제거(입력 그대로 기록), 재생 타이밍 정밀화, 죽은 코드 제거"
+git commit -m "fix: 화면 크기를 getRealMetrics로(네비바 포함) — 좌표가 위로 밀리던 문제. 스트로크 강제분리 휴리스틱 제거, 재생 타이밍 정밀화, 회전/크기 조회를 Io로 통일, 죽은 코드 제거"
 git push
 echo "푸시 완료"
 

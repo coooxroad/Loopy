@@ -128,6 +128,8 @@ private const val DP_PER_SEC = 68f
 fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    val coScope = rememberCoroutineScope()
+    val io = remember { ShizukuIo(context, coScope) }
     val hasVideo = macro.videoPath != null
 
     // 편집 가능한 스트로크 상태
@@ -184,9 +186,10 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     var positionMs by remember { mutableStateOf(0L) }
     var userScrubbing by remember { mutableStateOf(false) }
 
+    // 터치 좌표는 네비게이션 바를 포함한 실제 화면 기준이므로, 종횡비도 같은 기준이어야 한다.
     val screenAspect = remember {
-        val dm = context.resources.displayMetrics
-        (dm.widthPixels.toFloat() / dm.heightPixels.toFloat()).coerceIn(0.2f, 2f)
+        val (w, h) = io.screenSize()
+        (w.toFloat() / h.toFloat()).coerceIn(0.2f, 2f)
     }
     var videoAspect by remember { mutableStateOf(screenAspect) }
 
@@ -276,8 +279,6 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
     val currentRot = StrokeOps.rotationAt(macro, playheadStrokeMs)
 
     // ── + 추가 촬영 (Shizuku /dev/input 캡처) ──
-    val coScope = rememberCoroutineScope()
-    val io = remember { ShizukuIo(context, coScope) }
     val recorder = remember { RawRecorder() }
     var capturing by remember { mutableStateOf(false) }
     var captureStarted by remember { mutableStateOf(false) }
@@ -324,7 +325,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
             val snap = recorder.snapshot()
             if (snap.isNotEmpty()) {
                 pushUndo()
-                val curRot = currentRotation(context)
+                val curRot = io.rotation()
                 for (s in snap) {
                     strokes.add(Stroke(captureBaseStrokeMs + s.startMs, s.durationMs, s.samples,
                         added = true, rotation = curRot))
@@ -552,7 +553,7 @@ fun MacroEditorScreen(macro: Macro, onBack: () -> Unit) {
         if (capturing) {
             CaptureOverlay(
                 player = player, message = captureMsg, started = captureStarted,
-                live = liveTouches, rotationDeg = currentRotation(context), contentAspect = contentAspect,
+                live = liveTouches, rotationDeg = io.rotation(), contentAspect = contentAspect,
                 onSave = { finishCapture(true) }, onCancel = { finishCapture(false) },
             )
         }
@@ -1027,12 +1028,6 @@ private fun StrokeMoveBox(
 }
 
 /** 매크로 시각 tMs에서의 화면 회전(녹화 중 기록된 타임라인 조회). */
-/** 현재 화면 회전(0/90/180/270). */
-private fun currentRotation(ctx: android.content.Context): Int {
-    val wm = ctx.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
-    @Suppress("DEPRECATION")
-    return wm.defaultDisplay.rotation * 90
-}
 
 /** 현재 눌림 표시: 흰 점 + 강한 글로우 + 얇은 테두리(테두리→중심으로 아주 옅게 페이드). */
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(

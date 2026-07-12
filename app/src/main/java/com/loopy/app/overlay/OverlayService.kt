@@ -16,7 +16,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.Display
 import android.view.Gravity
@@ -575,7 +574,7 @@ class OverlayService : Service() {
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
     /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
     private suspend fun runStrokes(strokes: List<Stroke>) {
-        io.playStrokes(strokes) { displayObj.rotation * 90 }
+        io.playStrokes(strokes) { io.rotation() }
     }
 
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
@@ -662,11 +661,10 @@ class OverlayService : Service() {
 
     /** 패널 좌표가 컨트롤 바 위인지. 바를 누른 터치는 매크로로 기록하지 않는다. */
     private fun barContains(u: Float, v: Float): Boolean {
-        val m = DisplayMetrics()
-        displayObj.getRealMetrics(m)
-        val (rx, ry) = Coords.rotate(u, v, displayObj.rotation * 90)
-        val px = (rx * m.widthPixels).toInt()
-        val py = (ry * m.heightPixels).toInt()
+        val (w, h) = io.screenSize()
+        val (rx, ry) = Coords.rotate(u, v, io.rotation())
+        val px = (rx * w).toInt()
+        val py = (ry * h).toInt()
         val loc = IntArray(2)
         bar.getLocationOnScreen(loc)
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
