@@ -1,465 +1,45 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 5/5: EditorOverlay + Timeline
+# fix: RootScreen 시그니처 + Activity 참조
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
-cat > "app/src/main/java/com/loopy/app/editor/EditorOverlay.kt" << 'LOOPY_EOF'
-package com.loopy.app.editor
+cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
+package com.loopy.app
 
-import androidx.compose.foundation.Canvas
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.app.Activity
+import android.media.projection.MediaProjectionManager
+import com.loopy.app.overlay.VideoSession
+import com.loopy.app.editor.MacroEditorScreen
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
-import com.loopy.app.core.geom.Coords
-import com.loopy.app.core.stroke.StrokeOps
-import com.loopy.app.core.record.EditableTimeline
-import com.loopy.app.core.record.PlacedStroke
-import com.loopy.app.ui.theme.NeuBase
-import com.loopy.app.ui.theme.Depth
-import com.loopy.app.ui.theme.neu
-import com.loopy.app.ui.theme.neuColor
-
-@Composable
-internal fun CaptureOverlay(
-    player: ExoPlayer?, message: String, started: Boolean,
-    live: Map<Int, Offset>, rotationDeg: Int, contentAspect: Float,
-    onSave: () -> Unit, onCancel: () -> Unit,
-) {
-    Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
-        if (player != null) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        this.player = player
-                        resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                },
-                update = { it.player = player },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        // 회색 반투명 오버레이
-        Box(Modifier.fillMaxSize().background(Color(0x59202020)))
-        // 촬영 중 현재 터치 위치 실시간 트래킹(초록)
-        Canvas(Modifier.fillMaxSize()) {
-            if (live.isEmpty()) return@Canvas
-            val bw = size.width; val bh = size.height
-            val boxAspect = bw / bh
-            val dispW: Float; val dispH: Float
-            if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
-            else { dispH = bh; dispW = bh * contentAspect }
-            val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
-            for ((_, n) in live) {
-                val (rx, ry) = Coords.rotate(n.x, n.y, rotationDeg)
-                val p = Offset(offX + rx * dispW, offY + ry * dispH)
-                drawTouchDot(p, 1f, AddedGreen, Triple(32, 201, 151))
-            }
-        }
-        if (!started) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(message, color = Color(0xFFEFF1F6), fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            }
-        }
-        // 하단 저장/취소
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Bottom) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 22.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                CaptureButton("취소", Color(0xFF3A3F50), Color(0xFFCFD4E0)) { onCancel() }
-                CaptureButton("저장", AddedGreen, Color.White) { onSave() }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.weight(1f).height(50.dp)
-            .neuColor(fill = bg, corner = 15.dp, depth = Depth.MD)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-}
-
-@Composable
-internal fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
-    Box(
-        Modifier.weight(1f).height(52.dp)
-            .neu(corner = 14.dp, depth = Depth.MD)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Canvas(Modifier.size(20.dp)) { drawEditIcon(kind, tint) }
-            Spacer(Modifier.height(3.dp))
-            Text(label, color = tint, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-        }
-    }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawEditIcon(kind: String, col: Color) {
-    val w = size.width; val h = size.height; val sw = w * 0.09f
-    when (kind) {
-        "trimLeft", "trimRight" -> {
-            val left = kind == "trimLeft"
-            val barX = if (left) w * 0.6f else w * 0.4f
-            drawLine(col, Offset(barX, h * 0.16f), Offset(barX, h * 0.84f), sw, cap = StrokeCap.Round)
-            val blkL = if (left) barX + w * 0.08f else w * 0.16f
-            val blkR = if (left) w * 0.86f else barX - w * 0.08f
-            drawRoundRect(col.copy(alpha = 0.9f), topLeft = Offset(blkL, h * 0.32f),
-                size = Size(blkR - blkL, h * 0.36f), cornerRadius = CornerRadius(3f))
-        }
-        "split" -> {
-            drawRoundRect(col, topLeft = Offset(w * 0.1f, h * 0.32f),
-                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
-            drawRoundRect(col, topLeft = Offset(w * 0.6f, h * 0.32f),
-                size = Size(w * 0.3f, h * 0.36f), cornerRadius = CornerRadius(3f))
-            drawLine(col, Offset(w / 2f, h * 0.12f), Offset(w / 2f, h * 0.88f), sw * 0.9f, cap = StrokeCap.Round)
-        }
-        "delete" -> {
-            drawLine(col, Offset(w * 0.18f, h * 0.28f), Offset(w * 0.82f, h * 0.28f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.4f, h * 0.28f), Offset(w * 0.4f, h * 0.18f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.4f, h * 0.18f), Offset(w * 0.6f, h * 0.18f), sw, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.6f, h * 0.18f), Offset(w * 0.6f, h * 0.28f), sw, cap = StrokeCap.Round)
-            drawRoundRect(col, topLeft = Offset(w * 0.26f, h * 0.34f),
-                size = Size(w * 0.48f, h * 0.48f), cornerRadius = CornerRadius(4f),
-                style = DrawStroke(width = sw))
-            drawLine(col, Offset(w * 0.42f, h * 0.44f), Offset(w * 0.42f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
-            drawLine(col, Offset(w * 0.58f, h * 0.44f), Offset(w * 0.58f, h * 0.72f), sw * 0.8f, cap = StrokeCap.Round)
-        }
-    }
-}
-
-/** UNDO(↶) / REDO(↷) 곡선 화살표 벡터. */
-@Composable
-internal fun UndoRedoIcon(redo: Boolean, enabled: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(30.dp).clickable(enabled = enabled) { onClick() }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(18.dp)) {
-            val col = if (enabled) Color(0xFF2B2D42) else Color(0xFFC2C6D2)
-            val w = size.width; val h = size.height; val sw = w * 0.11f
-            withTransform({ if (redo) scale(-1f, 1f, pivot = Offset(w / 2f, h / 2f)) }) {
-                val cx = w / 2f; val cy = h * 0.52f; val r = w * 0.30f
-                val startDeg = 30f; val sweep = 250f
-                drawArc(col, startAngle = startDeg, sweepAngle = sweep, useCenter = false,
-                    topLeft = Offset(cx - r, cy - r), size = Size(2 * r, 2 * r),
-                    style = DrawStroke(width = sw, cap = StrokeCap.Round))
-                val endRad = Math.toRadians((startDeg + sweep).toDouble())
-                val px = (cx + r * Math.cos(endRad)).toFloat()
-                val py = (cy + r * Math.sin(endRad)).toFloat()
-                val tx = (-Math.sin(endRad)).toFloat(); val ty = Math.cos(endRad).toFloat()
-                val nx = Math.cos(endRad).toFloat(); val ny = Math.sin(endRad).toFloat()
-                val len = w * 0.26f; val ww = w * 0.17f
-                val tip = Offset(px + tx * len, py + ty * len)
-                val b1 = Offset(px + nx * ww, py + ny * ww)
-                val b2 = Offset(px - nx * ww, py - ny * ww)
-                drawPath(Path().apply { moveTo(tip.x, tip.y); lineTo(b1.x, b1.y); lineTo(b2.x, b2.y); close() }, col)
-            }
-        }
-    }
-}
-
-/** 색 조절 헬퍼. */
-@Composable
-internal fun PlayPauseFilled(playing: Boolean, onClick: () -> Unit) {
-    Box(Modifier.size(30.dp).clickable { onClick() }, contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(19.dp)) {
-            val c = Color(0xFF2B2D42)
-            val w = size.width; val h = size.height
-            if (playing) {
-                val bw = w * 0.28f; val gap = w * 0.16f; val bh = h * 0.84f
-                val top = (h - bh) / 2f
-                val x1 = w / 2f - gap / 2f - bw; val x2 = w / 2f + gap / 2f
-                val cr = CornerRadius(bw * 0.45f, bw * 0.45f)
-                drawRoundRect(c, topLeft = Offset(x1, top), size = Size(bw, bh), cornerRadius = cr)
-                drawRoundRect(c, topLeft = Offset(x2, top), size = Size(bw, bh), cornerRadius = cr)
-            } else {
-                val p = Path().apply {
-                    moveTo(w * 0.24f, h * 0.16f); lineTo(w * 0.84f, h * 0.5f)
-                    lineTo(w * 0.24f, h * 0.84f); close()
-                }
-                drawPath(p, c)
-                drawPath(p, c, style = DrawStroke(width = w * 0.16f, join = StrokeJoin.Round))
-            }
-        }
-    }
-}
-
-/**
- * 선택된 스트로크를 덮는 직사각형. 드래그하면 스트로크 전체가 평행이동.
- * 드래그 중엔 누적 오프셋만 들고 있다가(제스처 리셋 방지) 놓을 때 한 번에 적용.
- */
-@Composable
-internal fun StrokeMoveBox(
-    placed: PlacedStroke, contentAspect: Float, defaultRot: Int, screenAspect: Float,
-    onDragDelta: (Float, Float) -> Unit, onDragEnd: () -> Unit,
-) {
-    val stroke = placed.stroke
-    val rotDeg = if (stroke.rotation >= 0) stroke.rotation else defaultRot
-    Box(
-        Modifier.fillMaxSize().pointerInput(rotDeg, contentAspect) {
-            detectDragGestures(
-                onDrag = { change, amount ->
-                    change.consume()
-                    val bw = size.width.toFloat(); val bh = size.height.toFloat()
-                    val boxAspect = bw / bh
-                    val dispW: Float; val dispH: Float
-                    if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
-                    else { dispH = bh; dispW = bh * contentAspect }
-                    // 회전 구간이면 축소된 가로 영역 크기 기준으로 델타 환산
-                    val land = rotDeg == 90 || rotDeg == 270
-                    val landAsp = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
-                    val aW: Float; val aH: Float
-                    if (land) {
-                        if (landAsp > (dispW / dispH)) { aW = dispW; aH = dispW / landAsp }
-                        else { aH = dispH; aW = dispH * landAsp }
-                    } else { aW = dispW; aH = dispH }
-                    val sx = amount.x / aW; val sy = amount.y / aH
-                    val (dnx, dny) = when (rotDeg) {
-                        90 -> (-sy) to sx
-                        180 -> (-sx) to (-sy)
-                        270 -> sy to (-sx)
-                        else -> sx to sy
-                    }
-                    onDragDelta(dnx, dny) // 실시간 반영 → 부드럽게 따라옴
-                },
-                onDragEnd = { onDragEnd() },
-            )
-        },
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val bw = size.width; val bh = size.height
-            val boxAspect = bw / bh
-            val dispW: Float; val dispH: Float
-            if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
-            else { dispH = bh; dispW = bh * contentAspect }
-            val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
-            if (stroke.samples.isEmpty()) return@Canvas
-            // 회전 구간: 프레임 안의 축소된 가로 영역
-            val landscape = rotDeg == 90 || rotDeg == 270
-            val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
-            val areaW: Float; val areaH: Float; val areaX: Float; val areaY: Float
-            if (landscape) {
-                if (landAspect > (dispW / dispH)) { areaW = dispW; areaH = dispW / landAspect }
-                else { areaH = dispH; areaW = dispH * landAspect }
-                areaX = offX + (dispW - areaW) / 2f
-                areaY = offY + (dispH - areaH) / 2f
-            } else {
-                areaW = dispW; areaH = dispH; areaX = offX; areaY = offY
-            }
-            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
-            var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
-            for (smp in stroke.samples) {
-                val (rx, ry) = Coords.rotate(smp.nx, smp.ny, rotDeg)
-                val x = areaX + rx * areaW; val y = areaY + ry * areaH
-                if (x < minX) minX = x; if (x > maxX) maxX = x
-                if (y < minY) minY = y; if (y > maxY) maxY = y
-            }
-            // 스트로크에 딱 맞게(아주 얇은 여유만) + 드래그 중 미리보기 이동
-            val pad = 6f
-            val l = minX - pad; val tp = minY - pad
-            val w = (maxX - minX) + pad * 2; val h = (maxY - minY) + pad * 2
-            val cr = 10f
-            // 반투명 흰 채움(60%) — 뒤 화면 보임
-            drawRoundRect(Color.White.copy(alpha = 0.6f), topLeft = Offset(l, tp), size = Size(w, h),
-                cornerRadius = CornerRadius(cr, cr))
-            // 테두리(키움) + 안쪽 얇은 밝은 라인으로 입체
-            drawRoundRect(TraceStart, topLeft = Offset(l, tp), size = Size(w, h),
-                cornerRadius = CornerRadius(cr, cr), style = DrawStroke(width = 3.5f))
-            drawRoundRect(Color.White.copy(alpha = 0.55f), topLeft = Offset(l + 2.6f, tp + 2.6f),
-                size = Size((w - 5.2f).coerceAtLeast(0f), (h - 5.2f).coerceAtLeast(0f)),
-                cornerRadius = CornerRadius(cr - 2f, cr - 2f), style = DrawStroke(width = 1.2f))
-        }
-    }
-}
-
-/** 매크로 시각 tMs에서의 화면 회전(녹화 중 기록된 타임라인 조회). */
-
-/** 현재 눌림 표시: 흰 점 + 강한 글로우 + 얇은 테두리(테두리→중심으로 아주 옅게 페이드). */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTouchDot(
-    p: Offset, edge: Float, ring: Color, rgb: Triple<Int, Int, Int>,
-) {
-    val r = 11f
-    // 글로우(강화): 흰 코어 + 넓고 진한 컬러 글로우
-    drawIntoCanvas { canvas ->
-        val a = (255 * edge).toInt().coerceIn(0, 255)
-        val paint = android.graphics.Paint().apply {
-            isAntiAlias = true
-            color = android.graphics.Color.WHITE
-            setShadowLayer(75f, 0f, 0f, android.graphics.Color.argb(a, rgb.first, rgb.second, rgb.third))
-        }
-        canvas.nativeCanvas.drawCircle(p.x, p.y, r, paint)
-    }
-    // 테두리 안쪽으로 아주 옅게 스며드는 그라데이션
-    val rOuter = r + 3.5f
-    drawCircle(
-        brush = Brush.radialGradient(
-            colorStops = arrayOf(
-                0.0f to Color.Transparent,
-                0.55f to ring.copy(alpha = 0.05f * edge),
-                0.86f to ring.copy(alpha = 0.22f * edge),
-                1.0f to ring.copy(alpha = 0.0f),
-            ),
-            center = p, radius = rOuter,
-        ),
-        radius = rOuter, center = p,
-    )
-    // 얇은 테두리 링
-    drawCircle(ring.copy(alpha = 0.9f * edge), radius = r + 1.6f, center = p,
-        style = DrawStroke(width = 1.8f))
-}
-
-@Composable
-internal fun TraceOverlay(
-    strokes: List<PlacedStroke>, playheadStrokeMs: Long, contentAspect: Float,
-    model: EditableTimeline, rotationDeg: Int, screenAspect: Float,
-) {
-    Canvas(Modifier.fillMaxSize()) {
-        val bw = size.width; val bh = size.height
-        val boxAspect = bw / bh
-        // 1) 영상 프레임이 화면에 그려지는 사각형(letterbox 보정)
-        val dispW: Float; val dispH: Float
-        if (contentAspect > boxAspect) { dispW = bw; dispH = bw / contentAspect }
-        else { dispH = bh; dispW = bh * contentAspect }
-        val offX = (bw - dispW) / 2f; val offY = (bh - dispH) / 2f
-
-        /**
-         * 2) 회전 구간 보정.
-         * 화면녹화 영상은 프레임 크기가 고정(세로)이라, 기기를 돌리면 가로 화면이
-         * 그 세로 프레임 '안에' 폭 맞춤으로 축소되어 세로 중앙에 배치된다.
-         * 따라서 회전(90/270) 구간의 스트로크는 프레임 전체가 아니라
-         * 그 축소된 가로 영역에 매핑해야 한다.
-         */
-        fun mapPt(nx: Float, ny: Float, rotDeg: Int): Offset {
-            val (rx, ry) = Coords.rotate(nx, ny, rotDeg)
-            val landscape = rotDeg == 90 || rotDeg == 270
-            if (!landscape) {
-                return Offset(offX + rx * dispW, offY + ry * dispH)
-            }
-            // 가로 화면의 종횡비 = 1/screenAspect (세로화면 비의 역수)
-            val landAspect = if (screenAspect > 0f) 1f / screenAspect else 16f / 9f
-            // 프레임(dispW x dispH) 안에 가로 화면을 fit
-            val innerW: Float; val innerH: Float
-            if (landAspect > (dispW / dispH)) { innerW = dispW; innerH = dispW / landAspect }
-            else { innerH = dispH; innerW = dispH * landAspect }
-            val inX = offX + (dispW - innerW) / 2f
-            val inY = offY + (dispH - innerH) / 2f
-            return Offset(inX + rx * innerW, inY + ry * innerH)
-        }
-        for (s in strokes) {
-            val stroke = s.stroke
-            val dur0 = stroke.durationMs
-            val relT = playheadStrokeMs - s.startMs
-            if (relT < -WINDOW_MS || relT > dur0 + WINDOW_MS) continue
-            val edge = when {
-                relT < 0 -> 1f + relT / WINDOW_MS.toFloat()
-                relT > dur0 -> 1f - (relT - dur0) / WINDOW_MS.toFloat()
-                else -> 1f
-            }.coerceIn(0f, 1f)
-            if (edge <= 0f) continue
-            val samples = stroke.samples
-            if (samples.isEmpty()) continue
-            val sRot = if (stroke.rotation >= 0) stroke.rotation else model.rotationAt(s.startMs)
-            val cStart = if (s.added) AddedGreen else TraceStart
-            val cEnd = if (s.added) AddedEnd else TraceEnd
-            val rgb = if (s.added) Triple(32, 201, 151) else Triple(59, 130, 246)
-            val revealT = relT.coerceIn(0L, dur0)
-            val dur = dur0.coerceAtLeast(1L)
-            val pressing = relT in 0..dur0
-            var prev: Offset? = null; var prevFrac = 0f
-            for (smp in samples) {
-                if (smp.t > revealT + 40L) break
-                val p = mapPt(smp.nx, smp.ny, sRot)
-                val frac = (smp.t.toFloat() / dur).coerceIn(0f, 1f)
-                if (prev != null) {
-                    val c = lerp(cStart, cEnd, (prevFrac + frac) / 2f)
-                        .copy(alpha = edge * (if (pressing) 1f else 0.5f))
-                    drawLine(c, prev, p, strokeWidth = if (pressing) 9f else 6f)
-                }
-                prev = p; prevFrac = frac
-            }
-            val cur = StrokeOps.sampleAt(samples, revealT)
-            if (cur != null) {
-                val p = mapPt(cur.first, cur.second, sRot)
-                if (pressing) drawTouchDot(p, edge, cStart, rgb)
-                else drawCircle(cEnd.copy(alpha = 0.4f * edge), radius = 6f, center = p)
-            }
-        }
-    }
-}
-
-LOOPY_EOF
-cat > "app/src/main/java/com/loopy/app/editor/Timeline.kt" << 'LOOPY_EOF'
-package com.loopy.app.editor
-
-import android.graphics.Bitmap
-import android.media.MediaMetadataRetriever
-import android.net.Uri
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -467,250 +47,585 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
-import com.loopy.app.core.stroke.StrokeOps
-import com.loopy.app.core.record.PlacedStroke
+import com.loopy.app.core.material.Material
+import com.loopy.app.data.MaterialStore
+import com.loopy.app.overlay.OverlayService
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import com.loopy.app.service.LoopyService
+import com.loopy.app.shizuku.ShizukuManager
+import com.loopy.app.shizuku.ShizukuState
+import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.CardStroke
+import com.loopy.app.ui.theme.GradientTitle
+import com.loopy.app.ui.theme.LineIcon
+import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.ui.components.GradientText
+import com.loopy.app.ui.components.Icon
+import com.loopy.app.ui.components.LoopyIcon
+import com.loopy.app.ui.components.NeuButton
+import com.loopy.app.ui.components.NeuCard
+import com.loopy.app.ui.components.NeuOutlineButton
+import com.loopy.app.ui.components.NeuListItem
+import com.loopy.app.ui.components.NeuToggle
+import com.loopy.app.ui.theme.Space
+import com.loopy.app.ui.theme.Type
+import com.loopy.app.ui.theme.palette
+import com.loopy.app.ui.theme.ThemeMode
+import com.loopy.app.ui.theme.ThemePref
+import com.loopy.app.ui.theme.LoopyTheme
 import com.loopy.app.ui.theme.NeuBase
-import com.loopy.app.ui.theme.Depth
-import com.loopy.app.ui.theme.neu
-import com.loopy.app.ui.theme.neuColor
-import java.io.File
-import kotlin.math.abs
-import kotlin.math.ceil
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.loopy.app.ui.theme.AnimatedBottomGradient
+import com.loopy.app.ui.theme.MeshLavender
+import com.loopy.app.ui.theme.MeshMint
+import com.loopy.app.ui.theme.MeshPeach
+import com.loopy.app.ui.theme.TextHi
+import com.loopy.app.ui.theme.TextLo
+import rikka.shizuku.Shizuku
 
-@Composable
-internal fun Timeline(
-    strokes: List<PlacedStroke>,
-    totalMs: Long,
-    positionMs: Long,
-    videoOffsetMs: Long,
-    videoPath: String?,
-    density: androidx.compose.ui.unit.Density,
-    selected: Int?,
-    onScrubTime: (Long) -> Unit,
-    onScrubbingChange: (Boolean) -> Unit,
-    userScrubbing: Boolean,
-    onSelect: (Int) -> Unit,
-    onMove: (Int, Long) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val scrollState = rememberScrollState()
-    var dpPerSec by remember { mutableStateOf(DP_PER_SEC) }
-    val pxPerMs = with(density) { dpPerSec.dp.toPx() } / 1000f
-    val thumbs = remember { mutableStateListOf<ImageBitmap?>() }
-    val trackH = 52.dp
-    val rulerH = 18.dp
-    val cardVPad = 6.dp
-    val cardH = trackH + cardVPad * 2
-    val laneStep = 28.dp
-    val blockH = 24.dp
-    val thumbHpx = with(density) { trackH.toPx() }.toInt().coerceAtLeast(1)
-    val secCount = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
+class MainActivity : ComponentActivity() {
+    private val binderListener = Shizuku.OnBinderReceivedListener { onShizukuChanged?.invoke() }
+    private val deadListener = Shizuku.OnBinderDeadListener { onShizukuChanged?.invoke() }
+    private var onShizukuChanged: (() -> Unit)? = null
 
-    val lanes = StrokeOps.assignLanes(strokes)
-    val laneCount = (lanes.maxOfOrNull { it }?.plus(1) ?: 0).coerceAtLeast(1)
-    val strokeTrackH = laneStep * laneCount
-    val timelineH = 8.dp + rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 10.dp
-
-    // 드래그(홀드 이동) 상태
-    var dragIndex by remember { mutableStateOf<Int?>(null) }
-    var dragDx by remember { mutableStateOf(0f) }
-
-    LaunchedEffect(videoPath, dpPerSec) {
-        thumbs.clear()
-        val path = videoPath ?: return@LaunchedEffect
-        val secN = ceil(totalMs / 1000f).toInt().coerceAtLeast(1)
-        withContext(Dispatchers.IO) {
-            val r = MediaMetadataRetriever()
-            runCatching {
-                val uri = if (path.startsWith("/")) Uri.fromFile(File(path)) else Uri.parse(path)
-                r.setDataSource(context, uri)
-                for (i in 0 until secN) {
-                    val ib = runCatching {
-                        val src = r.getFrameAtTime(i * 1000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                        src?.let {
-                            val ratio = thumbHpx.toFloat() / it.height
-                            val w = (it.width * ratio).toInt().coerceAtLeast(1)
-                            Bitmap.createScaledBitmap(it, w, thumbHpx, true).asImageBitmap()
-                        }
-                    }.getOrNull()
-                    withContext(Dispatchers.Main) { thumbs.add(ib) }
-                }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        Shizuku.addBinderReceivedListenerSticky(binderListener)
+        Shizuku.addBinderDeadListener(deadListener)
+        val activity = this
+        setContent {
+            var themeMode by remember { mutableStateOf(ThemePref.get(activity)) }
+            LoopyTheme(mode = themeMode) {
+                RootScreen(
+                    registerRefresh = { cb -> onShizukuChanged = cb },
+                    themeMode = themeMode,
+                    onThemeChange = { m ->
+                        themeMode = m
+                        ThemePref.set(activity, m)
+                    },
+                )
             }
-            runCatching { r.release() }
         }
     }
 
-    LaunchedEffect(scrollState, dpPerSec) {
-        snapshotFlow { scrollState.value to scrollState.isScrollInProgress }
-            .collect { (px, inProgress) ->
-                onScrubbingChange(inProgress)
-                if (inProgress) onScrubTime((px / pxPerMs).toLong().coerceIn(0L, totalMs))
-            }
-    }
-    LaunchedEffect(positionMs, userScrubbing, dpPerSec) {
-        if (!userScrubbing) {
-            val target = (positionMs * pxPerMs).toInt().coerceIn(0, scrollState.maxValue)
-            if (abs(scrollState.value - target) > 1) runCatching { scrollState.scrollTo(target) }
-        }
-    }
-
-    BoxWithConstraints(
-        modifier.fillMaxWidth().height(timelineH)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    do {
-                        val e = awaitPointerEvent()
-                        if (e.changes.count { it.pressed } >= 2) {
-                            val z = e.calculateZoom()
-                            if (z != 1f) {
-                                dpPerSec = (dpPerSec * z).coerceIn(24f, 240f)
-                                e.changes.forEach { it.consume() }
-                            }
-                        }
-                    } while (e.changes.any { it.pressed })
-                }
-            },
-    ) {
-        val viewportPx = constraints.maxWidth
-        val halfPx = viewportPx / 2f
-        val contentPx = viewportPx + totalMs * pxPerMs
-        val contentDp = with(density) { contentPx.toDp() }
-        val halfDp = with(density) { halfPx.toDp() }
-
-        Box(Modifier.fillMaxSize().padding(top = 8.dp)) {
-            Column(Modifier.fillMaxWidth().horizontalScroll(scrollState).width(contentDp)) {
-                Canvas(Modifier.fillMaxWidth().height(rulerH)) {
-                    val yb = size.height
-                    val txt = android.graphics.Paint().apply {
-                        color = android.graphics.Color.rgb(138, 141, 160)
-                        textSize = 9.sp.toPx(); isAntiAlias = true
-                    }
-                    drawIntoCanvas { canvas ->
-                        for (sec in 0..secCount) {
-                            val x = halfPx + sec * 1000f * pxPerMs
-                            drawLine(CardStroke, Offset(x, yb * 0.58f), Offset(x, yb), strokeWidth = 2f)
-                            canvas.nativeCanvas.drawText("${sec}s", x + 3.dp.toPx(), yb * 0.5f, txt)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(Modifier.height(cardH), verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(Modifier.width(halfDp))
-                    Box(Modifier.height(cardH).clip(RoundedCornerShape(12.dp)).background(LoopyCard)) {
-                        Row(Modifier.padding(vertical = cardVPad)) {
-                            for (i in 0 until secCount) {
-                                val ib = thumbs.getOrNull(i)
-                                Box(
-                                    Modifier.width(dpPerSec.dp).height(trackH)
-                                        .background(Color(0xFF1A1D26)),
-                                ) {
-                                    if (ib != null) {
-                                        Image(ib, contentDescription = null,
-                                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.width(halfDp))
-                }
-                Spacer(Modifier.height(6.dp))
-                // 스트로크 블록 트랙 (레인 배치, 영상 싱크, 홀드 드래그)
-                Box(Modifier.fillMaxWidth().height(strokeTrackH)) {
-                    for (i in strokes.indices) {
-                        val s = strokes[i]
-                        val lane = lanes[i]
-                        val startVideoMs = videoOffsetMs + s.startMs
-                        val dxDp = if (dragIndex == i) with(density) { dragDx.toDp() } else 0.dp
-                        val xDp = halfDp + with(density) { (startVideoMs * pxPerMs).toDp() } + dxDp
-                        val wDp = with(density) { (s.stroke.durationMs * pxPerMs).toDp() }.coerceAtLeast(12.dp)
-                        val yDp = laneStep * lane + (laneStep - blockH) / 2
-                        StrokeBlock(
-                            selected = selected == i,
-                            added = s.added,
-                            onClick = { onSelect(i) },
-                            zIndexValue = if (selected == i) 2f else 1f,
-                            modifier = Modifier.offset(x = xDp, y = yDp).width(wDp).height(blockH)
-                                .pointerInput(i, pxPerMs) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { dragIndex = i; dragDx = 0f },
-                                        onDrag = { change, amount -> dragDx += amount.x; change.consume() },
-                                        onDragEnd = {
-                                            val ns = (s.startMs + (dragDx / pxPerMs)).toLong().coerceAtLeast(0L)
-                                            onMove(i, ns); dragIndex = null; dragDx = 0f
-                                        },
-                                        onDragCancel = { dragIndex = null; dragDx = 0f },
-                                    )
-                                },
-                        )
-                    }
-                }
-            }
-            // 중앙 재생헤드
-            Canvas(Modifier.fillMaxSize()) {
-                val x = size.width / 2f
-                val phBot = with(density) { (rulerH + 4.dp + cardH + 6.dp + strokeTrackH + 4.dp).toPx() }
-                drawIntoCanvas { canvas ->
-                    val paint = android.graphics.Paint().apply {
-                        isAntiAlias = true
-                        color = android.graphics.Color.rgb(43, 45, 66)
-                        strokeWidth = with(density) { 2.5.dp.toPx() }
-                        strokeCap = android.graphics.Paint.Cap.ROUND
-                        setShadowLayer(with(density) { 5.dp.toPx() }, 0f,
-                            with(density) { 1.dp.toPx() }, android.graphics.Color.argb(60, 0, 0, 0))
-                    }
-                    canvas.nativeCanvas.drawLine(x, 0f, x, phBot, paint)
-                }
-            }
-        }
+    override fun onDestroy() {
+        super.onDestroy()
+        Shizuku.removeBinderReceivedListener(binderListener)
+        Shizuku.removeBinderDeadListener(deadListener)
     }
 }
 
-/** 스트로크 블록. 그림자가 이웃 블록을 침범하지 않도록 안쪽 여백 안에서만 그린다. */
+private enum class Tab(val label: String, val icon: String) {
+    DASHBOARD("대시보드", "◈"), LIBRARY("라이브러리", "▤"), SETTINGS("설정", "⚙"),
+}
+
 @Composable
-internal fun StrokeBlock(
-    selected: Boolean, added: Boolean, zIndexValue: Float,
-    onClick: () -> Unit, modifier: Modifier,
+private fun RootScreen(
+    registerRefresh: ((() -> Unit)) -> Unit,
+    themeMode: ThemeMode,
+    onThemeChange: (ThemeMode) -> Unit,
 ) {
-    val shape = RoundedCornerShape(7.dp)
-    val base = if (added) AddedGreen else TraceStart
-    // zIndex로 선택 블록을 위로 → 그림자가 이웃에 가려지지 않고, 이웃을 덮지도 않음
-    Box(modifier.zIndex(zIndexValue).clickable { onClick() }, contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
-                .clip(shape)
-                .neuColor(fill = if (selected) Color.White else base, corner = 7.dp, depth = Depth.SM)
-                .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
+    val context = LocalContext.current
+    val mpm = remember { context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager }
+    val sessionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            VideoSession.code = result.resultCode
+            VideoSession.data = result.data
+            context.startForegroundService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_SET_SESSION }
+            )
+        }
+    }
+    fun toggleSession(on: Boolean) {
+        if (on) {
+            runCatching { sessionLauncher.launch(mpm.createScreenCaptureIntent()) }
+        } else {
+            context.startService(
+                Intent(context, OverlayService::class.java).apply { action = OverlayService.ACTION_END_SESSION }
+            )
+            VideoSession.active = false
+        }
+    }
+
+    var state by remember { mutableStateOf(ShizukuManager.state()) }
+    var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    var overlayMsg by remember { mutableStateOf("오버레이를 켜고 게임으로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
+    var builds by remember { mutableStateOf(MaterialStore.load(context).filter { it.typeId == "build" }) }
+    var renaming by remember { mutableStateOf<Material?>(null) }
+    var nameField by remember { mutableStateOf("") }
+    var tab by remember { mutableStateOf(Tab.DASHBOARD) }
+
+    // 앱 시작 시 권한 안내 팝업 (Shizuku 우선, 그다음 오버레이)
+    var showShizukuDialog by remember { mutableStateOf(state != ShizukuState.READY) }
+    var showOverlayDialog by remember { mutableStateOf(false) }
+
+    // 편집기 상태
+    var editorOpen by remember { mutableStateOf(false) }
+    var editId by remember { mutableStateOf<String?>(null) }
+    var plName by remember { mutableStateOf("") }
+    var plShuffle by remember { mutableStateOf(false) }
+    var plCycles by remember { mutableStateOf("") }
+    var plGap by remember { mutableStateOf("") }
+    val pattern = remember { mutableStateListOf<String>() }
+    var editingBuild by remember { mutableStateOf<Material?>(null) }
+
+    fun refresh() {
+        builds = MaterialStore.load(context).filter { it.typeId == "build" }
+    }
+
+
+    LaunchedEffect(Unit) {
+        registerRefresh {
+            state = ShizukuManager.state()
+            canOverlay = Settings.canDrawOverlays(context)
+            refresh()
+        }
+    }
+    LaunchedEffect(state) {
+        if (state == ShizukuState.READY) {
+            LoopyService.bind(context)
+            if (!canOverlay) showOverlayDialog = true
+        }
+    }
+
+    if (editingBuild != null) {
+        MacroEditorScreen(
+            build = editingBuild!!,
+            onBack = { editingBuild = null; refresh() },
+        )
+        return
+    }
+
+    if (editorOpen) {
+        return
+    }
+
+    Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        bottomBar = {
+            NavigationBar(containerColor = NeuBase) {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = { LineIcon(kind = t.name.lowercase(), color = if (tab == t) Accent else TextLo) },
+                        label = { Text(t.label, fontSize = 11.sp) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Accent, selectedTextColor = Accent,
+                            unselectedIconColor = TextLo, unselectedTextColor = TextLo,
+                            indicatorColor = Accent.copy(alpha = 0.12f),
+                        ),
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        // 배경과 표면은 같은 색이어야 한다. 다르면 카드가 "올려진 것"이 되어 뉴모피즘이 깨진다.
+        Box(Modifier.fillMaxSize().background(palette.surface).padding(padding)) {
+            AnimatedBottomGradient()
+
+            when (tab) {
+                Tab.DASHBOARD -> DashboardTab(
+                    state = state, canOverlay = canOverlay, msg = overlayMsg,
+                    recentBuild = builds.firstOrNull(),
+                    onToggleOverlay = { turningOn ->
+                        if (turningOn) {
+                            context.startForegroundService(Intent(context, OverlayService::class.java))
+                            overlayMsg = "켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록."
+                        } else {
+                            context.stopService(Intent(context, OverlayService::class.java))
+                            overlayMsg = "오버레이를 껐어."
+                        }
+                    },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
+                )
+                Tab.LIBRARY -> LibraryTab(
+                    builds = builds,
+                    onRefresh = { refresh() },
+                    onRename = { renaming = it; nameField = it.meta.name },
+                    onDelete = { MaterialStore.delete(context, it.id); refresh() },
+                    onEdit = { editingBuild = it },
+                )
+                Tab.SETTINGS -> SettingsTab(
+                    themeMode = themeMode,
+                    onThemeChange = onThemeChange,
+                    state = state, canOverlay = canOverlay,
+                    onRequestShizuku = {
+                        ShizukuManager.requestPermission { g ->
+                            state = if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION
+                        }
+                    },
+                    onRecheckShizuku = { state = ShizukuManager.state() },
+                    onOpenOverlaySettings = {
+                        context.startActivity(
+                            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        )
+                    },
+                    onRecheckOverlay = { canOverlay = Settings.canDrawOverlays(context) },
+                    sessionActive = VideoSession.active,
+                    onToggleSession = { toggleSession(it) },
+                )
+            }
+        }
+    }
+
+    // ── 권한 안내 팝업 ──
+    if (showShizukuDialog && state != ShizukuState.READY) {
+        AlertDialog(
+            onDismissRequest = { showShizukuDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showShizukuDialog = false; tab = Tab.SETTINGS }) {
+                    Text("설정으로 이동", color = Accent)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showShizukuDialog = false }) { Text("나중에", color = TextLo) } },
+            title = { Text("Shizuku 연결 필요", color = TextHi) },
+            text = { Text("터치 재현에 Shizuku 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
+            containerColor = LoopyCard,
+        )
+    } else if (showOverlayDialog && !canOverlay) {
+        AlertDialog(
+            onDismissRequest = { showOverlayDialog = false },
+            confirmButton = {
+                TextButton(onClick = { showOverlayDialog = false; tab = Tab.SETTINGS }) {
+                    Text("설정으로 이동", color = Accent)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showOverlayDialog = false }) { Text("나중에", color = TextLo) } },
+            title = { Text("오버레이 권한 필요", color = TextHi) },
+            text = { Text("화면 위에 컨트롤을 띄우려면 '다른 앱 위에 표시' 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
+            containerColor = LoopyCard,
+        )
+    }
+
+LOOPY_EOF
+cat >> "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
+    val editing = renaming
+    if (editing != null) {
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (nameField.isNotBlank()) {
+                        MaterialStore.upsert(
+                            context,
+                            editing.copy(meta = editing.meta.copy(name = nameField.trim())),
+                        )
+                    }
+                    renaming = null; refresh()
+                }) { Text("저장", color = Accent) }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("취소", color = TextLo) } },
+            title = { Text("이름 변경", color = TextHi) },
+            text = { OutlinedTextField(value = nameField, onValueChange = { nameField = it }, singleLine = true) },
+            containerColor = LoopyCard,
         )
     }
 }
 
+@Composable
+private fun ScreenColumn(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun DashboardTab(
+    state: ShizukuState,
+    canOverlay: Boolean,
+    msg: String,
+    recentBuild: Material?,
+    onToggleOverlay: (Boolean) -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
+) {
+    val p = palette
+    var overlayOn by remember { mutableStateOf(false) }
+    val ready = state == ShizukuState.READY && canOverlay
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Space.sm),
+    ) {
+        Spacer(Modifier.height(Space.xl))
+        Column(Modifier.padding(horizontal = Space.md)) {
+            GradientText("Loopy", fontSize = Type.title)
+            Text("터치 자동화", color = p.textMuted, fontSize = Type.caption)
+        }
+        Spacer(Modifier.height(Space.lg))
+
+        // 오버레이가 이 앱의 관문이다. 켜지 않으면 아무것도 시작할 수 없으므로
+        // 꺼져 있을 때는 큰 버튼으로, 켜져 있을 때는 상태로 보여준다.
+        NeuCard(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "오버레이",
+                        color = p.textStrong,
+                        fontSize = Type.heading,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        if (overlayOn) "화면에 컨트롤이 떠 있습니다" else "켜면 화면 위에서 녹화할 수 있습니다",
+                        color = p.textMuted,
+                        fontSize = Type.caption,
+                    )
+                }
+                if (overlayOn) {
+                    NeuToggle(
+                        checked = true,
+                        onCheckedChange = { overlayOn = false; onToggleOverlay(false) },
+                    )
+                }
+            }
+            if (!overlayOn) {
+                Spacer(Modifier.height(Space.md))
+                NeuButton(
+                    text = "오버레이 켜기",
+                    enabled = ready,
+                    onClick = { overlayOn = true; onToggleOverlay(true) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (!ready) {
+                Spacer(Modifier.height(Space.sm))
+                Text(msg, color = p.danger, fontSize = Type.label)
+            }
+        }
+
+        NeuCard(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "화면 녹화",
+                        color = p.textStrong,
+                        fontSize = Type.heading,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        if (sessionActive) "매크로에 영상이 함께 기록됩니다" else "터치만 기록합니다",
+                        color = p.textMuted,
+                        fontSize = Type.caption,
+                    )
+                }
+                NeuToggle(checked = sessionActive, onCheckedChange = onToggleSession)
+            }
+        }
+
+        if (recentBuild != null) {
+            Spacer(Modifier.height(Space.sm))
+            Text(
+                "최근",
+                color = p.textMuted,
+                fontSize = Type.label,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = Space.lg, bottom = Space.xs),
+            )
+            NeuListItem(
+                leading = { LoopyIcon(Icon.PLAY, p.accent, size = 18.dp) },
+            ) {
+                Text(
+                    recentBuild.meta.name.ifEmpty { "이름 없음" },
+                    color = p.textStrong,
+                    fontSize = Type.body,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    "${recentBuild.children.size}개 블록",
+                    color = p.textMuted,
+                    fontSize = Type.caption,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(Space.xxl))
+    }
+}
+
+@Composable
+private fun LibraryTab(
+    builds: List<Material>,
+    onRefresh: () -> Unit,
+    onRename: (Material) -> Unit,
+    onDelete: (Material) -> Unit,
+    onEdit: (Material) -> Unit,
+) {
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
+            Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
+        }
+        if (builds.isEmpty()) {
+            SoftCard(Modifier.fillMaxWidth()) {
+                Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 13.sp)
+            }
+        } else {
+            builds.forEach { m ->
+                SoftCard(Modifier.fillMaxWidth()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                m.meta.name.ifEmpty { "이름 없음" },
+                                color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+                            )
+                            Text("${m.children.size}개 블록", color = TextLo, fontSize = 12.sp)
+                        }
+                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(m) })
+                        Spacer(Modifier.width(14.dp))
+                        Text("이름변경", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRename(m) })
+                        Spacer(Modifier.width(14.dp))
+                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(m) })
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun SettingsTab(
+    themeMode: ThemeMode,
+    onThemeChange: (ThemeMode) -> Unit,
+    state: ShizukuState,
+    canOverlay: Boolean,
+    onRequestShizuku: () -> Unit,
+    onRecheckShizuku: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
+    onRecheckOverlay: () -> Unit,
+    sessionActive: Boolean,
+    onToggleSession: (Boolean) -> Unit,
+) {
+    val p = palette
+    ScreenColumn {
+        Spacer(Modifier.height(24.dp))
+        GradientText("설정", fontSize = Type.title)
+
+        // 이 앱은 게임 위에서 오래 켜두는 도구라 화면 밝기가 눈에 남는다.
+        // 시스템 설정을 뒤지지 않고 여기서 바로 고를 수 있어야 한다.
+        NeuCard(Modifier.fillMaxWidth()) {
+            Text(
+                "테마",
+                color = p.textStrong,
+                fontSize = Type.heading,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(Space.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+                for (m in ThemeMode.entries) {
+                    val label = when (m) {
+                        ThemeMode.SYSTEM -> "시스템"
+                        ThemeMode.LIGHT -> "밝게"
+                        ThemeMode.DARK -> "어둡게"
+                    }
+                    Box(Modifier.weight(1f)) {
+                        if (m == themeMode) {
+                            NeuButton(label, onClick = { onThemeChange(m) }, modifier = Modifier.fillMaxWidth())
+                        } else {
+                            NeuOutlineButton(label, onClick = { onThemeChange(m) }, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+        }
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                when (state) {
+                    ShizukuState.NOT_INSTALLED -> "연결 안 됨 · Shizuku 앱 실행 필요"
+                    ShizukuState.NEEDS_PERMISSION -> "설치됨 · 권한 허용 필요"
+                    ShizukuState.READY -> "준비 완료"
+                },
+                color = if (state == ShizukuState.READY) Accent else TextLo, fontSize = 13.sp,
+            )
+            if (state == ShizukuState.NEEDS_PERMISSION) {
+                Spacer(Modifier.height(12.dp))
+                LoopyButton("권한 허용", onClick = onRequestShizuku)
+            } else if (state == ShizukuState.NOT_INSTALLED) {
+                Spacer(Modifier.height(12.dp))
+                LoopyButton("다시 확인", onClick = onRecheckShizuku)
+            }
+        }
+
+        SoftCard(Modifier.fillMaxWidth()) {
+            Text("오버레이 권한", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (canOverlay) "허용됨" else "다른 앱 위에 표시 권한 필요",
+                color = if (canOverlay) Accent else TextLo, fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (!canOverlay) {
+                LoopyButton("권한 설정 열기", onClick = onOpenOverlaySettings)
+                Spacer(Modifier.height(8.dp))
+            }
+            LoopyButton("권한 상태 새로고침", filled = false, onClick = onRecheckOverlay)
+        }
+        VideoSessionCard(sessionActive, onToggleSession)
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun VideoSessionCard(active: Boolean, onToggle: (Boolean) -> Unit) {
+    SoftCard(Modifier.fillMaxWidth()) {
+        Text("화면 녹화 세션", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            if (active) "세션 켜짐 · 오버레이 영상 버튼(초록)을 켜고 녹화하면 팝업 없이 화면도 저장돼."
+            else "켜면 화면 녹화 권한을 한 번만 받아둬. 이후 오버레이 녹화 시 팝업·앱전환 없이 영상이 저장돼.",
+            color = TextLo, fontSize = 12.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        LoopyButton(text = if (active) "세션 끄기" else "세션 켜기", filled = !active) { onToggle(!active) }
+        if (active) {
+            Spacer(Modifier.height(8.dp))
+            Text("녹화 중에는 상태바에 캐스트 아이콘이 표시됩니다", color = TextLo, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val base = Modifier.fillMaxWidth().height(50.dp).clip(shape).alpha(if (enabled) 1f else 0.45f)
+    val styled = if (filled) base.background(Brush.horizontalGradient(listOf(MeshPeach, MeshLavender, MeshMint)))
+    else base.background(LoopyCard).border(1.dp, CardStroke, shape)
+    val clickMod = if (enabled) styled.clickable { onClick() } else styled
+    Box(clickMod, contentAlignment = Alignment.Center) {
+        Text(text, color = if (filled) TextHi else Accent, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
 LOOPY_EOF
-echo "5/5 완료."
+echo "완료."
 git add -A
-git commit -m "뉴모피즘 정석 재구현: 표준 스펙(배경=표면 동색, 흰 하이라이트/회청 그림자, offset8/blur16, 면 안 그라데이션 제거), 눌림=inset 반전, 그림자 여백 확보, 인터랙티브에 악센트 단서, 다크모드 토글"
+git commit -m "fix: RootScreen 시그니처(themeMode) + setContent 안 Activity 참조 명시"
 git push
 echo "푸시 완료"
 

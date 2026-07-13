@@ -100,15 +100,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(deadListener)
+        val activity = this
         setContent {
-            var themeMode by remember { mutableStateOf(ThemePref.get(this)) }
+            var themeMode by remember { mutableStateOf(ThemePref.get(activity)) }
             LoopyTheme(mode = themeMode) {
                 RootScreen(
                     registerRefresh = { cb -> onShizukuChanged = cb },
                     themeMode = themeMode,
                     onThemeChange = { m ->
                         themeMode = m
-                        ThemePref.set(this, m)
+                        ThemePref.set(activity, m)
                     },
                 )
             }
@@ -127,7 +128,11 @@ private enum class Tab(val label: String, val icon: String) {
 }
 
 @Composable
-private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
+private fun RootScreen(
+    registerRefresh: ((() -> Unit)) -> Unit,
+    themeMode: ThemeMode,
+    onThemeChange: (ThemeMode) -> Unit,
+) {
     val context = LocalContext.current
     val mpm = remember { context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager }
     val sessionLauncher = rememberLauncherForActivityResult(
