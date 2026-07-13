@@ -82,9 +82,7 @@ import com.loopy.app.ui.theme.TextLo
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
 import com.loopy.app.ui.theme.palette
-import com.loopy.app.ui.theme.Depth
-import com.loopy.app.ui.theme.neu
-import com.loopy.app.ui.theme.paletteBar
+import com.loopy.app.ui.theme.neuBar
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.launch

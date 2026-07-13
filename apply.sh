@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 5/5: 편집기(Overlay/Timeline)
+# 2/2
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/editor/EditorOverlay.kt" << 'LOOPY_EOF'
@@ -706,9 +706,9 @@ internal fun StrokeBlock(
 }
 
 LOOPY_EOF
-echo "5/5 완료."
+echo "2/2 완료."
 git add -A
-git commit -m "UI 시스템: 디자인 토큰(다크모드), 뉴모피즘 재구현(컬러 글로우 이중테 버그 수정), 모션 규칙, 컴포넌트, 벡터 아이콘 25종, 대시보드 재작성"
+git commit -m "fix: 편집기 import 중복/오염 수정"
 git push
 echo "푸시 완료"
 
