@@ -51,6 +51,7 @@ import com.loopy.app.core.record.PlacedStroke
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuColor
 
 @Composable
 internal fun CaptureOverlay(
@@ -111,7 +112,7 @@ internal fun CaptureOverlay(
 internal fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .neu(fill = bg, corner = 15.dp, depth = Depth.MD)
+            .neuColor(fill = bg, corner = 15.dp, depth = Depth.MD)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }

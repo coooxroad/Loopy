@@ -49,9 +49,14 @@ private val LoopyColors = lightColorScheme(
  */
 @Composable
 fun LoopyTheme(
-    dark: Boolean = isSystemInDarkTheme(),
+    mode: ThemeMode = ThemeMode.SYSTEM,
     content: @Composable () -> Unit,
 ) {
+    val dark = when (mode) {
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
     val p = if (dark) DarkPalette else LightPalette
     CompositionLocalProvider(LocalPalette provides p) {
         MaterialTheme(

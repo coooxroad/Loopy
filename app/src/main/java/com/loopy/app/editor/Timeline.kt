@@ -56,6 +56,7 @@ import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuColor
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -266,7 +267,7 @@ internal fun StrokeBlock(
         Box(
             Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
                 .clip(shape)
-                .neu(fill = if (selected) Color.White else base, corner = 7.dp, depth = Depth.SM)
+                .neuColor(fill = if (selected) Color.White else base, corner = 7.dp, depth = Depth.SM)
                 .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }

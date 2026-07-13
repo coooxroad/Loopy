@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# 2/2
+# 5/5: EditorOverlay + Timeline
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/editor/EditorOverlay.kt" << 'LOOPY_EOF'
@@ -56,6 +56,7 @@ import com.loopy.app.core.record.PlacedStroke
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuColor
 
 @Composable
 internal fun CaptureOverlay(
@@ -116,7 +117,7 @@ internal fun CaptureOverlay(
 internal fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .neu(fill = bg, corner = 15.dp, depth = Depth.MD)
+            .neuColor(fill = bg, corner = 15.dp, depth = Depth.MD)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
@@ -489,6 +490,7 @@ import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuColor
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -699,16 +701,16 @@ internal fun StrokeBlock(
         Box(
             Modifier.fillMaxSize().padding(horizontal = 3.dp, vertical = 2.dp)
                 .clip(shape)
-                .neu(fill = if (selected) Color.White else base, corner = 7.dp, depth = Depth.SM)
+                .neuColor(fill = if (selected) Color.White else base, corner = 7.dp, depth = Depth.SM)
                 .then(if (selected) Modifier.border(2.dp, base, shape) else Modifier),
         )
     }
 }
 
 LOOPY_EOF
-echo "2/2 완료."
+echo "5/5 완료."
 git add -A
-git commit -m "fix: 편집기 import 중복/오염 수정"
+git commit -m "뉴모피즘 정석 재구현: 표준 스펙(배경=표면 동색, 흰 하이라이트/회청 그림자, offset8/blur16, 면 안 그라데이션 제거), 눌림=inset 반전, 그림자 여백 확보, 인터랙티브에 악센트 단서, 다크모드 토글"
 git push
 echo "푸시 완료"
 

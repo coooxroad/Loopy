@@ -70,12 +70,16 @@ import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.components.GradientText
 import com.loopy.app.ui.components.Icon
 import com.loopy.app.ui.components.LoopyIcon
+import com.loopy.app.ui.components.NeuButton
 import com.loopy.app.ui.components.NeuCard
+import com.loopy.app.ui.components.NeuOutlineButton
 import com.loopy.app.ui.components.NeuListItem
 import com.loopy.app.ui.components.NeuToggle
 import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
 import com.loopy.app.ui.theme.palette
+import com.loopy.app.ui.theme.ThemeMode
+import com.loopy.app.ui.theme.ThemePref
 import com.loopy.app.ui.theme.LoopyTheme
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.AnimatedBottomGradient
@@ -96,7 +100,19 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         Shizuku.addBinderReceivedListenerSticky(binderListener)
         Shizuku.addBinderDeadListener(deadListener)
-        setContent { LoopyTheme { RootScreen(registerRefresh = { cb -> onShizukuChanged = cb }) } }
+        setContent {
+            var themeMode by remember { mutableStateOf(ThemePref.get(this)) }
+            LoopyTheme(mode = themeMode) {
+                RootScreen(
+                    registerRefresh = { cb -> onShizukuChanged = cb },
+                    themeMode = themeMode,
+                    onThemeChange = { m ->
+                        themeMode = m
+                        ThemePref.set(this, m)
+                    },
+                )
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -209,7 +225,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().background(NeuBase).padding(padding)) {
+        // 배경과 표면은 같은 색이어야 한다. 다르면 카드가 "올려진 것"이 되어 뉴모피즘이 깨진다.
+        Box(Modifier.fillMaxSize().background(palette.surface).padding(padding)) {
             AnimatedBottomGradient()
 
             when (tab) {
@@ -236,6 +253,8 @@ private fun RootScreen(registerRefresh: ((() -> Unit)) -> Unit) {
                     onEdit = { editingBuild = it },
                 )
                 Tab.SETTINGS -> SettingsTab(
+                    themeMode = themeMode,
+                    onThemeChange = onThemeChange,
                     state = state, canOverlay = canOverlay,
                     onRequestShizuku = {
                         ShizukuManager.requestPermission { g ->
@@ -335,15 +354,17 @@ private fun DashboardTab(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = Space.lg),
-        verticalArrangement = Arrangement.spacedBy(Space.md),
+            .padding(horizontal = Space.sm),
     ) {
         Spacer(Modifier.height(Space.xl))
-        GradientText("Loopy", fontSize = 32.sp)
-        Text("터치 자동화", color = p.textMuted, fontSize = Type.body)
-        Spacer(Modifier.height(Space.sm))
+        Column(Modifier.padding(horizontal = Space.md)) {
+            GradientText("Loopy", fontSize = Type.title)
+            Text("터치 자동화", color = p.textMuted, fontSize = Type.caption)
+        }
+        Spacer(Modifier.height(Space.lg))
 
-        // 오버레이는 이 앱의 관문이다. 켜져 있는지 한눈에 보여야 한다.
+        // 오버레이가 이 앱의 관문이다. 켜지 않으면 아무것도 시작할 수 없으므로
+        // 꺼져 있을 때는 큰 버튼으로, 켜져 있을 때는 상태로 보여준다.
         NeuCard(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -354,16 +375,31 @@ private fun DashboardTab(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Spacer(Modifier.height(Space.xs))
-                    Text(msg, color = p.textMuted, fontSize = Type.caption)
+                    Text(
+                        if (overlayOn) "화면에 컨트롤이 떠 있습니다" else "켜면 화면 위에서 녹화할 수 있습니다",
+                        color = p.textMuted,
+                        fontSize = Type.caption,
+                    )
                 }
-                NeuToggle(
-                    checked = overlayOn,
-                    onCheckedChange = {
-                        if (!ready) return@NeuToggle
-                        overlayOn = it
-                        onToggleOverlay(it)
-                    },
+                if (overlayOn) {
+                    NeuToggle(
+                        checked = true,
+                        onCheckedChange = { overlayOn = false; onToggleOverlay(false) },
+                    )
+                }
+            }
+            if (!overlayOn) {
+                Spacer(Modifier.height(Space.md))
+                NeuButton(
+                    text = "오버레이 켜기",
+                    enabled = ready,
+                    onClick = { overlayOn = true; onToggleOverlay(true) },
+                    modifier = Modifier.fillMaxWidth(),
                 )
+            }
+            if (!ready) {
+                Spacer(Modifier.height(Space.sm))
+                Text(msg, color = p.danger, fontSize = Type.label)
             }
         }
 
@@ -378,7 +414,7 @@ private fun DashboardTab(
                     )
                     Spacer(Modifier.height(Space.xs))
                     Text(
-                        if (sessionActive) "매크로에 영상이 함께 기록됩니다" else "영상 없이 터치만 기록합니다",
+                        if (sessionActive) "매크로에 영상이 함께 기록됩니다" else "터치만 기록합니다",
                         color = p.textMuted,
                         fontSize = Type.caption,
                     )
@@ -388,12 +424,13 @@ private fun DashboardTab(
         }
 
         if (recentBuild != null) {
+            Spacer(Modifier.height(Space.sm))
             Text(
                 "최근",
                 color = p.textMuted,
                 fontSize = Type.label,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = Space.sm, start = Space.xs),
+                modifier = Modifier.padding(start = Space.lg, bottom = Space.xs),
             )
             NeuListItem(
                 leading = { LoopyIcon(Icon.PLAY, p.accent, size = 18.dp) },
@@ -460,6 +497,8 @@ private fun LibraryTab(
 
 @Composable
 private fun SettingsTab(
+    themeMode: ThemeMode,
+    onThemeChange: (ThemeMode) -> Unit,
     state: ShizukuState,
     canOverlay: Boolean,
     onRequestShizuku: () -> Unit,
@@ -469,9 +508,38 @@ private fun SettingsTab(
     sessionActive: Boolean,
     onToggleSession: (Boolean) -> Unit,
 ) {
+    val p = palette
     ScreenColumn {
         Spacer(Modifier.height(24.dp))
-        GradientTitle("설정", size = 28)
+        GradientText("설정", fontSize = Type.title)
+
+        // 이 앱은 게임 위에서 오래 켜두는 도구라 화면 밝기가 눈에 남는다.
+        // 시스템 설정을 뒤지지 않고 여기서 바로 고를 수 있어야 한다.
+        NeuCard(Modifier.fillMaxWidth()) {
+            Text(
+                "테마",
+                color = p.textStrong,
+                fontSize = Type.heading,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(Space.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+                for (m in ThemeMode.entries) {
+                    val label = when (m) {
+                        ThemeMode.SYSTEM -> "시스템"
+                        ThemeMode.LIGHT -> "밝게"
+                        ThemeMode.DARK -> "어둡게"
+                    }
+                    Box(Modifier.weight(1f)) {
+                        if (m == themeMode) {
+                            NeuButton(label, onClick = { onThemeChange(m) }, modifier = Modifier.fillMaxWidth())
+                        } else {
+                            NeuOutlineButton(label, onClick = { onThemeChange(m) }, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            }
+        }
 
         SoftCard(Modifier.fillMaxWidth()) {
             Text("Shizuku", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
