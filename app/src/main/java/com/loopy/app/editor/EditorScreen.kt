@@ -79,8 +79,12 @@ import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.TextHi
 import com.loopy.app.ui.theme.TextLo
+import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
-import com.loopy.app.ui.theme.neuBar
+import com.loopy.app.ui.theme.palette
+import com.loopy.app.ui.theme.Depth
+import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.paletteBar
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.launch
@@ -426,14 +430,14 @@ fun MacroEditorScreen(build: Material, onBack: () -> Unit) {
 
             // 인포바: 볼록 뉴모피즘 각진 직사각형
             Box(
-                Modifier.fillMaxWidth().neuBar().background(NeuBase)
+                Modifier.fillMaxWidth().neuBar().background(palette.surface)
                     .padding(horizontal = 18.dp, vertical = 5.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 // 시계: 파인(오목) 뉴모피즘. 탭하면 그 자리에서 자판 올라와 시간 직접 입력
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        Modifier.neu(Color(0xFFE6EAF2), corner = 9.dp, offset = 2.dp, blur = 4.5.dp, raised = false)
+                        Modifier.neu(corner = 9.dp, depth = Depth.SM, raised = false)
                             .clip(RoundedCornerShape(10.dp))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     ) {
@@ -527,7 +531,7 @@ fun MacroEditorScreen(build: Material, onBack: () -> Unit) {
             ) {
                 Box(
                     Modifier.size(56.dp)
-                        .neu(NeuBase, fill = AddedGreen, corner = 28.dp, offset = 3.dp, blur = 7.dp)
+                        .neu(fill = AddedGreen, corner = 28.dp, depth = Depth.LG)
                         .clickable { startCapture() },
                     contentAlignment = Alignment.Center,
                 ) {

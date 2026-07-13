@@ -49,6 +49,7 @@ import com.loopy.app.core.stroke.StrokeOps
 import com.loopy.app.core.record.EditableTimeline
 import com.loopy.app.core.record.PlacedStroke
 import com.loopy.app.ui.theme.NeuBase
+import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
 
 @Composable
@@ -110,7 +111,7 @@ internal fun CaptureOverlay(
 internal fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(50.dp)
-            .neu(Color(0xFF2A2E3A), fill = bg, corner = 15.dp, offset = 2.6.dp, blur = 6.dp)
+            .neu(fill = bg, corner = 15.dp, depth = Depth.MD)
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) { Text(label, color = fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
@@ -120,7 +121,7 @@ internal fun RowScope.CaptureButton(label: String, bg: Color, fg: Color, onClick
 internal fun RowScope.EditToolButton(kind: String, label: String, tint: Color, onClick: () -> Unit) {
     Box(
         Modifier.weight(1f).height(52.dp)
-            .neu(NeuBase, corner = 14.dp, offset = 2.6.dp, blur = 5.5.dp)
+            .neu(corner = 14.dp, depth = Depth.MD)
             .clip(RoundedCornerShape(12.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center,

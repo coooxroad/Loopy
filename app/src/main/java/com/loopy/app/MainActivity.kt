@@ -67,6 +67,15 @@ import com.loopy.app.ui.theme.GradientTitle
 import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.ui.components.GradientText
+import com.loopy.app.ui.components.Icon
+import com.loopy.app.ui.components.LoopyIcon
+import com.loopy.app.ui.components.NeuCard
+import com.loopy.app.ui.components.NeuListItem
+import com.loopy.app.ui.components.NeuToggle
+import com.loopy.app.ui.theme.Space
+import com.loopy.app.ui.theme.Type
+import com.loopy.app.ui.theme.palette
 import com.loopy.app.ui.theme.LoopyTheme
 import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.AnimatedBottomGradient
@@ -318,49 +327,92 @@ private fun DashboardTab(
     sessionActive: Boolean,
     onToggleSession: (Boolean) -> Unit,
 ) {
+    val p = palette
     var overlayOn by remember { mutableStateOf(false) }
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        GradientTitle("Loopy", size = 34)
-        Text("레코드 매크로", color = TextLo, fontSize = 14.sp)
+    val ready = state == ShizukuState.READY && canOverlay
 
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("오버레이", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
-            Text(msg, color = TextLo, fontSize = 12.sp)
-            Spacer(Modifier.height(14.dp))
-            val ready = state == ShizukuState.READY && canOverlay
-            LoopyButton(
-                text = if (overlayOn) "오버레이 끄기" else "오버레이 켜기",
-                filled = !overlayOn,
-                enabled = ready,
-            ) {
-                overlayOn = !overlayOn
-                onToggleOverlay(overlayOn)
-            }
-            if (!ready) {
-                Spacer(Modifier.height(8.dp))
-                Text("설정에서 권한을 허용하세요", color = TextLo, fontSize = 11.sp)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Space.lg),
+        verticalArrangement = Arrangement.spacedBy(Space.md),
+    ) {
+        Spacer(Modifier.height(Space.xl))
+        GradientText("Loopy", fontSize = 32.sp)
+        Text("터치 자동화", color = p.textMuted, fontSize = Type.body)
+        Spacer(Modifier.height(Space.sm))
+
+        // 오버레이는 이 앱의 관문이다. 켜져 있는지 한눈에 보여야 한다.
+        NeuCard(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "오버레이",
+                        color = p.textStrong,
+                        fontSize = Type.heading,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(msg, color = p.textMuted, fontSize = Type.caption)
+                }
+                NeuToggle(
+                    checked = overlayOn,
+                    onCheckedChange = {
+                        if (!ready) return@NeuToggle
+                        overlayOn = it
+                        onToggleOverlay(it)
+                    },
+                )
             }
         }
 
-        VideoSessionCard(sessionActive, onToggleSession)
+        NeuCard(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "화면 녹화",
+                        color = p.textStrong,
+                        fontSize = Type.heading,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        if (sessionActive) "매크로에 영상이 함께 기록됩니다" else "영상 없이 터치만 기록합니다",
+                        color = p.textMuted,
+                        fontSize = Type.caption,
+                    )
+                }
+                NeuToggle(checked = sessionActive, onCheckedChange = onToggleSession)
+            }
+        }
 
-        SoftCard(Modifier.fillMaxWidth()) {
-            Text("최근 사용", color = TextHi, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(10.dp))
-            if (recentBuild == null) {
-                Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 12.sp)
-            } else {
+        if (recentBuild != null) {
+            Text(
+                "최근",
+                color = p.textMuted,
+                fontSize = Type.label,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = Space.sm, start = Space.xs),
+            )
+            NeuListItem(
+                leading = { LoopyIcon(Icon.PLAY, p.accent, size = 18.dp) },
+            ) {
                 Text(
                     recentBuild.meta.name.ifEmpty { "이름 없음" },
-                    color = TextHi, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                    color = p.textStrong,
+                    fontSize = Type.body,
+                    fontWeight = FontWeight.Medium,
                 )
-                Text("${recentBuild.children.size}개 블록", color = TextLo, fontSize = 11.sp)
-                Spacer(Modifier.height(6.dp))
+                Text(
+                    "${recentBuild.children.size}개 블록",
+                    color = p.textMuted,
+                    fontSize = Type.caption,
+                )
             }
         }
-        Spacer(Modifier.height(8.dp))
+
+        Spacer(Modifier.height(Space.xxl))
     }
 }
 
