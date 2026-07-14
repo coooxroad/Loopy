@@ -27,6 +27,14 @@ data class Meta(
     val favorite: Boolean = false,
     val folder: String? = null,
     val createdAt: Long = 0L,
+    /**
+     * 캔버스 위치.
+     *
+     * 블록 조립 화면은 무한 평면이다. 어디에 놓였는지는 실행과 무관하지만, 사용자가 배치한
+     * 그대로 다시 열려야 한다. 화면이 기억을 못 하면 매번 처음부터 정리하게 된다.
+     */
+    val x: Float = 0f,
+    val y: Float = 0f,
 )
 
 /** 타입별 설정값. */

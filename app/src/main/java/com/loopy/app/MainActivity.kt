@@ -68,7 +68,7 @@ import com.loopy.app.ui.theme.GradientTitle
 import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
-import com.loopy.app.blocks.BuildScreen
+import com.loopy.app.blocks.BlockCanvas
 import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Meta
 import com.loopy.app.ui.components.EmptyState
@@ -207,12 +207,11 @@ private fun RootScreen(
     }
 
     if (blocksBuild != null) {
-        BuildScreen(
+        BlockCanvas(
             build = blocksBuild!!,
             onBack = { blocksBuild = null; refresh() },
-            onRun = { m ->
-                OverlayService.runBuild(context, m.id)
-            },
+            onRun = { m -> OverlayService.runBuild(context, m.id) },
+            onOpenTouch = { editingBuild = blocksBuild },
         )
         return
     }

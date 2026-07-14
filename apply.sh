@@ -1,7 +1,253 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# fix: MainActivity Color import 누락
+# 3/3: Material 좌표 + 저장 + 연결
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
+cat > "app/src/main/java/com/loopy/app/core/material/Material.kt" << 'LOOPY_EOF'
+package com.loopy.app.core.material
+
+/**
+ * Loopy 의 유일한 공리.
+ *
+ * 터치 매크로도, 대기도, 조건도, 반복도, 트리거도, 그것들을 모아 만든 빌드까지도 전부 Material 이다.
+ * 빌드가 Material 이므로 빌드 안에 빌드를 넣을 수 있고, 그래서 플레이리스트 같은 별도 개념이 없다.
+ *
+ * 새 기능을 추가할 때 이 구조는 바뀌지 않는다. 새 [MaterialType] 과 그에 맞는
+ * Params · 실행기 · 편집 UI 를 등록할 뿐이다. 스크립트든 API 연동이든 마찬가지다.
+ */
+data class Material(
+    val id: String,
+    val typeId: String,
+    val params: Params,
+    val children: List<Material> = emptyList(),
+    val meta: Meta = Meta(),
+    /** 삭제하지 않고 잠시 꺼두기. 실험하며 만드는 도구에는 반드시 필요하다. */
+    val enabled: Boolean = true,
+) {
+    val type: MaterialType get() = MaterialRegistry.require(typeId)
+}
+
+data class Meta(
+    val name: String = "",
+    val note: String = "",
+    val favorite: Boolean = false,
+    val folder: String? = null,
+    val createdAt: Long = 0L,
+    /**
+     * 캔버스 위치.
+     *
+     * 블록 조립 화면은 무한 평면이다. 어디에 놓였는지는 실행과 무관하지만, 사용자가 배치한
+     * 그대로 다시 열려야 한다. 화면이 기억을 못 하면 매번 처음부터 정리하게 된다.
+     */
+    val x: Float = 0f,
+    val y: Float = 0f,
+)
+
+/** 타입별 설정값. */
+interface Params {
+    fun toMap(): Map<String, Any?>
+}
+
+object NoParams : Params {
+    override fun toMap(): Map<String, Any?> = emptyMap()
+}
+
+/**
+ * 블록의 성격.
+ *
+ * HAT 은 스크래치의 모자 블록처럼 위에 아무것도 붙일 수 없다. 트리거가 여기 속하며,
+ * 덕분에 "매크로 중간에 트리거가 있는" 상태가 구조적으로 불가능해진다.
+ *
+ * CONTROL 은 children 을 가지고 흐름을 바꾼다. 조건·반복·동시실행·빌드가 여기 속한다.
+ */
+enum class Kind { HAT, ACTION, CONTROL }
+
+/**
+ * children 을 어떤 축으로 배치·편집하는가. 두 가지뿐이다.
+ *
+ * 순서축만으로는 동시 실행을 표현할 수 없다. 그래서 시간축(촬영 매크로)이 따로 있고,
+ * 순서축에서 동시성이 필요하면 PARALLEL 제어 블록을 쓴다.
+ */
+enum class EditorKind {
+    /** 시간축. 각 자식이 시작 시각을 가지며, 겹치면 동시에 실행된다. 촬영 매크로. */
+    TIMELINE,
+
+    /** 순서축. 자식을 세로로 쌓고 가지친다. 빌드. */
+    BLOCKS,
+}
+
+/** 파라미터를 어떻게 입력받는가. 컨테이너 편집기와는 다른 층위다. */
+enum class ParamInput { NONE, INLINE, SHEET, CODE }
+
+interface MaterialType {
+    val id: String
+    val kind: Kind
+    val label: String
+
+    /** 파라미터 입력 방식. */
+    val input: ParamInput get() = ParamInput.NONE
+
+    /** children 을 가진다면 어떤 축으로 편집하는가. CONTROL 이 아니면 null. */
+    val editor: EditorKind? get() = null
+
+    /** 자식들을 순서대로가 아니라 동시에 실행한다. PARALLEL 이 이것을 켠다. */
+    val parallel: Boolean get() = false
+
+    fun parse(map: Map<String, Any?>): Params
+
+    val hasChildren: Boolean get() = kind == Kind.CONTROL
+}
+
+/**
+ * 타입 레지스트리.
+ *
+ * 런타임 등록이라 새 타입을 추가해도 기존 코드를 건드리지 않는다.
+ * 플러그인이 자기 타입을 밀어 넣는 것도 같은 방식이 된다.
+ */
+object MaterialRegistry {
+    private val types = LinkedHashMap<String, MaterialType>()
+
+    fun register(type: MaterialType) {
+        types[type.id] = type
+    }
+
+    fun find(id: String): MaterialType? = types[id]
+
+    fun require(id: String): MaterialType =
+        types[id] ?: error("등록되지 않은 Material 타입: $id")
+
+    fun all(): List<MaterialType> = types.values.toList()
+
+    fun byKind(kind: Kind): List<MaterialType> = types.values.filter { it.kind == kind }
+}
+LOOPY_EOF
+cat > "app/src/main/java/com/loopy/app/data/MaterialStore.kt" << 'LOOPY_EOF'
+package com.loopy.app.data
+
+import android.content.Context
+import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.MaterialRegistry
+import com.loopy.app.core.material.Meta
+import com.loopy.app.core.material.NoParams
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.UUID
+
+/**
+ * Material 트리 저장소.
+ *
+ * 궤적과 영상은 무거우므로 [com.loopy.app.core.record.StrokeStore] 와
+ * [com.loopy.app.core.record.RecordingStore] 에 두고, Material 은 id 로 참조만 한다.
+ * 빌드를 목록에 띄울 때마다 수천 개의 좌표를 읽지 않기 위해서다.
+ *
+ * schema 필드를 두는 이유: 구조는 앞으로도 바뀐다. 바뀔 것을 알면서 버전을 안 붙이면
+ * 나중에 사용자 데이터를 버리게 된다.
+ */
+object MaterialStore {
+
+    private const val SCHEMA = 1
+    private const val FILE = "materials.json"
+
+    private fun file(ctx: Context) = File(ctx.filesDir, FILE)
+
+    fun load(ctx: Context): List<Material> {
+        val f = file(ctx)
+        if (!f.exists()) {
+            val migrated = Migration.fromLegacy(ctx)
+            if (migrated.isNotEmpty()) save(ctx, migrated)
+            return migrated
+        }
+        return runCatching {
+            val root = JSONObject(f.readText())
+            val arr = root.optJSONArray("materials") ?: JSONArray()
+            (0 until arr.length()).map { readMaterial(arr.getJSONObject(it)) }
+        }.getOrDefault(emptyList())
+    }
+
+    fun save(ctx: Context, materials: List<Material>) {
+        val arr = JSONArray()
+        for (m in materials) arr.put(writeMaterial(m))
+        val root = JSONObject()
+            .put("schema", SCHEMA)
+            .put("materials", arr)
+        file(ctx).writeText(root.toString())
+    }
+
+    fun upsert(ctx: Context, material: Material) {
+        val all = load(ctx).toMutableList()
+        val i = all.indexOfFirst { it.id == material.id }
+        if (i >= 0) all[i] = material else all.add(material)
+        save(ctx, all)
+    }
+
+    fun delete(ctx: Context, id: String) {
+        save(ctx, load(ctx).filterNot { it.id == id })
+    }
+
+    fun get(ctx: Context, id: String): Material? = load(ctx).firstOrNull { it.id == id }
+
+    // ── 직렬화 ──
+
+    private fun writeMaterial(m: Material): JSONObject {
+        val kids = JSONArray()
+        for (c in m.children) kids.put(writeMaterial(c))
+        return JSONObject()
+            .put("id", m.id)
+            .put("type", m.typeId)
+            .put("enabled", m.enabled)
+            .put("params", JSONObject(m.params.toMap()))
+            .put("children", kids)
+            .put(
+                "meta",
+                JSONObject()
+                    .put("name", m.meta.name)
+                    .put("note", m.meta.note)
+                    .put("favorite", m.meta.favorite)
+                    .put("folder", m.meta.folder)
+                    .put("createdAt", m.meta.createdAt)
+                    .put("x", m.meta.x.toDouble())
+                    .put("y", m.meta.y.toDouble()),
+            )
+    }
+
+    private fun readMaterial(o: JSONObject): Material {
+        val typeId = o.getString("type")
+        val type = MaterialRegistry.find(typeId)
+
+        val paramsMap = HashMap<String, Any?>()
+        o.optJSONObject("params")?.let { p ->
+            for (k in p.keys()) paramsMap[k] = p.get(k)
+        }
+
+        val kidsArr = o.optJSONArray("children") ?: JSONArray()
+        val kids = (0 until kidsArr.length()).map { readMaterial(kidsArr.getJSONObject(it)) }
+
+        val mo = o.optJSONObject("meta")
+        val meta = Meta(
+            name = mo?.optString("name").orEmpty(),
+            note = mo?.optString("note").orEmpty(),
+            favorite = mo?.optBoolean("favorite") ?: false,
+            folder = mo?.optString("folder")?.takeIf { it.isNotEmpty() },
+            createdAt = mo?.optLong("createdAt") ?: 0L,
+            x = (mo?.optDouble("x") ?: 0.0).toFloat().let { if (it.isNaN()) 0f else it },
+            y = (mo?.optDouble("y") ?: 0.0).toFloat().let { if (it.isNaN()) 0f else it },
+        )
+
+        return Material(
+            id = o.getString("id"),
+            typeId = typeId,
+            // 미등록 타입(플러그인 미설치 등)이라도 데이터를 잃지 않도록 빈 파라미터로 살려둔다.
+            params = type?.parse(paramsMap) ?: NoParams,
+            children = kids,
+            meta = meta,
+            enabled = o.optBoolean("enabled", true),
+        )
+    }
+
+    fun newId(): String = UUID.randomUUID().toString()
+
+}
+LOOPY_EOF
 cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
 package com.loopy.app
 
@@ -73,7 +319,7 @@ import com.loopy.app.ui.theme.GradientTitle
 import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
-import com.loopy.app.blocks.BuildScreen
+import com.loopy.app.blocks.BlockCanvas
 import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Meta
 import com.loopy.app.ui.components.EmptyState
@@ -212,12 +458,11 @@ private fun RootScreen(
     }
 
     if (blocksBuild != null) {
-        BuildScreen(
+        BlockCanvas(
             build = blocksBuild!!,
             onBack = { blocksBuild = null; refresh() },
-            onRun = { m ->
-                OverlayService.runBuild(context, m.id)
-            },
+            onRun = { m -> OverlayService.runBuild(context, m.id) },
+            onOpenTouch = { editingBuild = blocksBuild },
         )
         return
     }
@@ -698,9 +943,9 @@ private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean =
     }
 }
 LOOPY_EOF
-echo "완료."
+echo "3/3 완료."
 git add -A
-git commit -m "fix: Color import 누락"
+git commit -m "블록 캔버스: 스크래치식 모양(모자/스택/C블록/갈래/마개), 기능별 색, 무한 캔버스(팬/줌/희미한 격자), 드래그 조립+스냅, parallel은 노드 그래프(갈래가 캔버스에 떠서 선으로 연결), 팔레트 탭"
 git push
 echo "푸시 완료"
 

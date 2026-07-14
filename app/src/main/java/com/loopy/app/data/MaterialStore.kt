@@ -81,7 +81,9 @@ object MaterialStore {
                     .put("note", m.meta.note)
                     .put("favorite", m.meta.favorite)
                     .put("folder", m.meta.folder)
-                    .put("createdAt", m.meta.createdAt),
+                    .put("createdAt", m.meta.createdAt)
+                    .put("x", m.meta.x.toDouble())
+                    .put("y", m.meta.y.toDouble()),
             )
     }
 
@@ -104,6 +106,8 @@ object MaterialStore {
             favorite = mo?.optBoolean("favorite") ?: false,
             folder = mo?.optString("folder")?.takeIf { it.isNotEmpty() },
             createdAt = mo?.optLong("createdAt") ?: 0L,
+            x = (mo?.optDouble("x") ?: 0.0).toFloat().let { if (it.isNaN()) 0f else it },
+            y = (mo?.optDouble("y") ?: 0.0).toFloat().let { if (it.isNaN()) 0f else it },
         )
 
         return Material(
