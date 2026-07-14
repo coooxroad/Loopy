@@ -67,6 +67,12 @@ import com.loopy.app.ui.theme.GradientTitle
 import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.blocks.BuildScreen
+import com.loopy.app.core.material.BuildParams
+import com.loopy.app.core.material.Meta
+import com.loopy.app.ui.components.EmptyState
+import com.loopy.app.ui.components.NeuFab
+import com.loopy.app.ui.components.NeuIconButton
 import com.loopy.app.ui.components.GradientText
 import com.loopy.app.ui.components.Icon
 import com.loopy.app.ui.components.LoopyIcon
@@ -178,6 +184,7 @@ private fun RootScreen(
     var plGap by remember { mutableStateOf("") }
     val pattern = remember { mutableStateListOf<String>() }
     var editingBuild by remember { mutableStateOf<Material?>(null) }
+    var blocksBuild by remember { mutableStateOf<Material?>(null) }
 
     fun refresh() {
         builds = MaterialStore.load(context).filter { it.typeId == "build" }
@@ -196,6 +203,17 @@ private fun RootScreen(
             LoopyService.bind(context)
             if (!canOverlay) showOverlayDialog = true
         }
+    }
+
+    if (blocksBuild != null) {
+        BuildScreen(
+            build = blocksBuild!!,
+            onBack = { blocksBuild = null; refresh() },
+            onRun = { m ->
+                OverlayService.runBuild(context, m.id)
+            },
+        )
+        return
     }
 
     if (editingBuild != null) {
@@ -256,6 +274,17 @@ private fun RootScreen(
                     onRename = { renaming = it; nameField = it.meta.name },
                     onDelete = { MaterialStore.delete(context, it.id); refresh() },
                     onEdit = { editingBuild = it },
+                    onOpenBlocks = { blocksBuild = it },
+                    onNewBuild = {
+                        val fresh = Material(
+                            id = MaterialStore.newId(),
+                            typeId = "build",
+                            params = BuildParams(null),
+                            meta = Meta(name = "새 빌드", createdAt = System.currentTimeMillis()),
+                        )
+                        MaterialStore.upsert(context, fresh)
+                        blocksBuild = fresh
+                    },
                 )
                 Tab.SETTINGS -> SettingsTab(
                     themeMode = themeMode,
@@ -459,38 +488,89 @@ private fun LibraryTab(
     onRename: (Material) -> Unit,
     onDelete: (Material) -> Unit,
     onEdit: (Material) -> Unit,
+    onOpenBlocks: (Material) -> Unit,
+    onNewBuild: () -> Unit,
 ) {
-    ScreenColumn {
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            GradientTitle("라이브러리", size = 28, modifier = Modifier.weight(1f))
-            Text("새로고침", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRefresh() })
-        }
-        if (builds.isEmpty()) {
-            SoftCard(Modifier.fillMaxWidth()) {
-                Text("녹화한 매크로가 여기 표시됩니다", color = TextLo, fontSize = 13.sp)
+    val p = palette
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Space.sm),
+        ) {
+            Spacer(Modifier.height(Space.xl))
+            Row(
+                Modifier.padding(horizontal = Space.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GradientText("라이브러리", fontSize = Type.title, modifier = Modifier.weight(1f))
+                NeuIconButton(onClick = onRefresh, size = 40.dp) {
+                    LoopyIcon(Icon.REDO, p.textMuted, size = 16.dp)
+                }
             }
-        } else {
-            builds.forEach { m ->
-                SoftCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                m.meta.name.ifEmpty { "이름 없음" },
-                                color = TextHi, fontSize = 15.sp, fontWeight = FontWeight.Medium,
+            Spacer(Modifier.height(Space.md))
+
+            if (builds.isEmpty()) {
+                Spacer(Modifier.height(Space.xxl))
+                EmptyState(
+                    title = "아직 비어 있습니다",
+                    description = "오버레이에서 녹화하거나,\n블록을 조립해 빌드를 만들어 보세요",
+                    action = {
+                        NeuButton("새 빌드 만들기", onClick = onNewBuild, modifier = Modifier.width(200.dp))
+                    },
+                )
+            } else {
+                builds.forEach { m ->
+                    val recorded = m.children.any { it.typeId == "touch" || it.typeId == "parallel" }
+                    NeuListItem(
+                        onClick = { onOpenBlocks(m) },
+                        leading = {
+                            LoopyIcon(
+                                if (recorded) Icon.RECORD else Icon.LIST,
+                                if (recorded) p.accent else p.textMuted,
+                                size = 18.dp,
                             )
-                            Text("${m.children.size}개 블록", color = TextLo, fontSize = 12.sp)
-                        }
-                        Text("편집", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onEdit(m) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("이름변경", color = Accent, fontSize = 13.sp, modifier = Modifier.clickable { onRename(m) })
-                        Spacer(Modifier.width(14.dp))
-                        Text("삭제", color = TextLo, fontSize = 13.sp, modifier = Modifier.clickable { onDelete(m) })
+                        },
+                        trailing = {
+                            NeuIconButton(onClick = { onEdit(m) }, size = 36.dp) {
+                                LoopyIcon(Icon.EDIT, p.textMuted, size = 15.dp)
+                            }
+                            NeuIconButton(onClick = { onRename(m) }, size = 36.dp) {
+                                LoopyIcon(Icon.MORE, p.textMuted, size = 15.dp)
+                            }
+                            NeuIconButton(onClick = { onDelete(m) }, size = 36.dp) {
+                                LoopyIcon(Icon.DELETE, p.danger, size = 15.dp)
+                            }
+                        },
+                    ) {
+                        Text(
+                            m.meta.name.ifEmpty { "이름 없음" },
+                            color = p.textStrong,
+                            fontSize = Type.body,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "${m.children.size}개 블록",
+                            color = p.textMuted,
+                            fontSize = Type.caption,
+                        )
                     }
                 }
             }
+            Spacer(Modifier.height(96.dp))
         }
-        Spacer(Modifier.height(8.dp))
+
+        if (builds.isNotEmpty()) {
+            NeuFab(
+                onClick = onNewBuild,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(Space.lg),
+            ) {
+                LoopyIcon(Icon.ADD, Color.White, size = 22.dp)
+            }
+        }
     }
 }
 

@@ -92,6 +92,23 @@ class OverlayService : Service() {
         const val ACTION_START_MACRO_ONLY = "com.loopy.app.START_MACRO_ONLY"
         const val ACTION_SET_SESSION = "com.loopy.app.SET_SESSION"
         const val ACTION_END_SESSION = "com.loopy.app.END_SESSION"
+        const val ACTION_RUN_BUILD = "com.loopy.app.RUN_BUILD"
+        const val EXTRA_BUILD_ID = "build_id"
+
+        /**
+         * 빌드 실행.
+         *
+         * 터치 주입은 서비스에서 일어나야 한다. 앱 화면이 떠 있는 채로 재생하면 그 화면을
+         * 두드리게 되므로, 실행 요청만 보내고 화면은 물러난다.
+         */
+        fun runBuild(ctx: android.content.Context, buildId: String) {
+            ctx.startService(
+                android.content.Intent(ctx, OverlayService::class.java).apply {
+                    action = ACTION_RUN_BUILD
+                    putExtra(EXTRA_BUILD_ID, buildId)
+                },
+            )
+        }
         const val EX_CODE = "code"
         const val EX_DATA = "data"
     }
@@ -123,6 +140,12 @@ class OverlayService : Service() {
             ACTION_END_SESSION -> {
                 screenRecorder.endSession()
                 VideoSession.active = false
+            }
+            ACTION_RUN_BUILD -> {
+                val id = intent.getStringExtra(EXTRA_BUILD_ID)
+                if (id != null) {
+                    MaterialStore.get(this, id)?.let { playBuild(it) }
+                }
             }
             ACTION_START_VIDEO -> beginVideoThenRecord(intent) // 세션 없을 때 팝업 폴백
             ACTION_START_MACRO_ONLY -> startRecord(null)
