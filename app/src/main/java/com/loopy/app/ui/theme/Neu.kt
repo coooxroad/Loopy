@@ -6,8 +6,6 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -41,7 +39,15 @@ fun Modifier.neu(
     }
 }
 
-/** 배경에서 솟아오른 표면. */
+/**
+ * 배경에서 솟아오른 표면.
+ *
+ * 바깥 그림자만으로는 경계가 흐릿하게 번지기만 한다. 잘 만들어진 뉴모피즘은 경계선 안쪽에
+ * 바깥과 반대되는 아주 옅은 선을 하나 더 둔다. 그림자가 지는 쪽 안에는 미세한 밝음을,
+ * 빛이 닿는 쪽 안에는 미세한 어둠을. 경계에서 밝음과 어둠이 교차하면서 형태가 또렷해진다.
+ *
+ * 이 선은 반드시 희미해야 한다. 조금이라도 진하면 테두리를 두른 것처럼 보여 재질감이 죽는다.
+ */
 private fun DrawScope.drawExtrude(p: Palette, cr: Float, off: Float, blur: Float) {
     val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
     drawIntoCanvas { canvas ->
@@ -61,8 +67,45 @@ private fun DrawScope.drawExtrude(p: Palette, cr: Float, off: Float, blur: Float
         }
         fw.drawRoundRect(rect, cr, cr, light)
     }
+
     // 면은 균일해야 한다. 그라데이션 금지.
     drawRoundRect(p.surface, cornerRadius = CornerRadius(cr, cr))
+
+    // 안쪽 미세 대비선. 바깥 그림자(우하) 안쪽은 옅게 밝고, 바깥 글로우(좌상) 안쪽은 옅게 어둡다.
+    drawIntoCanvas { canvas ->
+        val fw = canvas.nativeCanvas
+        val saved = fw.save()
+        fw.clipPath(
+            android.graphics.Path().apply {
+                addRoundRect(rect, cr, cr, android.graphics.Path.Direction.CW)
+            },
+        )
+        val hair = off * 0.5f
+        val hairBlur = blur * 0.35f
+        val outer = android.graphics.RectF(
+            -hair * 2f, -hair * 2f, size.width + hair * 2f, size.height + hair * 2f,
+        )
+
+        val innerLight = android.graphics.Paint().apply {
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = hair * 2f
+            color = android.graphics.Color.TRANSPARENT
+            setShadowLayer(hairBlur, hair, hair, p.light.copy(alpha = 0.22f).toArgb())
+        }
+        fw.drawRoundRect(outer, cr, cr, innerLight)
+
+        val innerDark = android.graphics.Paint().apply {
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = hair * 2f
+            color = android.graphics.Color.TRANSPARENT
+            setShadowLayer(hairBlur, -hair, -hair, p.shadowColor.copy(alpha = 0.18f).toArgb())
+        }
+        fw.drawRoundRect(outer, cr, cr, innerDark)
+
+        fw.restoreToCount(saved)
+    }
 }
 
 /** 배경으로 눌려 들어간 표면. 그림자가 안쪽으로 뒤집힌다. */
@@ -109,13 +152,19 @@ private fun DrawScope.drawInset(p: Palette, cr: Float, off: Float, blur: Float) 
 /**
  * 컬러 표면.
  *
- * 악센트 버튼처럼 배경과 다른 색인 요소. 뉴모피즘의 "같은 재질" 규칙에서 벗어나지만,
- * 그림자만으로는 무엇이 눌리는지 알 수 없기 때문에 필요하다. 접근성을 위해 인터랙티브
- * 요소에는 색이 있어야 한다.
+ * 악센트 버튼처럼 배경과 다른 색인 요소. 그림자만으로는 무엇이 눌리는지 알 수 없으므로
+ * 인터랙티브 요소에는 색이 필요하다.
  *
- * 그림자는 배경색에서 파생하고, 자기 색은 밖으로 은은히 번지게 한다. 예전에 자기 색으로
- * 그림자를 만든 뒤 본체를 덧칠했더니 경계 밖에서 흐렸다가 진해졌다 다시 흐려지는 이중 테가
- * 생겼다. 그림자가 요소 모양대로 깔리는데 그 위에 본체를 칠하면 안쪽 부분이 잘려나가기 때문이다.
+ * 자기 색이 주변으로 번져야 한다. 잘 만들어진 뉴모피즘의 컬러 버튼은 색이 몽환적으로
+ * 퍼지면서도 버튼 자체는 또렷하다. 번짐이 없으면 스티커처럼 얹힌 것 같고, 너무 넓으면
+ * 버튼과 분리되어 따로 논다.
+ *
+ * 번짐은 setShadowLayer 로 그린다. 방사형 원으로 그리면 둥근 사각형 버튼과 모양이 어긋나
+ * 모서리에서 삐져나온다. 그림자는 요소 모양을 그대로 따라가므로 그런 어긋남이 없다.
+ *
+ * 예전에는 자기 색으로 그림자를 만든 뒤 본체를 덧칠했더니 경계 밖에서 흐렸다가 진해졌다
+ * 다시 흐려지는 이중 테가 생겼다. 그림자가 요소 모양대로 깔리는데 그 위에 본체를 칠하면
+ * 안쪽이 잘려나가기 때문이다. 그래서 본체는 마지막에 한 번만 그린다.
  */
 fun Modifier.neuColor(
     fill: Color,
@@ -130,48 +179,48 @@ fun Modifier.neuColor(
         val cr = corner.toPx()
         val rect = android.graphics.RectF(0f, 0f, size.width, size.height)
 
-        if (!pressed) {
-            // 자기 색 발광. 경계에서 가장 진하고 밖으로 옅어진다.
-            val spread = blur * 1.4f
-            val cx = size.width / 2f
-            val cy = size.height / 2f + off * 0.4f
-            val radius = maxOf(size.width, size.height) / 2f + spread
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colorStops = arrayOf(
-                        0.0f to fill.copy(alpha = 0.30f),
-                        0.6f to fill.copy(alpha = 0.24f),
-                        1.0f to Color.Transparent,
-                    ),
-                    center = Offset(cx, cy),
-                    radius = radius,
-                ),
-                radius = radius,
-                center = Offset(cx, cy),
-            )
-        }
-
         drawIntoCanvas { canvas ->
             val fw = canvas.nativeCanvas
-            val o = if (pressed) off * 0.4f else off
-            val b = if (pressed) blur * 0.5f else blur
 
-            val dark = android.graphics.Paint().apply {
-                isAntiAlias = true
-                color = fill.toArgb()
-                setShadowLayer(b, o, o, p.shadowColor.toArgb())
-            }
-            fw.drawRoundRect(rect, cr, cr, dark)
+            if (!pressed) {
+                // 자기 색 번짐. 버튼 모양을 그대로 따라가며 넓게 퍼진다.
+                val bloom = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    color = fill.toArgb()
+                    setShadowLayer(blur * 2.2f, 0f, off * 0.6f, fill.copy(alpha = 0.55f).toArgb())
+                }
+                fw.drawRoundRect(rect, cr, cr, bloom)
 
-            val light = android.graphics.Paint().apply {
-                isAntiAlias = true
-                color = fill.toArgb()
-                setShadowLayer(b, -o, -o, p.light.toArgb())
+                // 표면 그림자. 컬러 요소도 같은 광원 아래 있어야 화면이 어긋나지 않는다.
+                val dark = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    color = fill.toArgb()
+                    setShadowLayer(blur, off, off, p.shadowColor.copy(alpha = 0.7f).toArgb())
+                }
+                fw.drawRoundRect(rect, cr, cr, dark)
+
+                val light = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    color = fill.toArgb()
+                    setShadowLayer(blur, -off, -off, p.light.copy(alpha = 0.6f).toArgb())
+                }
+                fw.drawRoundRect(rect, cr, cr, light)
+            } else {
+                // 눌리면 번짐이 줄고 표면에 가라앉는다.
+                val sunk = android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    color = fill.toArgb()
+                    setShadowLayer(blur * 0.4f, off * 0.3f, off * 0.3f, p.shadowColor.toArgb())
+                }
+                fw.drawRoundRect(rect, cr, cr, sunk)
             }
-            fw.drawRoundRect(rect, cr, cr, light)
         }
 
-        drawRoundRect(fill, cornerRadius = CornerRadius(cr, cr))
+        // 본체는 선명해야 한다. 번짐 위에 한 번만 칠한다.
+        drawRoundRect(
+            if (pressed) fill.shade(0.92f) else fill,
+            cornerRadius = CornerRadius(cr, cr),
+        )
     }
 }
 

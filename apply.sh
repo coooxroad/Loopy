@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# fix: RootScreen 시그니처 + Activity 참조
+# 2/2: 대시보드(토글 복귀, 안내문구 색)
 set -e
 if [ ! -f settings.gradle.kts ]; then echo "!! Loopy 폴더"; exit 1; fi
 cat > "app/src/main/java/com/loopy/app/MainActivity.kt" << 'LOOPY_EOF'
@@ -393,25 +393,19 @@ private fun DashboardTab(
                         fontSize = Type.caption,
                     )
                 }
-                if (overlayOn) {
-                    NeuToggle(
-                        checked = true,
-                        onCheckedChange = { overlayOn = false; onToggleOverlay(false) },
-                    )
-                }
-            }
-            if (!overlayOn) {
-                Spacer(Modifier.height(Space.md))
-                NeuButton(
-                    text = "오버레이 켜기",
-                    enabled = ready,
-                    onClick = { overlayOn = true; onToggleOverlay(true) },
-                    modifier = Modifier.fillMaxWidth(),
+                NeuToggle(
+                    checked = overlayOn,
+                    onCheckedChange = {
+                        if (!ready) return@NeuToggle
+                        overlayOn = it
+                        onToggleOverlay(it)
+                    },
                 )
             }
             if (!ready) {
                 Spacer(Modifier.height(Space.sm))
-                Text(msg, color = p.danger, fontSize = Type.label)
+                // 경고가 아니라 안내다. 빨강은 무언가 잘못됐다는 뜻이라 여기서는 과하다.
+                Text(msg, color = p.textMuted, fontSize = Type.label)
             }
         }
 
@@ -623,9 +617,9 @@ private fun LoopyButton(text: String, filled: Boolean = true, enabled: Boolean =
     }
 }
 LOOPY_EOF
-echo "완료."
+echo "2/2 완료."
 git add -A
-git commit -m "fix: RootScreen 시그니처(themeMode) + setContent 안 Activity 참조 명시"
+git commit -m "뉴모피즘 다듬기: 표면색 덜 탁하게(E9EDF3), 다크 글로우 강화, 경계 안쪽 미세 대비선(그림자쪽 안은 밝게/글로우쪽 안은 어둡게), 컬러 번짐을 요소 모양 따라(원형 글로우 어긋남 해결), 오버레이 토글 복귀"
 git push
 echo "푸시 완료"
 

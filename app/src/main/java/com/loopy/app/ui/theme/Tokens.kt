@@ -53,9 +53,9 @@ data class Palette(
 
 val LightPalette = Palette(
     dark = false,
-    surface = Color(0xFFE0E5EC),
+    surface = Color(0xFFE9EDF3),
     light = Color(0xFFFFFFFF),
-    shadowColor = Color(0xFFA3B1C6),
+    shadowColor = Color(0xFFB4C0D0),
     accent = Color(0xFF5B8DEE),
     accentSoft = Color(0xFF8FB4F5),
     textStrong = Color(0xFF1F2430),
@@ -69,8 +69,8 @@ val LightPalette = Palette(
 val DarkPalette = Palette(
     dark = true,
     surface = Color(0xFF2A2D32),
-    light = Color(0xFF34383E),
-    shadowColor = Color(0xFF1C1E21),
+    light = Color(0xFF3E434B),
+    shadowColor = Color(0xFF16181B),
     accent = Color(0xFF6D9BF0),
     accentSoft = Color(0xFF3E6CC4),
     textStrong = Color(0xFFEDEFF3),

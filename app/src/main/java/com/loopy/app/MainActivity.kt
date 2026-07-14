@@ -386,25 +386,19 @@ private fun DashboardTab(
                         fontSize = Type.caption,
                     )
                 }
-                if (overlayOn) {
-                    NeuToggle(
-                        checked = true,
-                        onCheckedChange = { overlayOn = false; onToggleOverlay(false) },
-                    )
-                }
-            }
-            if (!overlayOn) {
-                Spacer(Modifier.height(Space.md))
-                NeuButton(
-                    text = "오버레이 켜기",
-                    enabled = ready,
-                    onClick = { overlayOn = true; onToggleOverlay(true) },
-                    modifier = Modifier.fillMaxWidth(),
+                NeuToggle(
+                    checked = overlayOn,
+                    onCheckedChange = {
+                        if (!ready) return@NeuToggle
+                        overlayOn = it
+                        onToggleOverlay(it)
+                    },
                 )
             }
             if (!ready) {
                 Spacer(Modifier.height(Space.sm))
-                Text(msg, color = p.danger, fontSize = Type.label)
+                // 경고가 아니라 안내다. 빨강은 무언가 잘못됐다는 뜻이라 여기서는 과하다.
+                Text(msg, color = p.textMuted, fontSize = Type.label)
             }
         }
 
