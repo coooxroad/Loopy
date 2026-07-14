@@ -76,7 +76,14 @@ object ShellExecutor : Executor {
     }
 }
 
+/** 모자 블록은 실행할 것이 없다. 시작점을 표시할 뿐이다. */
+object ManualTriggerExecutor : Executor {
+    override val typeId = "trigger.manual"
+    override suspend fun run(material: Material, ctx: ExecContext): Flow = Flow.Next
+}
+
 fun registerSystemExecutors() {
+    ExecutorRegistry.register(ManualTriggerExecutor)
     ExecutorRegistry.register(DimExecutor)
     ExecutorRegistry.register(BrightnessExecutor)
     ExecutorRegistry.register(VarSetExecutor)

@@ -112,7 +112,7 @@ private fun DrawScope.blockPath(
                 close()
             }
 
-            BlockShape.STACK, BlockShape.FORK -> {
+            BlockShape.STACK -> {
                 topEdge(w, nl, nw, nd, cr)
                 lineTo(w, h - nd)
                 bottomEdge(w, h, nl, nw, nd, cr)

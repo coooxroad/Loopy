@@ -106,7 +106,16 @@ object ShellType : MaterialType {
     override fun parse(map: Map<String, Any?>) = ShellParams(map["cmd"] as? String ?: "")
 }
 
+/** 수동 실행 트리거. 스크립트가 어디서 시작하는지 알려주는 모자 블록. */
+object ManualTriggerType : MaterialType {
+    override val id = "trigger.manual"
+    override val kind = Kind.HAT
+    override val label = "실행하면"
+    override fun parse(map: Map<String, Any?>) = NoParams
+}
+
 fun registerSystemTypes() {
+    MaterialRegistry.register(ManualTriggerType)
     MaterialRegistry.register(DimType)
     MaterialRegistry.register(BrightnessType)
     MaterialRegistry.register(VarSetType)

@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -38,6 +41,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.loopy.app.core.material.IfParams
 import com.loopy.app.core.material.LoopParams
 import com.loopy.app.core.material.Material
@@ -81,6 +85,18 @@ fun BlockCanvas(
     val p = palette
     val density = LocalDensity.current
 
+    // 캔버스는 넓을수록 좋다. 시스템 바가 화면을 갉아먹으면 블록 놓을 자리가 줄어든다.
+    DisposableEffect(Unit) {
+        val window = (ctx as? android.app.Activity)?.window
+        val controller = window?.let {
+            androidx.core.view.WindowInsetsControllerCompat(it, it.decorView)
+        }
+        controller?.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        controller?.systemBarsBehavior =
+            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+    }
+
     val stacks = remember(build.id) {
         mutableStateListOf<Material>().apply { addAll(layoutStacks(build)) }
     }
@@ -90,6 +106,9 @@ fun BlockCanvas(
     var dragId by remember { mutableStateOf<String?>(null) }
     var picking by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Material?>(null) }
+    // 동시 블록을 탭한 뒤 다른 블록을 탭하면 갈래로 이어진다. 선을 드래그해 잇는 방식은
+    // 손가락으로는 정확히 겨냥하기 어렵다.
+    var linking by remember { mutableStateOf<String?>(null) }
 
     fun persist() {
         MaterialStore.upsert(ctx, build.copy(children = flattenStacks(stacks)))
@@ -138,8 +157,25 @@ fun BlockCanvas(
                         dragId = null
                     },
                     onClick = {
-                        if (m.typeId == "touch") onOpenTouch(m) else editing = m
+                        val src = linking
+                        when {
+                            src == null && m.typeId == "parallel" -> linking = m.id
+                            src != null && src != m.id -> {
+                                val i = stacks.indexOfFirst { it.id == m.id }
+                                if (i >= 0) {
+                                    val cur = stacks[i]
+                                    // 이미 이어져 있으면 끊는다. 같은 동작으로 붙였다 떼는 편이 배우기 쉽다.
+                                    val note = if (cur.meta.note == src) "" else src
+                                    stacks[i] = cur.copy(meta = cur.meta.copy(note = note))
+                                    persist()
+                                }
+                                linking = null
+                            }
+                            m.typeId == "touch" -> onOpenTouch(m)
+                            else -> editing = m
+                        }
                     },
+                    linking = linking == m.id,
                 )
             }
         }
@@ -257,6 +293,7 @@ private fun BlockView(
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
+    linking: Boolean = false,
 ) {
     val spec = specOf(material.typeId)
     val density = LocalDensity.current
@@ -269,7 +306,14 @@ private fun BlockView(
     Box(
         Modifier
             .offset { androidx.compose.ui.unit.IntOffset(px, py) }
-            .graphicsLayer(scaleX = zoom, scaleY = zoom, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f))
+            .graphicsLayer(
+                scaleX = zoom,
+                scaleY = zoom,
+                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f),
+            )
+            // 끌고 있는 블록이 맨 위에 있어야 어디로 가는지 보인다. 그림자는 요소 밖으로
+            // 뻗어야 하므로 레이어로 가둘 수 없고, 대신 겹침 순서로 정리한다.
+            .zIndex(if (lifted) 10f else 0f)
             .size(w, h)
             .blockShape(
                 shape = spec.shape,
@@ -297,20 +341,30 @@ private fun BlockView(
                 .padding(horizontal = Space.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LoopyIcon(spec.icon, Color.White, size = 16.dp)
+            LoopyIcon(spec.icon, Color.White, size = 15.dp)
             Spacer(Modifier.width(Space.sm))
-            Column {
-                Text(
-                    spec.label,
-                    color = Color.White,
-                    fontSize = Type.caption,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                val detail = detailOf(material)
-                if (detail.isNotEmpty()) {
-                    Text(detail, color = Color.White.copy(alpha = 0.75f), fontSize = Type.label)
-                }
+
+            if (spec.before.isNotEmpty()) {
+                Text(spec.before, color = Color.White, fontSize = Type.label, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(4.dp))
             }
+
+            // 입력 홈. 모양이 무엇을 넣을 수 있는지 말한다.
+            when (spec.slot) {
+                SlotKind.VALUE -> SlotChip(slotText(material), rounded = true)
+                SlotKind.BOOLEAN -> SlotChip(slotText(material), rounded = false)
+                SlotKind.NONE -> Unit
+            }
+
+            if (spec.slot != SlotKind.NONE) Spacer(Modifier.width(4.dp))
+
+            Text(
+                if (spec.after.isNotEmpty()) spec.after else spec.label,
+                color = Color.White,
+                fontSize = Type.label,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -341,3 +395,44 @@ private fun innerHeightDp(m: Material): Dp =
     } else {
         0.dp
     }
+
+/**
+ * 입력 홈.
+ *
+ * 둥근 홈에는 값이, 육각 홈에는 참/거짓이 들어간다. 모양이 다르면 무엇을 넣어야 할지
+ * 설명할 필요가 없다. 스크래치에서 문법 오류가 나지 않는 이유가 이것이다.
+ */
+@Composable
+private fun SlotChip(text: String, rounded: Boolean) {
+    val shape = if (rounded) {
+        RoundedCornerShape(50)
+    } else {
+        androidx.compose.foundation.shape.CutCornerShape(percent = 50)
+    }
+    Box(
+        Modifier
+            .clip(shape)
+            .background(Color.White.copy(alpha = 0.92f))
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text.ifEmpty { " " },
+            color = Color(0xFF1F2430),
+            fontSize = Type.label,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun slotText(m: Material): String = when (val pr = m.params) {
+    is WaitParams -> "%.1f".format(pr.ms / 1000.0)
+    is LoopParams -> if (pr.infinite) "∞" else pr.count.toString()
+    is IfParams -> pr.condition.ifEmpty { "?" }
+    is com.loopy.app.core.material.BrightnessParams -> pr.level.toString()
+    is com.loopy.app.core.material.AppParams -> pr.pkg.ifEmpty { "앱" }
+    is com.loopy.app.core.material.ShellParams -> pr.cmd.take(10).ifEmpty { "명령" }
+    is com.loopy.app.core.material.VarSetParams -> pr.name.ifEmpty { "이름" }
+    else -> ""
+}

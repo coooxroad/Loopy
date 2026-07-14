@@ -65,27 +65,65 @@ fun flattenStacks(stacks: List<Material>): List<Material> {
 /**
  * 놓았을 때 붙이기.
  *
- * 가까이 가져가면 앞 블록 아래에 물린다. 정확히 겨냥해야만 붙는다면 조립이 즐겁지 않다.
- * 갈래는 붙지 않는다. 그것들은 선으로만 이어진다.
+ * 앞 블록의 아래 볼록에 뒤 블록의 위 오목이 물린다. 겹치는 부분(노치 깊이)만큼 끌어올려야
+ * 두 블록이 맞물린 것처럼 보인다. 그냥 아래에 붙이면 사이가 벌어져 이가 안 맞는다.
+ *
+ * 여러 개를 이어붙일 수 있어야 한다. 붙일 자리를 찾을 때 이미 무언가 붙어 있는 블록은
+ * 건너뛰고, 체인의 맨 끝을 찾아간다.
  */
 fun snapStacks(stacks: MutableList<Material>) {
-    val snap = 36f
+    val snapX = 44f
+    val snapY = 40f
+    val overlap = 5f
+
     for (i in stacks.indices) {
         val m = stacks[i]
         if (m.meta.note.isNotEmpty()) continue
+        if (specOf(m.typeId).shape == BlockShape.HAT) continue
+
+        var best = -1
+        var bestDist = Float.MAX_VALUE
 
         for (j in stacks.indices) {
             if (i == j) continue
             val other = stacks[j]
             if (other.meta.note.isNotEmpty()) continue
+            if (specOf(other.typeId).shape == BlockShape.CAP) continue
 
-            val bottom = other.meta.y + 52f
-            if (abs(m.meta.x - other.meta.x) < snap && abs(m.meta.y - bottom) < snap) {
-                stacks[i] = m.copy(meta = m.meta.copy(x = other.meta.x, y = bottom))
-                return
+            // 이미 아래에 무언가 붙어 있으면 그 자리는 찼다.
+            val bottom = other.meta.y + blockHeight(other) - overlap
+            val taken = stacks.any { k ->
+                k.id != m.id && k.id != other.id &&
+                    abs(k.meta.x - other.meta.x) < 4f && abs(k.meta.y - bottom) < 4f
+            }
+            if (taken) continue
+
+            val dx = abs(m.meta.x - other.meta.x)
+            val dy = abs(m.meta.y - bottom)
+            if (dx < snapX && dy < snapY && dy < bestDist) {
+                best = j
+                bestDist = dy
             }
         }
+
+        if (best >= 0) {
+            val other = stacks[best]
+            stacks[i] = m.copy(
+                meta = m.meta.copy(
+                    x = other.meta.x,
+                    y = other.meta.y + blockHeight(other) - overlap,
+                ),
+            )
+            return
+        }
     }
+}
+
+/** 블록 하나의 높이. C블록은 안이 비어도 최소 높이를 갖는다. */
+fun blockHeight(m: Material): Float = when (specOf(m.typeId).shape) {
+    BlockShape.C_BLOCK -> 52f + 34f + 30f
+    BlockShape.HAT -> 62f
+    else -> 52f
 }
 
 /** 희미한 격자. 있는 줄도 모를 만큼 옅어야 하지만, 없으면 평면이 어디로 뻗는지 알 수 없다. */
@@ -137,7 +175,10 @@ fun DrawScope.drawForkLinks(
         drawPath(
             path,
             color,
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f * zoom),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 7f * zoom,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            ),
         )
     }
 }
