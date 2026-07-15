@@ -383,18 +383,8 @@ private fun detailOf(m: Material): String = when (val pr = m.params) {
     else -> ""
 }
 
-private fun blockHeightDp(m: Material): Dp = when (specOf(m.typeId).shape) {
-    BlockShape.C_BLOCK -> 52.dp + innerHeightDp(m) + 30.dp
-    BlockShape.HAT -> 62.dp
-    else -> 52.dp
-}
-
-private fun innerHeightDp(m: Material): Dp =
-    if (specOf(m.typeId).shape == BlockShape.C_BLOCK) {
-        (m.children.size * 52).dp.coerceAtLeast(30.dp)
-    } else {
-        0.dp
-    }
+// 블록 높이는 BlockLayout.blockHeightDp / innerHeightDp 한 곳에서 정의한다.
+// 스냅과 렌더가 같은 값을 보게 하려는 것이므로 여기서 따로 계산하지 않는다.
 
 /**
  * 입력 홈.

@@ -84,7 +84,8 @@ private fun DrawScope.blockPath(
 ): Path {
     val cr = 8.dp.toPx()
     val nw = 26.dp.toPx()
-    val nd = 5.dp.toPx()
+    // 그려지는 노치 깊이와 스냅이 계산하는 겹침이 같은 값을 봐야 블록이 맞물린다.
+    val nd = NOTCH_DEPTH.dp.toPx()
     val nl = 18.dp.toPx()
     val wall = 14.dp.toPx()
 
