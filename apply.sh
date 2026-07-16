@@ -1,153 +1,187 @@
 #!/usr/bin/env bash
 set -e
 
-# 촬영 매크로 배치/표시 수정
-#  1) 겹쳐 보이던 문제 -> 열 때마다 깔끔히 물린 세로 줄기로 재배치(옛 좌표 무시).
-#     블록 간격을 meshStep(높이-노치2겹)으로 통일 -> 열림/스냅이 똑같이 물린다.
-#  2) parallel -> 동시 블록은 본체 줄기에, 갈래는 오른쪽에 떠서 선으로 연결.
-#  3) 기다리기 표시를 소수점 3자리로(0.300), 입력은 소수점 키패드.
+# 블록을 스크래치식으로: 렌더/스냅/폭
+#  1) 렌더 -> 불투명 평면 + 얇은 진한 테두리 + 옅은 그림자 하나. (거대한 색 번짐 bloom 제거)
+#     블록끼리 비쳐 뭉개지던 문제 해결. 퍼즐처럼 또렷이 맞물린다.
+#  2) 스냅 -> 자석처럼 널널하게(snapX 90 / snapY 64). 대충 근처에 놓아도 붙는다.
+#  3) 폭 -> 200dp 고정 대신 내용에 맞춰 늘어남. 대기는 0.3 처럼 뒷자리 0 제거,
+#     10.789 처럼 길면 블록이 늘어남. 편집은 소수점 키패드.
 #
 # 바뀐 부분만(diff) git apply 로 반영한다. 현재 코드에 안 맞으면 커밋하지 않고 멈춘다.
 
 PATCH="$(mktemp)"
 cat > "$PATCH" << 'LOOPY_PATCH_EOF'
 diff --git a/app/src/main/java/com/loopy/app/blocks/BlockCanvas.kt b/app/src/main/java/com/loopy/app/blocks/BlockCanvas.kt
-index b12f652..c7a9575 100644
+index c7a9575..ff1eb54 100644
 --- a/app/src/main/java/com/loopy/app/blocks/BlockCanvas.kt
 +++ b/app/src/main/java/com/loopy/app/blocks/BlockCanvas.kt
-@@ -377,7 +377,7 @@ private fun defaultParams(typeId: String) = when (typeId) {
+@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.offset
+ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.size
+ import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.layout.widthIn
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.Text
+@@ -297,7 +298,6 @@ private fun BlockView(
+ ) {
+     val spec = specOf(material.typeId)
+     val density = LocalDensity.current
+-    val w = 200.dp
+     val h = blockHeightDp(material)
+ 
+     val px = with(density) { (material.meta.x * zoom + camera.x).roundToInt() }
+@@ -314,7 +314,9 @@ private fun BlockView(
+             // 끌고 있는 블록이 맨 위에 있어야 어디로 가는지 보인다. 그림자는 요소 밖으로
+             // 뻗어야 하므로 레이어로 가둘 수 없고, 대신 겹침 순서로 정리한다.
+             .zIndex(if (lifted) 10f else 0f)
+-            .size(w, h)
++            // 폭은 내용에 맞춰 늘어난다(스크래치처럼). 숫자가 길어지면 블록이 길어진다.
++            .height(h)
++            .widthIn(min = 132.dp)
+             .blockShape(
+                 shape = spec.shape,
+                 color = spec.color,
+@@ -336,9 +338,8 @@ private fun BlockView(
+     ) {
+         Row(
+             Modifier
+-                .fillMaxWidth()
+                 .height(52.dp)
+-                .padding(horizontal = Space.md),
++                .padding(start = Space.md, end = Space.lg),
+             verticalAlignment = Alignment.CenterVertically,
+         ) {
+             LoopyIcon(spec.icon, Color.White, size = 15.dp)
+@@ -377,7 +378,7 @@ private fun defaultParams(typeId: String) = when (typeId) {
  }
  
  private fun detailOf(m: Material): String = when (val pr = m.params) {
--    is WaitParams -> "%.1f초".format(pr.ms / 1000.0)
-+    is WaitParams -> "%.3f초".format(pr.ms / 1000.0)
+-    is WaitParams -> "%.3f초".format(pr.ms / 1000.0)
++    is WaitParams -> fmtSec(pr.ms) + "초"
      is LoopParams -> if (pr.infinite) "무한" else "${pr.count}번"
      is IfParams -> pr.condition.ifEmpty { "조건 없음" }
      else -> ""
-@@ -417,7 +417,7 @@ private fun SlotChip(text: String, rounded: Boolean) {
+@@ -416,8 +417,14 @@ private fun SlotChip(text: String, rounded: Boolean) {
+     }
  }
  
++/** 초를 사람이 읽기 좋게: 뒷자리 0을 떼어 0.300 -> 0.3, 1.000 -> 1, 10.789 -> 10.789. */
++private fun fmtSec(ms: Long): String {
++    val v = java.math.BigDecimal.valueOf(ms).movePointLeft(3).stripTrailingZeros()
++    return if (v.signum() == 0) "0" else v.toPlainString()
++}
++
  private fun slotText(m: Material): String = when (val pr = m.params) {
--    is WaitParams -> "%.1f".format(pr.ms / 1000.0)
-+    is WaitParams -> "%.3f".format(pr.ms / 1000.0)
+-    is WaitParams -> "%.3f".format(pr.ms / 1000.0)
++    is WaitParams -> fmtSec(pr.ms)
      is LoopParams -> if (pr.infinite) "∞" else pr.count.toString()
      is IfParams -> pr.condition.ifEmpty { "?" }
      is com.loopy.app.core.material.BrightnessParams -> pr.level.toString()
-diff --git a/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt b/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
-index 8b95c56..43456c7 100644
---- a/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
-+++ b/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
-@@ -25,36 +25,51 @@ const val NOTCH_DEPTH = 5f
-  * 갈래도 결국 하나의 Material 이고 공리를 늘리지 않는 편이 낫기 때문이다.
+diff --git a/app/src/main/java/com/loopy/app/blocks/BlockDraw.kt b/app/src/main/java/com/loopy/app/blocks/BlockDraw.kt
+index b9cda6c..70dd86d 100644
+--- a/app/src/main/java/com/loopy/app/blocks/BlockDraw.kt
++++ b/app/src/main/java/com/loopy/app/blocks/BlockDraw.kt
+@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.Path
+ import androidx.compose.ui.graphics.asAndroidPath
+ import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.Stroke
+ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+ import androidx.compose.ui.graphics.nativeCanvas
+ import androidx.compose.ui.graphics.toArgb
+@@ -19,12 +20,9 @@ import com.loopy.app.ui.theme.palette
+  * 모양이 문법이다. 모자 블록은 위가 둥글어 무엇도 위에 붙일 수 없고, 마개 블록은 아래가
+  * 평평해 뒤에 이어붙일 수 없다. 규칙을 설명하는 대신 손으로 만져 알게 한다.
+  *
+- * 블록은 배경과 다른 색이므로 뉴모피즘의 "같은 재질" 규칙 밖에 있다. 회색 그림자만 씌우면
+- * 색이 탁해지고 스티커처럼 얹힌 것 같다. 그래서 자기 색을 물감이 번지듯 퍼뜨린다. 번짐은
+- * 블록 모양을 그대로 따라가므로 모서리에서 어긋나지 않는다.
+- *
+- * 그리는 순서가 중요하다. 번짐을 먼저 깔고 본체를 마지막에 한 번만 칠한다. 번짐 위에 본체를
+- * 덧칠하지 않으면 경계 안쪽이 잘려 이중 테가 생긴다.
++ * 렌더는 스크래치를 따른다: 불투명 평면 + 얇은 진한 테두리 + 아주 옅은 드롭 그림자 하나.
++ * 예전엔 자기 색을 크게 번지게(bloom) 그렸는데, 블록을 딱 물려 놓으면 번짐끼리 겹쳐
++ * 반투명하게 뭉개졌다. 스크래치 블록은 서로 비치지 않는 불투명 조각이라 또렷이 맞물린다.
   */
+ fun Modifier.blockShape(
+     shape: BlockShape,
+@@ -32,41 +30,26 @@ fun Modifier.blockShape(
+     innerTop: Float = 0f,
+     innerHeight: Float = 0f,
+     lifted: Boolean = false,
+-): Modifier = composed {
+-    val p = palette
+-    drawBehind {
+-        val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
+-        val off = (if (lifted) 10.dp else 5.dp).toPx()
+-        val blur = (if (lifted) 24.dp else 13.dp).toPx()
+-
+-        drawIntoCanvas { canvas ->
+-            val fw = canvas.nativeCanvas
+-            val native = path.asAndroidPath()
++): Modifier = drawBehind {
++    // 스크래치식: 불투명 평면 + 얇은 진한 테두리 + 아주 옅은 드롭 그림자 하나.
++    // 예전엔 자기 색을 크게 번지게(bloom) 그려서, 블록을 물려 놓으면 번짐끼리 겹쳐
++    // 반투명하게 뭉개졌다. 스크래치 블록은 서로 비치지 않는 불투명 조각이라 또렷이 맞물린다.
++    val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
  
--/** 저장된 좌표가 없으면 세로로 늘어놓는다. 자동 배치는 첫 인상만 책임진다. */
-+/**
-+ * 트리를 캔버스에 배치한다.
-+ *
-+ * 열 때마다 **깔끔히 물린 세로 줄기로 다시 정렬**한다. 예전엔 저장된 좌표가 있으면 그대로
-+ * 썼는데(hasPos), 옛 버전에서 겹쳐 저장된 좌표를 계속 물고 와 촬영 매크로가 뭉개져 보였다.
-+ * 순서(실행 순서)는 children 순서로 보존되므로, 좌표를 다시 흘려도 논리는 그대로다.
-+ *
-+ * 동시 블록은 본체 줄기에 남고, 갈래만 오른쪽에 떠서 선으로 이어진다. 갈래를 줄기 사이에
-+ * 끼우면 세로 흐름이 끊기기 때문이다.
-+ */
- fun layoutStacks(build: Material): List<Material> {
-     val out = ArrayList<Material>()
-+    val x = 40f
-     var y = 40f
- 
-     for (child in build.children) {
-         if (child.typeId == "parallel") {
--            val node = if (hasPos(child)) child else child.copy(meta = child.meta.copy(x = 40f, y = y))
--            out.add(node.copy(children = emptyList()))
--            y += 150f
-+            val node = child.copy(children = emptyList(), meta = child.meta.copy(x = x, y = y))
-+            out.add(node)
- 
--            // 갈래는 동시 블록 바로 아래에, 왼쪽부터 오른쪽으로 나란히. 예전엔 -80 에서
--            // 시작해 갈래가 화면 왼쪽 밖으로 밀려나고 앞 블록과 겹쳤다.
--            var bx = node.meta.x
-+            // 갈래는 줄기 오른쪽에 위에서 아래로. 몇 개든 늘어도 본체 흐름을 막지 않는다.
-+            var by = y
-             for (branch in child.children) {
--                val b = if (hasPos(branch)) branch else branch.copy(meta = branch.meta.copy(x = bx, y = y))
--                out.add(b.copy(meta = b.meta.copy(note = node.id)))
--                bx += 220f
-+                out.add(branch.copy(meta = branch.meta.copy(x = x + 280f, y = by, note = node.id)))
-+                by += blockHeight(branch) + 20f
-             }
--            y += 120f
-+
-+            // 다음 블록은 동시 블록 바로 아래에 물린다(갈래 아래가 아니라).
-+            y += meshStep(node)
-         } else {
--            val placed = if (hasPos(child)) child else child.copy(meta = child.meta.copy(x = 40f, y = y))
-+            val placed = child.copy(meta = child.meta.copy(x = x, y = y))
-             out.add(placed)
--            y += 60f
-+            y += meshStep(placed)
+-            val bloom = android.graphics.Paint().apply {
+-                isAntiAlias = true
+-                this.color = color.toArgb()
+-                setShadowLayer(blur * 1.9f, 0f, off * 0.5f, color.copy(alpha = 0.6f).toArgb())
+-            }
+-            fw.drawPath(native, bloom)
+-
+-            val dark = android.graphics.Paint().apply {
+-                isAntiAlias = true
+-                this.color = color.toArgb()
+-                setShadowLayer(blur, off, off, p.shadowColor.copy(alpha = 0.65f).toArgb())
+-            }
+-            fw.drawPath(native, dark)
+-
+-            val light = android.graphics.Paint().apply {
+-                isAntiAlias = true
+-                this.color = color.toArgb()
+-                setShadowLayer(blur * 0.8f, -off * 0.7f, -off * 0.7f, p.light.copy(alpha = 0.5f).toArgb())
+-            }
+-            fw.drawPath(native, light)
++    val elev = (if (lifted) 6.dp else 2.dp).toPx()
++    val sblur = (if (lifted) 12.dp else 5.dp).toPx()
++    drawIntoCanvas { canvas ->
++        val body = android.graphics.Paint().apply {
++            isAntiAlias = true
++            this.color = color.toArgb()
++            setShadowLayer(sblur, 0f, elev, android.graphics.Color.argb(if (lifted) 90 else 56, 0, 0, 0))
          }
+-
+-        drawPath(path, color)
++        canvas.nativeCanvas.drawPath(path.asAndroidPath(), body)
      }
-     return out
++
++    // 얇은 진한 테두리 — 블록색을 어둡게. 또렷함은 여기서 나온다.
++    val edge = Color(color.red * 0.70f, color.green * 0.70f, color.blue * 0.70f, 1f)
++    drawPath(path, edge, style = Stroke(width = 1.5.dp.toPx()))
  }
  
--private fun hasPos(m: Material) = m.meta.x != 0f || m.meta.y != 0f
-+/**
-+ * 다음 블록이 앞 블록에 물리도록 내려갈 거리.
-+ *
-+ * 높이에서 노치 두 겹을 빼면 아래 볼록이 위 오목에 딱 들어간다. 스냅(snapStacks)도 같은
-+ * 계산을 써야 열었을 때와 끌어 붙였을 때가 어긋나지 않는다.
-+ */
-+fun meshStep(m: Material): Float = blockHeight(m) - NOTCH_DEPTH * 2f
- 
  /**
-  * 캔버스를 다시 트리로.
-@@ -86,9 +101,6 @@ fun flattenStacks(stacks: List<Material>): List<Material> {
+diff --git a/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt b/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
+index 43456c7..e8c4cca 100644
+--- a/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
++++ b/app/src/main/java/com/loopy/app/blocks/BlockLayout.kt
+@@ -99,8 +99,9 @@ fun flattenStacks(stacks: List<Material>): List<Material> {
+  * 건너뛰고, 체인의 맨 끝을 찾아간다.
+  */
  fun snapStacks(stacks: MutableList<Material>) {
-     val snapX = 44f
-     val snapY = 40f
--    // 위 블록의 볼록 혀가 아래 블록의 오목 홈을 완전히 채우려면 노치 깊이의 두 배만큼 겹쳐야
--    // 한다. 한 번(=노치 깊이)만 겹치면 혀 절반이 홈 밖에 남아 사이가 벌어져 보인다.
--    val overlap = NOTCH_DEPTH * 2f
+-    val snapX = 44f
+-    val snapY = 40f
++    // 스크래치처럼 자석같이 붙게 넓게 잡는다. 노치를 대충 근처에 놓아도 빨려 붙는다.
++    val snapX = 90f
++    val snapY = 64f
  
      for (i in stacks.indices) {
          val m = stacks[i]
-@@ -105,7 +117,7 @@ fun snapStacks(stacks: MutableList<Material>) {
-             if (specOf(other.typeId).shape == BlockShape.CAP) continue
- 
-             // 이미 아래에 무언가 붙어 있으면 그 자리는 찼다.
--            val bottom = other.meta.y + blockHeight(other) - overlap
-+            val bottom = other.meta.y + meshStep(other)
-             val taken = stacks.any { k ->
-                 k.id != m.id && k.id != other.id &&
-                     abs(k.meta.x - other.meta.x) < 4f && abs(k.meta.y - bottom) < 4f
-@@ -125,7 +137,7 @@ fun snapStacks(stacks: MutableList<Material>) {
-             stacks[i] = m.copy(
-                 meta = m.meta.copy(
-                     x = other.meta.x,
--                    y = other.meta.y + blockHeight(other) - overlap,
-+                    y = other.meta.y + meshStep(other),
-                 ),
-             )
-             return
-diff --git a/app/src/main/java/com/loopy/app/blocks/BlockPalette.kt b/app/src/main/java/com/loopy/app/blocks/BlockPalette.kt
-index 5bbb09f..1b530f5 100644
---- a/app/src/main/java/com/loopy/app/blocks/BlockPalette.kt
-+++ b/app/src/main/java/com/loopy/app/blocks/BlockPalette.kt
-@@ -243,7 +243,11 @@ fun BlockParamSheet(
-                         singleLine = true,
-                         textStyle = TextStyle(color = p.textStrong, fontSize = Type.body),
-                         keyboardOptions = KeyboardOptions(
--                            keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text,
-+                            keyboardType = when {
-+                                material.params is WaitParams -> KeyboardType.Decimal
-+                                numeric -> KeyboardType.Number
-+                                else -> KeyboardType.Text
-+                            },
-                         ),
-                         cursorBrush = SolidColor(p.accent),
-                         modifier = Modifier.fillMaxWidth(),
 LOOPY_PATCH_EOF
 
 if git apply --check "$PATCH"; then
@@ -155,7 +189,7 @@ if git apply --check "$PATCH"; then
   rm -f "$PATCH"
   echo "패치 적용 완료"
   git add -A
-  git commit -m "촬영 매크로: 물린 세로 배치로 재정렬, parallel 갈래 오른쪽 분리, 대기 3자리 표시/소수 입력"
+  git commit -m "블록 스크래치식: 불투명 평면 렌더(bloom 제거), 스냅 넓힘, 폭 내용맞춤, 대기 0제거"
   git push
   echo "푸시 완료 - Actions에서 빌드 확인하세요"
 else

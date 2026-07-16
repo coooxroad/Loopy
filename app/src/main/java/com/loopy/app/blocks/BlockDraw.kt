@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -19,12 +20,9 @@ import com.loopy.app.ui.theme.palette
  * 모양이 문법이다. 모자 블록은 위가 둥글어 무엇도 위에 붙일 수 없고, 마개 블록은 아래가
  * 평평해 뒤에 이어붙일 수 없다. 규칙을 설명하는 대신 손으로 만져 알게 한다.
  *
- * 블록은 배경과 다른 색이므로 뉴모피즘의 "같은 재질" 규칙 밖에 있다. 회색 그림자만 씌우면
- * 색이 탁해지고 스티커처럼 얹힌 것 같다. 그래서 자기 색을 물감이 번지듯 퍼뜨린다. 번짐은
- * 블록 모양을 그대로 따라가므로 모서리에서 어긋나지 않는다.
- *
- * 그리는 순서가 중요하다. 번짐을 먼저 깔고 본체를 마지막에 한 번만 칠한다. 번짐 위에 본체를
- * 덧칠하지 않으면 경계 안쪽이 잘려 이중 테가 생긴다.
+ * 렌더는 스크래치를 따른다: 불투명 평면 + 얇은 진한 테두리 + 아주 옅은 드롭 그림자 하나.
+ * 예전엔 자기 색을 크게 번지게(bloom) 그렸는데, 블록을 딱 물려 놓으면 번짐끼리 겹쳐
+ * 반투명하게 뭉개졌다. 스크래치 블록은 서로 비치지 않는 불투명 조각이라 또렷이 맞물린다.
  */
 fun Modifier.blockShape(
     shape: BlockShape,
@@ -32,41 +30,26 @@ fun Modifier.blockShape(
     innerTop: Float = 0f,
     innerHeight: Float = 0f,
     lifted: Boolean = false,
-): Modifier = composed {
-    val p = palette
-    drawBehind {
-        val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
-        val off = (if (lifted) 10.dp else 5.dp).toPx()
-        val blur = (if (lifted) 24.dp else 13.dp).toPx()
+): Modifier = drawBehind {
+    // 스크래치식: 불투명 평면 + 얇은 진한 테두리 + 아주 옅은 드롭 그림자 하나.
+    // 예전엔 자기 색을 크게 번지게(bloom) 그려서, 블록을 물려 놓으면 번짐끼리 겹쳐
+    // 반투명하게 뭉개졌다. 스크래치 블록은 서로 비치지 않는 불투명 조각이라 또렷이 맞물린다.
+    val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
 
-        drawIntoCanvas { canvas ->
-            val fw = canvas.nativeCanvas
-            val native = path.asAndroidPath()
-
-            val bloom = android.graphics.Paint().apply {
-                isAntiAlias = true
-                this.color = color.toArgb()
-                setShadowLayer(blur * 1.9f, 0f, off * 0.5f, color.copy(alpha = 0.6f).toArgb())
-            }
-            fw.drawPath(native, bloom)
-
-            val dark = android.graphics.Paint().apply {
-                isAntiAlias = true
-                this.color = color.toArgb()
-                setShadowLayer(blur, off, off, p.shadowColor.copy(alpha = 0.65f).toArgb())
-            }
-            fw.drawPath(native, dark)
-
-            val light = android.graphics.Paint().apply {
-                isAntiAlias = true
-                this.color = color.toArgb()
-                setShadowLayer(blur * 0.8f, -off * 0.7f, -off * 0.7f, p.light.copy(alpha = 0.5f).toArgb())
-            }
-            fw.drawPath(native, light)
+    val elev = (if (lifted) 6.dp else 2.dp).toPx()
+    val sblur = (if (lifted) 12.dp else 5.dp).toPx()
+    drawIntoCanvas { canvas ->
+        val body = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = color.toArgb()
+            setShadowLayer(sblur, 0f, elev, android.graphics.Color.argb(if (lifted) 90 else 56, 0, 0, 0))
         }
-
-        drawPath(path, color)
+        canvas.nativeCanvas.drawPath(path.asAndroidPath(), body)
     }
+
+    // 얇은 진한 테두리 — 블록색을 어둡게. 또렷함은 여기서 나온다.
+    val edge = Color(color.red * 0.70f, color.green * 0.70f, color.blue * 0.70f, 1f)
+    drawPath(path, edge, style = Stroke(width = 1.5.dp.toPx()))
 }
 
 /**

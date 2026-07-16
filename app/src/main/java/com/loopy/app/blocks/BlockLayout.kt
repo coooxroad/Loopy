@@ -99,8 +99,9 @@ fun flattenStacks(stacks: List<Material>): List<Material> {
  * 건너뛰고, 체인의 맨 끝을 찾아간다.
  */
 fun snapStacks(stacks: MutableList<Material>) {
-    val snapX = 44f
-    val snapY = 40f
+    // 스크래치처럼 자석같이 붙게 넓게 잡는다. 노치를 대충 근처에 놓아도 빨려 붙는다.
+    val snapX = 90f
+    val snapY = 64f
 
     for (i in stacks.indices) {
         val m = stacks[i]
