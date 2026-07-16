@@ -66,9 +66,13 @@ data class Slot(
     val y: Float,
 )
 
+/** 동시 블록 노드와 갈래를 잇는 선. */
+data class Link(val ax: Float, val ay: Float, val bx: Float, val by: Float)
+
 class Layout {
     val placed = ArrayList<Placed>()
     val slots = ArrayList<Slot>()
+    val links = ArrayList<Link>()
 }
 
 /**
@@ -92,10 +96,11 @@ fun layoutScript(
         if (isC(c)) {
             layoutScript(c.id, c.children, x + INDENT, y + C_HEADER, depth + 1, out)
         } else if (c.typeId == "parallel") {
-            // 갈래는 오른쪽 컬럼으로. 각 갈래는 자체 스택.
+            // 갈래는 노드처럼 오른쪽에 두고 선으로 잇는다(편의성 블록이라 직관 우선).
             var bx = x + COL_W
             for (branch in c.children) {
                 out.placed.add(Placed(branch, bx, y, depth + 1))
+                out.links.add(Link(x + 120f, y + ROW / 2f, bx, y + ROW / 2f))
                 if (isC(branch)) {
                     layoutScript(branch.id, branch.children, bx + INDENT, y + C_HEADER, depth + 2, out)
                 }
@@ -190,15 +195,16 @@ fun findBlock(root: Material, id: String): Material? {
 
 // ---- 배경 ----
 
-fun DrawScope.drawGrid(color: Color, camera: Offset, zoom: Float) {
-    val gap = 28f * zoom
-    if (gap < 6f) return
-    var gx = camera.x % gap
+fun DrawScope.drawGrid(color: Color, offsetX: Float, offsetY: Float) {
+    val gap = 74f
+    var gx = offsetX % gap
+    if (gx < 0) gx += gap
     while (gx < size.width) {
         drawLine(color, Offset(gx, 0f), Offset(gx, size.height), 1f)
         gx += gap
     }
-    var gy = camera.y % gap
+    var gy = offsetY % gap
+    if (gy < 0) gy += gap
     while (gy < size.height) {
         drawLine(color, Offset(0f, gy), Offset(size.width, gy), 1f)
         gy += gap

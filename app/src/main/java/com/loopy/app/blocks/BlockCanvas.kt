@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,15 +27,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.loopy.app.core.material.BuildParams
@@ -60,17 +59,18 @@ import kotlin.math.roundToInt
 /**
  * 블록 캔버스 — 구조 우선.
  *
- * 상태는 트리(root) 그 자체다. 화면 좌표는 매 프레임 트리에서 계산한다(layoutRoot). 블록은
- * 자기 좌표를 저장하지 않으므로 언제나 맞물리고, 반복 블록은 자식을 입 안에 품는다.
+ * 상태는 트리(root) 그 자체다. 화면 좌표는 매 프레임 트리에서 계산한다. 블록은 자기 좌표를
+ * 저장하지 않으므로 언제나 맞물리고, 반복 블록은 자식을 입 안에 품는다.
  *
- * 드래그는 스크래치식이다: 스택 중간 블록을 잡으면 그 아래가 함께 딸려오고, 가까운 연결
- * 자리에 하이라이트가 뜨고, 놓으면 트리에 꽂힌다. 픽셀 스냅이 아니라 트리 삽입이다.
+ * 좌표는 전부 dp 로 다루고, 화면에 놓을 때만 density 를 곱해 px 로 바꾼다. (예전엔 dp 값을
+ * px 로 착각해 써서, 높이는 dp(=크게)인데 간격은 그 절반 이하라 블록이 70% 겹쳐 있었다.)
  *
- * 트리를 드래그 중에 건드리면 제스처가 끊기므로, 끄는 동안엔 그룹을 오프셋으로 띄우기만 하고
- * 놓는 순간에 트리를 바꾼다.
+ * 드래그는 스크래치식이다: 중간 블록을 잡으면 그 아래가 함께 딸려오고, 가까운 연결 자리에
+ * 하이라이트가 뜨고, 놓으면 트리에 꽂힌다. 트리를 드래그 중에 건드리면 제스처가 끊기므로
+ * 끄는 동안엔 오프셋으로 띄우기만 하고 놓는 순간에 트리를 바꾼다.
  */
-private const val ORIGIN_X = 40f
-private const val ORIGIN_Y = 40f
+private const val ORIGIN_X = 24f
+private const val ORIGIN_Y = 24f
 
 @Composable
 fun BlockCanvas(
@@ -81,6 +81,7 @@ fun BlockCanvas(
 ) {
     val ctx = LocalContext.current
     val p = palette
+    val density = LocalDensity.current.density
 
     DisposableEffect(Unit) {
         val window = (ctx as? android.app.Activity)?.window
@@ -94,75 +95,84 @@ fun BlockCanvas(
     }
 
     var root by remember(build.id) { mutableStateOf(build) }
-    var camera by remember { mutableStateOf(Offset.Zero) }
-    var zoom by remember { mutableStateOf(1f) }
+    var camera by remember { mutableStateOf(Offset.Zero) }   // dp
     var picking by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Material?>(null) }
 
-    // 드래그 상태
     var dragId by remember { mutableStateOf<String?>(null) }
     var dragGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var dragDelta by remember { mutableStateOf(Offset.Zero) }
+    var dragDelta by remember { mutableStateOf(Offset.Zero) }   // dp
     var dragTarget by remember { mutableStateOf<Slot?>(null) }
 
     fun persist() { MaterialStore.upsert(ctx, root) }
 
     val layout = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
 
+    // dp -> 화면 px
+    fun sx(dp: Float) = (dp + camera.x) * density
+    fun sy(dp: Float) = (dp + camera.y) * density
+
     Box(Modifier.fillMaxSize().background(p.surface)) {
         Canvas(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, gestureZoom, _ ->
-                        camera += pan
-                        zoom = (zoom * gestureZoom).coerceIn(0.5f, 2f)
+                    detectDragGestures { change, amount ->
+                        change.consume()
+                        camera += Offset(amount.x / density, amount.y / density)
                     }
                 },
         ) {
-            drawGrid(p.shadowColor.copy(alpha = 0.12f), camera, zoom)
+            drawGrid(p.shadowColor.copy(alpha = 0.10f), camera.x * density, camera.y * density)
+
+            // 동시 갈래 연결선
+            layout.links.forEach { l ->
+                drawLine(
+                    color = p.success.copy(alpha = 0.6f),
+                    start = Offset(sx(l.ax), sy(l.ay)),
+                    end = Offset(sx(l.bx), sy(l.by)),
+                    strokeWidth = 3f * density,
+                )
+            }
+
             // 스냅 하이라이트: 놓으면 여기 붙는다.
             dragTarget?.let { s ->
-                val hx = s.x * zoom + camera.x
-                val hy = s.y * zoom + camera.y
                 drawRoundRect(
-                    color = p.accent.copy(alpha = 0.9f),
-                    topLeft = Offset(hx, hy - 3f * zoom),
-                    size = Size(180f * zoom, 6f * zoom),
-                    cornerRadius = CornerRadius(3f * zoom, 3f * zoom),
+                    color = p.accent,
+                    topLeft = Offset(sx(s.x), sy(s.y) - 3f * density),
+                    size = Size(150f * density, 6f * density),
+                    cornerRadius = CornerRadius(3f * density, 3f * density),
                 )
             }
         }
 
-        // 트리에서 계산된 블록들
         layout.placed.forEach { pl ->
             val inDrag = pl.block.id in dragGroup
-            val ox = pl.x + if (inDrag) dragDelta.x else 0f
-            val oy = pl.y + if (inDrag) dragDelta.y else 0f
+            val bx = pl.x + if (inDrag) dragDelta.x else 0f
+            val by = pl.y + if (inDrag) dragDelta.y else 0f
             key(pl.block.id) {
                 BlockView(
                     material = pl.block,
-                    x = ox,
-                    y = oy,
+                    xDp = bx,
+                    yDp = by,
                     camera = camera,
-                    zoom = zoom,
+                    density = density,
                     lifted = inDrag,
                     onDragStart = {
-                        val group = tailOf(root, pl.block.id)
                         dragId = pl.block.id
-                        dragGroup = allIds(group)
+                        dragGroup = allIds(tailOf(root, pl.block.id))
                         dragDelta = Offset.Zero
                         dragTarget = null
                     },
                     onDrag = { amount ->
-                        dragDelta += Offset(amount.x / zoom, amount.y / zoom)
+                        dragDelta += Offset(amount.x / density, amount.y / density)
                         val lay = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
                         val grabbed = lay.placed.firstOrNull { it.block.id == dragId }
                         if (grabbed != null) {
                             val cx = grabbed.x + dragDelta.x
                             val cy = grabbed.y + dragDelta.y
                             val open = lay.slots.filter { it.parentId !in dragGroup }
-                            dragTarget = nearestSlot(open, cx, cy)
+                            dragTarget = nearestSlot(open, cx, cy, radius = 28f)
                         }
                     },
                     onDragEnd = {
@@ -181,10 +191,7 @@ fun BlockCanvas(
                         dragTarget = null
                     },
                     onClick = {
-                        when {
-                            pl.block.typeId == "touch" -> onOpenTouch(pl.block)
-                            else -> editing = pl.block
-                        }
+                        if (pl.block.typeId == "touch") onOpenTouch(pl.block) else editing = pl.block
                     },
                 )
             }
@@ -276,14 +283,14 @@ fun BlockCanvas(
     }
 }
 
-/** 블록 하나. 모양은 drawBehind(BlockDraw), 내용은 컴포저블. 위치는 트리에서 받는다. */
+/** 블록 하나. 위치는 트리에서 받은 dp. 화면엔 density 곱해 px 로 놓는다. */
 @Composable
 private fun BlockView(
     material: Material,
-    x: Float,
-    y: Float,
+    xDp: Float,
+    yDp: Float,
     camera: Offset,
-    zoom: Float,
+    density: Float,
     lifted: Boolean,
     onDragStart: () -> Unit,
     onDrag: (Offset) -> Unit,
@@ -291,28 +298,20 @@ private fun BlockView(
     onClick: () -> Unit,
 ) {
     val spec = specOf(material.typeId)
-    val density = LocalDensity.current
-    val h = with(density) { blockHeight(material).dp }
-
-    val px = with(density) { (x * zoom + camera.x).roundToInt() }
-    val py = with(density) { (y * zoom + camera.y).roundToInt() }
+    val px = ((xDp + camera.x) * density).roundToInt()
+    val py = ((yDp + camera.y) * density).roundToInt()
 
     Box(
         Modifier
-            .offset { androidx.compose.ui.unit.IntOffset(px, py) }
-            .graphicsLayer(
-                scaleX = zoom,
-                scaleY = zoom,
-                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f),
-            )
+            .offset { IntOffset(px, py) }
             .zIndex(if (lifted) 10f else 0f)
-            .height(h)
+            .height(blockHeight(material).dp)
             .widthIn(min = 132.dp)
             .blockShape(
                 shape = spec.shape,
                 color = spec.color,
-                innerTop = with(density) { C_HEADER.dp.toPx() },
-                innerHeight = with(density) { innerHeight(material).dp.toPx() },
+                innerTop = C_HEADER * density,
+                innerHeight = innerHeight(material) * density,
                 lifted = lifted,
             )
             .pointerInput(material.id) {
@@ -320,6 +319,7 @@ private fun BlockView(
                     onDragStart = { onDragStart() },
                     onDrag = { change, amount -> change.consume(); onDrag(amount) },
                     onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() },
                 )
             }
             .clickable(onClick = onClick),
@@ -369,7 +369,7 @@ private fun SlotChip(text: String, rounded: Boolean) {
     }
 }
 
-/** 초를 사람이 읽기 좋게: 0.300 -> 0.3, 1.000 -> 1, 10.789 -> 10.789. */
+/** 초를 읽기 좋게: 0.300 -> 0.3, 1.000 -> 1, 10.789 -> 10.789. */
 private fun fmtSec(ms: Long): String {
     val v = java.math.BigDecimal.valueOf(ms).movePointLeft(3).stripTrailingZeros()
     return if (v.signum() == 0) "0" else v.toPlainString()
