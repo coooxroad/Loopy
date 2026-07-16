@@ -243,7 +243,11 @@ fun BlockParamSheet(
                         singleLine = true,
                         textStyle = TextStyle(color = p.textStrong, fontSize = Type.body),
                         keyboardOptions = KeyboardOptions(
-                            keyboardType = if (numeric) KeyboardType.Number else KeyboardType.Text,
+                            keyboardType = when {
+                                material.params is WaitParams -> KeyboardType.Decimal
+                                numeric -> KeyboardType.Number
+                                else -> KeyboardType.Text
+                            },
                         ),
                         cursorBrush = SolidColor(p.accent),
                         modifier = Modifier.fillMaxWidth(),

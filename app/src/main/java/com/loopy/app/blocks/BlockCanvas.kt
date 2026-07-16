@@ -377,7 +377,7 @@ private fun defaultParams(typeId: String) = when (typeId) {
 }
 
 private fun detailOf(m: Material): String = when (val pr = m.params) {
-    is WaitParams -> "%.1f초".format(pr.ms / 1000.0)
+    is WaitParams -> "%.3f초".format(pr.ms / 1000.0)
     is LoopParams -> if (pr.infinite) "무한" else "${pr.count}번"
     is IfParams -> pr.condition.ifEmpty { "조건 없음" }
     else -> ""
@@ -417,7 +417,7 @@ private fun SlotChip(text: String, rounded: Boolean) {
 }
 
 private fun slotText(m: Material): String = when (val pr = m.params) {
-    is WaitParams -> "%.1f".format(pr.ms / 1000.0)
+    is WaitParams -> "%.3f".format(pr.ms / 1000.0)
     is LoopParams -> if (pr.infinite) "∞" else pr.count.toString()
     is IfParams -> pr.condition.ifEmpty { "?" }
     is com.loopy.app.core.material.BrightnessParams -> pr.level.toString()
