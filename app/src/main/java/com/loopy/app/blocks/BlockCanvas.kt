@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -298,6 +297,7 @@ private fun BlockView(
 ) {
     val spec = specOf(material.typeId)
     val density = LocalDensity.current
+    val w = 200.dp
     val h = blockHeightDp(material)
 
     val px = with(density) { (material.meta.x * zoom + camera.x).roundToInt() }
@@ -314,9 +314,7 @@ private fun BlockView(
             // 끌고 있는 블록이 맨 위에 있어야 어디로 가는지 보인다. 그림자는 요소 밖으로
             // 뻗어야 하므로 레이어로 가둘 수 없고, 대신 겹침 순서로 정리한다.
             .zIndex(if (lifted) 10f else 0f)
-            // 폭은 내용에 맞춰 늘어난다(스크래치처럼). 숫자가 길어지면 블록이 길어진다.
-            .height(h)
-            .widthIn(min = 132.dp)
+            .size(w, h)
             .blockShape(
                 shape = spec.shape,
                 color = spec.color,
@@ -338,8 +336,9 @@ private fun BlockView(
     ) {
         Row(
             Modifier
+                .fillMaxWidth()
                 .height(52.dp)
-                .padding(start = Space.md, end = Space.lg),
+                .padding(horizontal = Space.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LoopyIcon(spec.icon, Color.White, size = 15.dp)
@@ -378,7 +377,7 @@ private fun defaultParams(typeId: String) = when (typeId) {
 }
 
 private fun detailOf(m: Material): String = when (val pr = m.params) {
-    is WaitParams -> fmtSec(pr.ms) + "초"
+    is WaitParams -> "%.3f초".format(pr.ms / 1000.0)
     is LoopParams -> if (pr.infinite) "무한" else "${pr.count}번"
     is IfParams -> pr.condition.ifEmpty { "조건 없음" }
     else -> ""
@@ -417,14 +416,8 @@ private fun SlotChip(text: String, rounded: Boolean) {
     }
 }
 
-/** 초를 사람이 읽기 좋게: 뒷자리 0을 떼어 0.300 -> 0.3, 1.000 -> 1, 10.789 -> 10.789. */
-private fun fmtSec(ms: Long): String {
-    val v = java.math.BigDecimal.valueOf(ms).movePointLeft(3).stripTrailingZeros()
-    return if (v.signum() == 0) "0" else v.toPlainString()
-}
-
 private fun slotText(m: Material): String = when (val pr = m.params) {
-    is WaitParams -> fmtSec(pr.ms)
+    is WaitParams -> "%.3f".format(pr.ms / 1000.0)
     is LoopParams -> if (pr.infinite) "∞" else pr.count.toString()
     is IfParams -> pr.condition.ifEmpty { "?" }
     is com.loopy.app.core.material.BrightnessParams -> pr.level.toString()
