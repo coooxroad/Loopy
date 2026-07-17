@@ -69,8 +69,20 @@ object ParallelExecutor : Executor {
 object BuildExecutor : Executor {
     override val typeId = "build"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        // 트리거(HAT)는 실행 대상이 아니라 발동 조건이므로 건너뛴다.
-        val body = material.children.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
+        val kids = material.children
+        // 캔버스: 자식이 전부 덩어리(build)면, 모자로 시작하는 덩어리만 실행한다.
+        // 모자 없는 덩어리(조각)는 저장만 되고 돌지 않는다. (스크래치와 같은 최적화)
+        val isCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
+        if (isCanvas) {
+            for (clump in kids) {
+                if (clump.children.firstOrNull()?.type?.kind != com.loopy.app.core.material.Kind.HAT) continue
+                val body = clump.children.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
+                if (Engine.runChildren(body, ctx) == Flow.Stop) return Flow.Stop
+            }
+            return Flow.Next
+        }
+        // 시퀀스(레거시/중첩/갈래): 트리거(HAT)는 발동 조건이므로 건너뛰고 순서대로 실행.
+        val body = kids.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
         return when (Engine.runChildren(body, ctx)) {
             Flow.Stop -> Flow.Stop
             else -> Flow.Next

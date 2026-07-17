@@ -3,18 +3,25 @@ package com.loopy.app.blocks
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.Meta
+import com.loopy.app.core.material.NoParams
+import java.util.UUID
 import kotlin.math.hypot
 
 /**
- * 블록 배치 엔진 — 구조 우선.
+ * 블록 배치 엔진 — 구조 우선, 자유 배치.
  *
- * 스크래치의 핵심: 블록은 자기 좌표를 갖지 않는다. 좌표는 **트리에서 계산**된다. 그래서
- * 블록 N+1 은 언제나 블록 N 의 아래 연결점에 정확히 놓이고, 맞물림이 어긋날 수가 없다.
- * (예전엔 블록마다 x,y 를 저장하고 픽셀 거리로 연결을 추측해서, 조금만 틀어져도 홈이 안 맞았다.)
+ * 캔버스 = build 하나. 그 자식 = **덩어리(build)들**. 각 덩어리는 meta.x/y 로 캔버스 위 자기 자리를
+ * 갖는다. 덩어리의 자식 = 블록 스택. 스택 안쪽은 좌표를 저장하지 않고 트리에서 계산한다 —
+ * 그래서 블록 N+1 은 언제나 N 의 아래 연결점에 딱 놓이고 맞물림이 어긋날 수 없다.
  *
- * 이 파일은 순수 계산만 한다: 트리 → 놓인 좌표들(Placed) + 끼울 수 있는 자리들(Slot).
- * 트리 변형(떼기/끼우기/수정/삭제)도 여기 모아 둔다. 화면·제스처는 BlockCanvas 가 맡는다.
+ * 정리하면: 덩어리끼리는 자유 배치(각자 x/y), 덩어리 안쪽은 구조 우선(맞물림).
+ * 실행은 모자로 시작하는 덩어리만 (진입점에서 처리).
+ *
+ * 이 파일은 순수 계산만: 캔버스 → 놓인 좌표들(Placed) + 끼울 수 있는 실제 연결점들(Slot).
+ * 트리 변형(떼기/끼우기/추가/수정/삭제)도 여기 모아 둔다. 화면·제스처는 BlockCanvas 가 맡는다.
  */
 
 const val NOTCH_DEPTH = 5f      // 요철 깊이. BlockDraw 의 nd 와 같아야 한다.
@@ -23,7 +30,6 @@ const val HAT_H = 62f           // 모자 블록 높이
 const val C_HEADER = 52f        // C블록 머리
 const val C_FOOT = 22f          // C블록 발
 const val INDENT = 22f          // C블록 안쪽 들여쓰기
-const val COL_W = 250f          // 동시 갈래 컬럼 간격
 const val MOUTH_MIN = 34f       // 빈 C블록 입 최소 높이
 
 fun isC(m: Material): Boolean = specOf(m.typeId).shape == BlockShape.C_BLOCK
@@ -58,29 +64,27 @@ data class Placed(
     val depth: Int,
 )
 
-/** 블록을 끼울 수 있는 자리. parentId=null 이면 최상위 줄기. */
+/**
+ * 블록을 끼울 수 있는 실제 연결점.
+ * clumpId = 이 자리가 속한 덩어리. parentId=null 이면 덩어리 최상위 줄기, 아니면 C블록 입.
+ * 빈 공간에는 슬롯을 만들지 않는다 — 유령 슬롯 금지.
+ */
 data class Slot(
+    val clumpId: String,
     val parentId: String?,
     val index: Int,
     val x: Float,
     val y: Float,
 )
 
-/** 동시 블록 노드와 갈래를 잇는 선. */
-data class Link(val ax: Float, val ay: Float, val bx: Float, val by: Float)
-
 class Layout {
     val placed = ArrayList<Placed>()
     val slots = ArrayList<Slot>()
-    val links = ArrayList<Link>()
 }
 
-/**
- * 트리를 좌표로 편다.
- *
- * @return 이 스택이 차지한 높이
- */
-fun layoutScript(
+/** 한 덩어리의 스택을 좌표로 편다. @return 이 스택이 차지한 높이 */
+private fun layoutStack(
+    clumpId: String,
     parentId: String?,
     children: List<Material>,
     x: Float,
@@ -90,37 +94,35 @@ fun layoutScript(
 ): Float {
     var y = startY
     for ((i, c) in children.withIndex()) {
-        out.slots.add(Slot(parentId, i, x, y))          // c 앞에 끼우는 자리
+        // c 앞에 끼우는 자리. 단, 모자 위에는 아무것도 못 붙이므로 모자 앞 자리는 만들지 않는다.
+        if (!(i == 0 && isHat(c))) out.slots.add(Slot(clumpId, parentId, i, x, y))
         out.placed.add(Placed(c, x, y, depth))
 
         if (isC(c)) {
-            layoutScript(c.id, c.children, x + INDENT, y + C_HEADER, depth + 1, out)
-        } else if (c.typeId == "parallel") {
-            // 갈래는 노드처럼 오른쪽에 두고 선으로 잇는다(편의성 블록이라 직관 우선).
-            var bx = x + COL_W
-            for (branch in c.children) {
-                out.placed.add(Placed(branch, bx, y, depth + 1))
-                out.links.add(Link(x + 120f, y + ROW / 2f, bx, y + ROW / 2f))
-                if (isC(branch)) {
-                    layoutScript(branch.id, branch.children, bx + INDENT, y + C_HEADER, depth + 2, out)
-                }
-                bx += COL_W
-            }
+            layoutStack(clumpId, c.id, c.children, x + INDENT, y + C_HEADER, depth + 1, out)
         }
+        // parallel(동시) 는 지금은 평범한 블록으로 둔다. 노드+갈래 UI 는 다음 업데이트에서 복원.
         y += meshStep(c)
     }
-    out.slots.add(Slot(parentId, children.size, x, y))  // 맨 끝에 붙이는 자리
+    // 맨 끝(마지막 블록 아래)에 붙이는 자리
+    out.slots.add(Slot(clumpId, parentId, children.size, x, y))
     return y - startY
 }
 
-fun layoutRoot(root: Material, originX: Float, originY: Float): Layout {
+/** 캔버스(덩어리들)를 통째로 편다. 각 덩어리는 자기 meta.x/y 에서 시작한다. */
+fun layoutCanvas(canvas: Material): Layout {
     val out = Layout()
-    layoutScript(null, root.children, originX, originY, 0, out)
+    for (clump in canvas.children) {
+        layoutStack(clump.id, null, clump.children, clump.meta.x, clump.meta.y, 0, out)
+    }
     return out
 }
 
-/** 드래그 지점에서 가장 가까운 자리. 자석처럼 넉넉히 잡는다. */
-fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 60f): Slot? {
+/**
+ * 드래그 지점에서 가장 가까운 연결점. **좁게** 잡는다 — 스냅은 조립 편의 기능일 뿐,
+ * 기본은 자유 배치다. 가까이 갔을 때만 자석이 걸린다.
+ */
+fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 14f): Slot? {
     var best: Slot? = null
     var bestD = radius
     for (s in slots) {
@@ -133,22 +135,38 @@ fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 60f): Slo
     return best
 }
 
-// ---- 트리 변형 (전부 불변 복사) ----
+// ---- 덩어리/블록 만들기 ----
+
+private fun freshHat(): Material =
+    Material(UUID.randomUUID().toString(), "trigger.manual", NoParams)
+
+/** 위치를 가진 새 덩어리(build). */
+fun newClump(children: List<Material>, x: Float, y: Float): Material =
+    Material(UUID.randomUUID().toString(), "build", BuildParams(null), children, Meta(x = x, y = y))
 
 /**
- * 블록 [id] 와 그 아래(같은 스택의 뒤 형제들)를 떼어낸다.
- *
- * 스크래치식: 스택 중간 블록을 잡으면 그 블록과 아래가 함께 딸려오고, 위는 남는다.
- * @return (뗀 뒤의 트리, 딸려온 블록들). 못 찾으면 (원본, 빈 리스트).
+ * 레거시 빌드(자식=블록 스택)를 캔버스 모양(덩어리들)으로 바꾼다. 멱등:
+ * 이미 캔버스(자식이 전부 build)면 그대로 둔다. 녹화가 만든 빌드는 자식이 대기/터치라 여기서 감싸진다.
+ * 감쌀 때 맨 위에 모자를 얹어 "이게 실행되는 덩어리"임을 표시한다(id·이름은 캔버스가 유지).
  */
-fun detachFrom(root: Material, id: String): Pair<Material, List<Material>> {
+fun migrate(build: Material): Material {
+    val kids = build.children
+    val alreadyCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
+    if (alreadyCanvas) return build
+    val stack = if (kids.firstOrNull()?.let { isHat(it) } == true) kids else listOf(freshHat()) + kids
+    return build.copy(children = listOf(newClump(stack, 24f, 24f)))
+}
+
+// ---- 캔버스 트리 변형 (전부 불변 복사) ----
+
+/** 한 덩어리 안에서 [id] 와 그 아래(같은 스택의 뒤 형제)를 떼어낸다. (남은 덩어리, 딸려온 블록들) */
+private fun detachFrom(root: Material, id: String): Pair<Material, List<Material>> {
     val idx = root.children.indexOfFirst { it.id == id }
     if (idx >= 0) {
         val tail = root.children.subList(idx, root.children.size).toList()
         val kept = root.copy(children = root.children.subList(0, idx).toList())
         return kept to tail
     }
-    // 자식들 속을 뒤진다.
     val newKids = ArrayList<Material>(root.children.size)
     var found: List<Material> = emptyList()
     for (child in root.children) {
@@ -156,15 +174,53 @@ fun detachFrom(root: Material, id: String): Pair<Material, List<Material>> {
             val (nc, tail) = detachFrom(child, id)
             newKids.add(nc)
             if (tail.isNotEmpty()) found = tail
-        } else {
-            newKids.add(child)
-        }
+        } else newKids.add(child)
     }
     return root.copy(children = newKids) to found
 }
 
-/** [parentId] (null=최상위) 의 자식 [index] 자리에 blocks 를 끼운다. */
-fun insertInto(root: Material, parentId: String?, index: Int, blocks: List<Material>): Material {
+/**
+ * 블록 [id] 와 그 아래를 캔버스에서 떼어낸다. 떼고 나서 빈 덩어리는 캔버스에서 사라진다.
+ * @return (뗀 뒤의 캔버스, 딸려온 블록들)
+ */
+fun detachTail(canvas: Material, id: String): Pair<Material, List<Material>> {
+    val newClumps = ArrayList<Material>(canvas.children.size)
+    var tail: List<Material> = emptyList()
+    for (clump in canvas.children) {
+        if (tail.isEmpty() && findBlock(clump, id) != null) {
+            val (kept, t) = detachFrom(clump, id)
+            tail = t
+            if (kept.children.isNotEmpty()) newClumps.add(kept)   // 빈 덩어리는 버린다
+        } else newClumps.add(clump)
+    }
+    return canvas.copy(children = newClumps) to tail
+}
+
+/** [slot] 이 가리키는 덩어리의 자리에 blocks 를 끼운다. */
+fun insertAtSlot(canvas: Material, slot: Slot, blocks: List<Material>): Material {
+    val newClumps = canvas.children.map { clump ->
+        if (clump.id == slot.clumpId) insertInto(clump, slot.parentId, slot.index, blocks)
+        else clump
+    }
+    return canvas.copy(children = newClumps)
+}
+
+/** blocks 를 담은 새 덩어리를 (x,y) 에 추가한다. 자유 배치 드롭에 쓴다. */
+fun addClump(canvas: Material, blocks: List<Material>, x: Float, y: Float): Material =
+    canvas.copy(children = canvas.children + newClump(blocks, x, y))
+
+/** parallel 등 [parentId] 블록의 자식 끝에 block 을 붙인다(갈래 추가 등). */
+fun addChild(canvas: Material, parentId: String, block: Material): Material =
+    canvas.copy(children = canvas.children.map { insertInto(it, parentId, Int.MAX_VALUE, listOf(block)) })
+
+/** 덩어리의 위치를 옮긴다(스택 전체를 통째로 잡아 옮길 때). */
+fun moveClump(canvas: Material, clumpId: String, x: Float, y: Float): Material =
+    canvas.copy(children = canvas.children.map {
+        if (it.id == clumpId) it.copy(meta = it.meta.copy(x = x, y = y)) else it
+    })
+
+/** [parentId] (null=덩어리 최상위) 의 자식 [index] 자리에 blocks 를 끼운다(덩어리 내부). */
+private fun insertInto(root: Material, parentId: String?, index: Int, blocks: List<Material>): Material {
     if (parentId == null || parentId == root.id) {
         val kids = ArrayList(root.children)
         val at = index.coerceIn(0, kids.size)
@@ -174,15 +230,22 @@ fun insertInto(root: Material, parentId: String?, index: Int, blocks: List<Mater
     return root.copy(children = root.children.map { insertInto(it, parentId, index, blocks) })
 }
 
-/** id 블록을 새 값으로 교체(파라미터 편집). */
+/** id 블록을 새 값으로 교체(파라미터 편집). 캔버스 전체를 훑는다. */
 fun updateBlock(root: Material, block: Material): Material {
     val kids = root.children.map { if (it.id == block.id) block else updateBlock(it, block) }
     return root.copy(children = kids)
 }
 
-/** id 블록과 그 하위를 삭제. 뒤 형제는 남는다. */
-fun removeBlock(root: Material, id: String): Material {
-    val kids = root.children.filter { it.id != id }.map { removeBlock(it, id) }
+/** id 블록과 그 하위를 삭제. 뒤 형제는 남고, 빈 덩어리는 사라진다. */
+fun removeBlock(canvas: Material, id: String): Material {
+    val kids = canvas.children
+        .map { clump -> removeInside(clump, id) }
+        .filter { it.children.isNotEmpty() }
+    return canvas.copy(children = kids)
+}
+
+private fun removeInside(root: Material, id: String): Material {
+    val kids = root.children.filter { it.id != id }.map { removeInside(it, id) }
     return root.copy(children = kids)
 }
 
@@ -191,6 +254,25 @@ fun findBlock(root: Material, id: String): Material? {
     if (root.id == id) return root
     for (c in root.children) findBlock(c, id)?.let { return it }
     return null
+}
+
+/** [id] 블록과 그 아래 형제들(딸려올 그룹)을 그대로 찾아 반환. */
+fun tailOf(root: Material, id: String): List<Material> {
+    val idx = root.children.indexOfFirst { it.id == id }
+    if (idx >= 0) return root.children.subList(idx, root.children.size).toList()
+    for (c in root.children) {
+        val t = tailOf(c, id)
+        if (t.isNotEmpty()) return t
+    }
+    return emptyList()
+}
+
+/** blocks 와 그 하위 전부의 id 집합. 자기 안에 드롭하는 걸 막을 때 쓴다. */
+fun allIds(blocks: List<Material>): Set<String> {
+    val s = HashSet<String>()
+    fun rec(m: Material) { s.add(m.id); m.children.forEach(::rec) }
+    blocks.forEach(::rec)
+    return s
 }
 
 // ---- 배경 ----
@@ -209,23 +291,4 @@ fun DrawScope.drawGrid(color: Color, offsetX: Float, offsetY: Float) {
         drawLine(color, Offset(0f, gy), Offset(size.width, gy), 1f)
         gy += gap
     }
-}
-
-/** [id] 블록과 그 아래 형제들(딸려올 그룹)을 복사 없이 그대로 찾아 반환. */
-fun tailOf(root: Material, id: String): List<Material> {
-    val idx = root.children.indexOfFirst { it.id == id }
-    if (idx >= 0) return root.children.subList(idx, root.children.size).toList()
-    for (c in root.children) {
-        val t = tailOf(c, id)
-        if (t.isNotEmpty()) return t
-    }
-    return emptyList()
-}
-
-/** blocks 와 그 하위 전부의 id 집합. 자기 안에 드롭하는 걸 막을 때 쓴다. */
-fun allIds(blocks: List<Material>): Set<String> {
-    val s = HashSet<String>()
-    fun rec(m: Material) { s.add(m.id); m.children.forEach(::rec) }
-    blocks.forEach(::rec)
-    return s
 }

@@ -59,35 +59,19 @@ import java.util.UUID
 import kotlin.math.roundToInt
 
 /**
- * 블록 캔버스 — 구조 우선.
+ * 블록 캔버스 — 자유 배치 + 좁은 스냅.
  *
- * 상태는 트리(root) 그 자체다. 좌표는 트리에서 계산한다(맞물림 보장). 좌표는 dp 로 다루고
- * 화면엔 density 를 곱해 px 로 놓는다.
+ * 상태는 캔버스(build) 그 자체다. 캔버스의 자식 = 덩어리(build)들, 각자 meta.x/y 로 자기 자리를
+ * 가진다. 덩어리 안쪽 좌표는 트리에서 계산한다(맞물림 보장). 좌표는 dp 로 다루고 화면엔 density
+ * 를 곱해 px 로 놓는다.
  *
- * 줌/이동은 블록마다 걸지 않고 월드 컨테이너에 한 번만 건다. 블록은 월드 좌표(dp×density)에만
- * 놓이고, 컨테이너가 통째로 확대/이동한다. 그래야 좌표 변환이 한 곳에만 있어 꼬이지 않는다.
+ * 드래그(스크래치식): 블록을 잡으면 그 아래가 딸려 떨어져 나온다. 놓으면 **놓은 그 자리에** 새
+ * 덩어리로 그대로 남는다. 단, 놓는 순간 아주 가까운 실제 연결점이 있으면 그 덩어리에 합쳐진다
+ * (스냅은 조립 편의 기능일 뿐, 기본은 자유 배치). 합쳐질 판정일 때만 반투명 고스트가 뜬다.
  *
- * 드래그는 스크래치식: 중간 블록을 잡으면 아래가 딸려오고, 놓을 자리에 반투명 고스트가 뜨고,
- * 놓으면 트리에 꽂힌다. 끄는 동안 트리는 그대로 두고 오프셋만 주다가 놓을 때 바꾼다.
- *
- * 스크립트는 모자(트리거)로 시작해야 실행 시작점이 생긴다. 없으면 맨 위에 하나 씌운다.
+ * 실행은 모자(트리거)로 시작하는 덩어리만. 모자 없는 덩어리(조각)는 저장만 되고 돌지 않는다.
+ * 여는 순간 레거시 빌드는 migrate 로 캔버스 모양이 된다.
  */
-private const val ORIGIN_X = 24f
-private const val ORIGIN_Y = 24f
-
-/** 스크립트 맨 위에 모자(트리거)가 없으면 씌운다. 실행 시작점. */
-private fun ensureHat(build: Material): Material {
-    val first = build.children.firstOrNull()
-    if (first != null && isHat(first)) return build
-    val hat = Material(
-        id = UUID.randomUUID().toString(),
-        typeId = "trigger.manual",
-        params = NoParams,
-        meta = Meta(),
-    )
-    return build.copy(children = listOf(hat) + build.children)
-}
-
 @Composable
 fun BlockCanvas(
     build: Material,
@@ -110,7 +94,7 @@ fun BlockCanvas(
         onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
 
-    var root by remember(build.id) { mutableStateOf(ensureHat(build)) }
+    var canvas by remember(build.id) { mutableStateOf(migrate(build)) }
     var cameraPx by remember { mutableStateOf(Offset.Zero) }   // 화면 px 이동
     var zoom by remember { mutableStateOf(1f) }
     var picking by remember { mutableStateOf(false) }
@@ -118,13 +102,15 @@ fun BlockCanvas(
 
     var dragId by remember { mutableStateOf<String?>(null) }
     var dragGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var dragOrigin by remember { mutableStateOf(Offset.Zero) }  // 잡은 블록의 dp 자리
     var dragDelta by remember { mutableStateOf(Offset.Zero) }   // dp
+    var grabbedIsHat by remember { mutableStateOf(false) }
     var dragTarget by remember { mutableStateOf<Slot?>(null) }
 
-    fun persist() { MaterialStore.upsert(ctx, root) }
+    fun persist() { MaterialStore.upsert(ctx, canvas) }
 
-    val layout = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
-    val ghostBlock = dragId?.let { findBlock(root, it) }
+    val layout = layoutCanvas(canvas)
+    val ghostBlock = dragId?.let { findBlock(canvas, it) }
 
     Box(
         Modifier
@@ -137,7 +123,7 @@ fun BlockCanvas(
                 }
             },
     ) {
-        // 월드: 줌/이동을 통째로 건다. 블록·격자·연결선은 전부 월드 좌표(dp×density).
+        // 월드: 줌/이동을 통째로 건다. 블록·격자는 전부 월드 좌표(dp×density).
         Box(
             Modifier
                 .fillMaxSize()
@@ -151,17 +137,9 @@ fun BlockCanvas(
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
-                layout.links.forEach { l ->
-                    drawLine(
-                        color = p.success.copy(alpha = 0.6f),
-                        start = Offset(l.ax * density, l.ay * density),
-                        end = Offset(l.bx * density, l.by * density),
-                        strokeWidth = 3f * density,
-                    )
-                }
             }
 
-            // 놓을 자리: 반투명 고스트 블록(스크래치처럼 밑에 깔린다).
+            // 놓을 자리: 합쳐질 판정일 때만 반투명 고스트(스크래치처럼 밑에 깔린다).
             if (ghostBlock != null) {
                 dragTarget?.let { s ->
                     Box(
@@ -193,29 +171,34 @@ fun BlockCanvas(
                         lifted = inDrag,
                         onDragStart = {
                             dragId = pl.block.id
-                            dragGroup = allIds(tailOf(root, pl.block.id))
+                            dragGroup = allIds(tailOf(canvas, pl.block.id))
+                            dragOrigin = Offset(pl.x, pl.y)
+                            grabbedIsHat = isHat(pl.block)
                             dragDelta = Offset.Zero
                             dragTarget = null
                         },
                         onDrag = { amount ->
                             dragDelta += Offset(amount.x / density, amount.y / density)
-                            val lay = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
-                            val grabbed = lay.placed.firstOrNull { it.block.id == dragId }
-                            if (grabbed != null) {
-                                val cx = grabbed.x + dragDelta.x
-                                val cy = grabbed.y + dragDelta.y
-                                val open = lay.slots.filter { it.parentId !in dragGroup }
-                                // 반경 제한 없이 항상 가장 가까운 자리에 붙인다 → 놓으면 반드시 옮겨진다.
-                                dragTarget = nearestSlot(open, cx, cy, radius = 1_000_000f)
+                            val cx = dragOrigin.x + dragDelta.x
+                            val cy = dragOrigin.y + dragDelta.y
+                            // 모자로 시작하는 덩어리(스크립트)는 다른 블록 밑에 못 붙으니 스냅 안 함.
+                            // 현재 canvas 로 매번 다시 계산한다(고정 캡처는 드롭 뒤 어긋난다).
+                            dragTarget = if (grabbedIsHat) null else {
+                                val open = layoutCanvas(canvas).slots.filter { it.parentId !in dragGroup }
+                                nearestSlot(open, cx, cy)   // 좁은 반경(기본 14dp)
                             }
                         },
                         onDragEnd = {
                             val id = dragId
-                            val target = dragTarget
-                            if (id != null && target != null) {
-                                val (kept, tail) = detachFrom(root, id)
+                            if (id != null) {
+                                val (newCanvas, tail) = detachTail(canvas, id)
                                 if (tail.isNotEmpty()) {
-                                    root = insertInto(kept, target.parentId, target.index, tail)
+                                    val tgt = dragTarget
+                                    canvas = if (tgt != null && !isHat(tail.first())) {
+                                        insertAtSlot(newCanvas, tgt, tail)
+                                    } else {
+                                        addClump(newCanvas, tail, dragOrigin.x + dragDelta.x, dragOrigin.y + dragDelta.y)
+                                    }
                                     persist()
                                 }
                             }
@@ -246,7 +229,7 @@ fun BlockCanvas(
                 fontSize = Type.heading,
                 modifier = Modifier.weight(1f),
             )
-            NeuIconButton(onClick = { onRun(root) }, size = 40.dp) {
+            NeuIconButton(onClick = { onRun(canvas) }, size = 40.dp) {
                 LoopyIcon(Icon.PLAY, p.accent, size = 16.dp)
             }
         }
@@ -268,7 +251,14 @@ fun BlockCanvas(
                         params = defaultParams(spec.typeId),
                         meta = Meta(),
                     )
-                    root = insertInto(root, null, root.children.size, listOf(block))
+                    val first = canvas.children.firstOrNull()
+                    canvas = if (isHat(block) || first == null) {
+                        // 모자는 새 덩어리(스크립트)로. 덩어리가 없어도 새로 만든다.
+                        addClump(canvas, listOf(block), ORIGIN_X, ORIGIN_Y)
+                    } else {
+                        // 그 외엔 첫 덩어리 맨 끝에 붙인다.
+                        insertAtSlot(canvas, Slot(first.id, null, first.children.size, 0f, 0f), listOf(block))
+                    }
                     persist()
                     picking = false
                 },
@@ -280,12 +270,12 @@ fun BlockCanvas(
                 material = m,
                 onDismiss = { editing = null },
                 onSave = { updated ->
-                    root = updateBlock(root, updated)
+                    canvas = updateBlock(canvas, updated)
                     persist()
                     editing = null
                 },
                 onDelete = {
-                    root = removeBlock(root, m.id)
+                    canvas = removeBlock(canvas, m.id)
                     persist()
                     editing = null
                 },
@@ -297,7 +287,7 @@ fun BlockCanvas(
                             params = BuildParams(null),
                             meta = Meta(),
                         )
-                        root = insertInto(root, m.id, m.children.size, listOf(branch))
+                        canvas = addChild(canvas, m.id, branch)
                         persist()
                         editing = null
                     }
@@ -309,6 +299,8 @@ fun BlockCanvas(
     }
 }
 
+private const val ORIGIN_X = 24f
+private const val ORIGIN_Y = 24f
 /** 블록 하나. 위치는 월드 dp. 화면엔 density 곱해 px. 줌/이동은 부모 컨테이너가 건다. */
 @Composable
 private fun BlockView(
