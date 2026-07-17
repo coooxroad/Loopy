@@ -2,8 +2,9 @@ package com.loopy.app.blocks
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,10 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -43,6 +44,7 @@ import com.loopy.app.core.material.IfParams
 import com.loopy.app.core.material.LoopParams
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
+import com.loopy.app.core.material.NoParams
 import com.loopy.app.core.material.WaitParams
 import com.loopy.app.data.MaterialStore
 import com.loopy.app.ui.components.GradientText
@@ -59,18 +61,32 @@ import kotlin.math.roundToInt
 /**
  * 블록 캔버스 — 구조 우선.
  *
- * 상태는 트리(root) 그 자체다. 화면 좌표는 매 프레임 트리에서 계산한다. 블록은 자기 좌표를
- * 저장하지 않으므로 언제나 맞물리고, 반복 블록은 자식을 입 안에 품는다.
+ * 상태는 트리(root) 그 자체다. 좌표는 트리에서 계산한다(맞물림 보장). 좌표는 dp 로 다루고
+ * 화면엔 density 를 곱해 px 로 놓는다.
  *
- * 좌표는 전부 dp 로 다루고, 화면에 놓을 때만 density 를 곱해 px 로 바꾼다. (예전엔 dp 값을
- * px 로 착각해 써서, 높이는 dp(=크게)인데 간격은 그 절반 이하라 블록이 70% 겹쳐 있었다.)
+ * 줌/이동은 블록마다 걸지 않고 월드 컨테이너에 한 번만 건다. 블록은 월드 좌표(dp×density)에만
+ * 놓이고, 컨테이너가 통째로 확대/이동한다. 그래야 좌표 변환이 한 곳에만 있어 꼬이지 않는다.
  *
- * 드래그는 스크래치식이다: 중간 블록을 잡으면 그 아래가 함께 딸려오고, 가까운 연결 자리에
- * 하이라이트가 뜨고, 놓으면 트리에 꽂힌다. 트리를 드래그 중에 건드리면 제스처가 끊기므로
- * 끄는 동안엔 오프셋으로 띄우기만 하고 놓는 순간에 트리를 바꾼다.
+ * 드래그는 스크래치식: 중간 블록을 잡으면 아래가 딸려오고, 놓을 자리에 반투명 고스트가 뜨고,
+ * 놓으면 트리에 꽂힌다. 끄는 동안 트리는 그대로 두고 오프셋만 주다가 놓을 때 바꾼다.
+ *
+ * 스크립트는 모자(트리거)로 시작해야 실행 시작점이 생긴다. 없으면 맨 위에 하나 씌운다.
  */
 private const val ORIGIN_X = 24f
 private const val ORIGIN_Y = 24f
+
+/** 스크립트 맨 위에 모자(트리거)가 없으면 씌운다. 실행 시작점. */
+private fun ensureHat(build: Material): Material {
+    val first = build.children.firstOrNull()
+    if (first != null && isHat(first)) return build
+    val hat = Material(
+        id = UUID.randomUUID().toString(),
+        typeId = "trigger.manual",
+        params = NoParams,
+        meta = Meta(),
+    )
+    return build.copy(children = listOf(hat) + build.children)
+}
 
 @Composable
 fun BlockCanvas(
@@ -94,8 +110,9 @@ fun BlockCanvas(
         onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
 
-    var root by remember(build.id) { mutableStateOf(build) }
-    var camera by remember { mutableStateOf(Offset.Zero) }   // dp
+    var root by remember(build.id) { mutableStateOf(ensureHat(build)) }
+    var cameraPx by remember { mutableStateOf(Offset.Zero) }   // 화면 px 이동
+    var zoom by remember { mutableStateOf(1f) }
     var picking by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Material?>(null) }
 
@@ -107,96 +124,115 @@ fun BlockCanvas(
     fun persist() { MaterialStore.upsert(ctx, root) }
 
     val layout = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
+    val ghostBlock = dragId?.let { findBlock(root, it) }
 
-    // dp -> 화면 px
-    fun sx(dp: Float) = (dp + camera.x) * density
-    fun sy(dp: Float) = (dp + camera.y) * density
-
-    Box(Modifier.fillMaxSize().background(p.surface)) {
-        Canvas(
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(p.surface)
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, gestureZoom, _ ->
+                    zoom = (zoom * gestureZoom).coerceIn(0.5f, 2.5f)
+                    cameraPx += pan
+                }
+            },
+    ) {
+        // 월드: 줌/이동을 통째로 건다. 블록·격자·연결선은 전부 월드 좌표(dp×density).
+        Box(
             Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectDragGestures { change, amount ->
-                        change.consume()
-                        camera += Offset(amount.x / density, amount.y / density)
-                    }
-                },
+                .graphicsLayer(
+                    scaleX = zoom,
+                    scaleY = zoom,
+                    translationX = cameraPx.x,
+                    translationY = cameraPx.y,
+                    transformOrigin = TransformOrigin(0f, 0f),
+                ),
         ) {
-            drawGrid(p.shadowColor.copy(alpha = 0.10f), camera.x * density, camera.y * density)
-
-            // 동시 갈래 연결선
-            layout.links.forEach { l ->
-                drawLine(
-                    color = p.success.copy(alpha = 0.6f),
-                    start = Offset(sx(l.ax), sy(l.ay)),
-                    end = Offset(sx(l.bx), sy(l.by)),
-                    strokeWidth = 3f * density,
-                )
+            Canvas(Modifier.fillMaxSize()) {
+                drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
+                layout.links.forEach { l ->
+                    drawLine(
+                        color = p.success.copy(alpha = 0.6f),
+                        start = Offset(l.ax * density, l.ay * density),
+                        end = Offset(l.bx * density, l.by * density),
+                        strokeWidth = 3f * density,
+                    )
+                }
             }
 
-            // 스냅 하이라이트: 놓으면 여기 붙는다.
-            dragTarget?.let { s ->
-                drawRoundRect(
-                    color = p.accent,
-                    topLeft = Offset(sx(s.x), sy(s.y) - 3f * density),
-                    size = Size(150f * density, 6f * density),
-                    cornerRadius = CornerRadius(3f * density, 3f * density),
-                )
+            // 놓을 자리: 반투명 고스트 블록(스크래치처럼 밑에 깔린다).
+            if (ghostBlock != null) {
+                dragTarget?.let { s ->
+                    Box(
+                        Modifier
+                            .offset { IntOffset((s.x * density).roundToInt(), (s.y * density).roundToInt()) }
+                            .graphicsLayer(alpha = 0.38f)
+                            .height(blockHeight(ghostBlock).dp)
+                            .widthIn(min = 132.dp)
+                            .blockShape(
+                                shape = specOf(ghostBlock.typeId).shape,
+                                color = specOf(ghostBlock.typeId).color,
+                                innerTop = C_HEADER * density,
+                                innerHeight = innerHeight(ghostBlock) * density,
+                            ),
+                    ) {}
+                }
             }
-        }
 
-        layout.placed.forEach { pl ->
-            val inDrag = pl.block.id in dragGroup
-            val bx = pl.x + if (inDrag) dragDelta.x else 0f
-            val by = pl.y + if (inDrag) dragDelta.y else 0f
-            key(pl.block.id) {
-                BlockView(
-                    material = pl.block,
-                    xDp = bx,
-                    yDp = by,
-                    camera = camera,
-                    density = density,
-                    lifted = inDrag,
-                    onDragStart = {
-                        dragId = pl.block.id
-                        dragGroup = allIds(tailOf(root, pl.block.id))
-                        dragDelta = Offset.Zero
-                        dragTarget = null
-                    },
-                    onDrag = { amount ->
-                        dragDelta += Offset(amount.x / density, amount.y / density)
-                        val lay = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
-                        val grabbed = lay.placed.firstOrNull { it.block.id == dragId }
-                        if (grabbed != null) {
-                            val cx = grabbed.x + dragDelta.x
-                            val cy = grabbed.y + dragDelta.y
-                            val open = lay.slots.filter { it.parentId !in dragGroup }
-                            dragTarget = nearestSlot(open, cx, cy, radius = 28f)
-                        }
-                    },
-                    onDragEnd = {
-                        val id = dragId
-                        val target = dragTarget
-                        if (id != null && target != null) {
-                            val (kept, tail) = detachFrom(root, id)
-                            if (tail.isNotEmpty()) {
-                                root = insertInto(kept, target.parentId, target.index, tail)
-                                persist()
+            layout.placed.forEach { pl ->
+                val inDrag = pl.block.id in dragGroup
+                val bx = pl.x + if (inDrag) dragDelta.x else 0f
+                val by = pl.y + if (inDrag) dragDelta.y else 0f
+                key(pl.block.id) {
+                    BlockView(
+                        material = pl.block,
+                        xDp = bx,
+                        yDp = by,
+                        density = density,
+                        lifted = inDrag,
+                        onDragStart = {
+                            dragId = pl.block.id
+                            dragGroup = allIds(tailOf(root, pl.block.id))
+                            dragDelta = Offset.Zero
+                            dragTarget = null
+                        },
+                        onDrag = { amount ->
+                            dragDelta += Offset(amount.x / density, amount.y / density)
+                            val lay = layoutRoot(root, ORIGIN_X, ORIGIN_Y)
+                            val grabbed = lay.placed.firstOrNull { it.block.id == dragId }
+                            if (grabbed != null) {
+                                val cx = grabbed.x + dragDelta.x
+                                val cy = grabbed.y + dragDelta.y
+                                val open = lay.slots.filter { it.parentId !in dragGroup }
+                                // 반경 제한 없이 항상 가장 가까운 자리에 붙인다 → 놓으면 반드시 옮겨진다.
+                                dragTarget = nearestSlot(open, cx, cy, radius = 1_000_000f)
                             }
-                        }
-                        dragId = null
-                        dragGroup = emptySet()
-                        dragDelta = Offset.Zero
-                        dragTarget = null
-                    },
-                    onClick = {
-                        if (pl.block.typeId == "touch") onOpenTouch(pl.block) else editing = pl.block
-                    },
-                )
+                        },
+                        onDragEnd = {
+                            val id = dragId
+                            val target = dragTarget
+                            if (id != null && target != null) {
+                                val (kept, tail) = detachFrom(root, id)
+                                if (tail.isNotEmpty()) {
+                                    root = insertInto(kept, target.parentId, target.index, tail)
+                                    persist()
+                                }
+                            }
+                            dragId = null
+                            dragGroup = emptySet()
+                            dragDelta = Offset.Zero
+                            dragTarget = null
+                        },
+                        onClick = {
+                            if (pl.block.typeId == "touch") onOpenTouch(pl.block) else editing = pl.block
+                        },
+                    )
+                }
             }
         }
 
+        // UI 오버레이 (월드 변환 밖)
         Row(
             Modifier.fillMaxWidth().padding(Space.md),
             verticalAlignment = Alignment.CenterVertically,
@@ -212,16 +248,6 @@ fun BlockCanvas(
             )
             NeuIconButton(onClick = { onRun(root) }, size = 40.dp) {
                 LoopyIcon(Icon.PLAY, p.accent, size = 16.dp)
-            }
-        }
-
-        if (root.children.isEmpty()) {
-            Column(
-                Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("블록을 놓아 보세요", color = p.textMuted, fontSize = Type.body, fontWeight = FontWeight.Medium)
             }
         }
 
@@ -283,13 +309,12 @@ fun BlockCanvas(
     }
 }
 
-/** 블록 하나. 위치는 트리에서 받은 dp. 화면엔 density 곱해 px 로 놓는다. */
+/** 블록 하나. 위치는 월드 dp. 화면엔 density 곱해 px. 줌/이동은 부모 컨테이너가 건다. */
 @Composable
 private fun BlockView(
     material: Material,
     xDp: Float,
     yDp: Float,
-    camera: Offset,
     density: Float,
     lifted: Boolean,
     onDragStart: () -> Unit,
@@ -298,8 +323,8 @@ private fun BlockView(
     onClick: () -> Unit,
 ) {
     val spec = specOf(material.typeId)
-    val px = ((xDp + camera.x) * density).roundToInt()
-    val py = ((yDp + camera.y) * density).roundToInt()
+    val px = (xDp * density).roundToInt()
+    val py = (yDp * density).roundToInt()
 
     Box(
         Modifier
@@ -315,14 +340,16 @@ private fun BlockView(
                 lifted = lifted,
             )
             .pointerInput(material.id) {
+                detectTapGestures(onTap = { onClick() })
+            }
+            .pointerInput(material.id) {
                 detectDragGestures(
                     onDragStart = { onDragStart() },
                     onDrag = { change, amount -> change.consume(); onDrag(amount) },
                     onDragEnd = { onDragEnd() },
                     onDragCancel = { onDragEnd() },
                 )
-            }
-            .clickable(onClick = onClick),
+            },
     ) {
         Row(
             Modifier.height(C_HEADER.dp).padding(start = Space.md, end = Space.lg),
@@ -397,5 +424,5 @@ private fun defaultParams(typeId: String): com.loopy.app.core.material.Params = 
     "app.launch" -> com.loopy.app.core.material.AppParams("")
     "shell" -> com.loopy.app.core.material.ShellParams("")
     "touch" -> com.loopy.app.core.material.TouchParams("")
-    else -> com.loopy.app.core.material.NoParams
+    else -> NoParams
 }
