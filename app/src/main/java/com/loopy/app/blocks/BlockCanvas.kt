@@ -103,7 +103,6 @@ fun BlockCanvas(
 
     var dragId by remember { mutableStateOf<String?>(null) }
     var dragGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var dragOrigin by remember { mutableStateOf(Offset.Zero) }  // 잡은 블록의 dp 자리
     var dragDelta by remember { mutableStateOf(Offset.Zero) }   // dp
     var grabbedIsHat by remember { mutableStateOf(false) }
     var dragTarget by remember { mutableStateOf<Slot?>(null) }
@@ -173,36 +172,35 @@ fun BlockCanvas(
                         onDragStart = {
                             dragId = pl.block.id
                             dragGroup = allIds(tailOf(canvas, pl.block.id))
-                            dragOrigin = Offset(pl.x, pl.y)
                             grabbedIsHat = isHat(pl.block)
                             dragDelta = Offset.Zero
                             dragTarget = null
                         },
                         onDrag = { amount ->
                             dragDelta += Offset(amount.x / density, amount.y / density)
-                            val cx = dragOrigin.x + dragDelta.x
-                            val cy = dragOrigin.y + dragDelta.y
-                            // 모자로 시작하는 덩어리(스크립트)는 다른 블록 밑에 못 붙으니 스냅 안 함.
-                            // 현재 canvas 로 매번 다시 계산한다(고정 캡처는 드롭 뒤 어긋난다).
-                            // 꼬리를 먼저 (가상으로) 떼어낸 나머지에서 연결점을 찾는다. 그래야 원래
-                            // 자리로 도로 붙지 않고, 남은 머리의 실제 연결점이나 다른 덩어리에만 스냅된다.
-                            // 가까운 연결점이 없으면 null → 놓은 그 자리에 자유 배치된다.
-                            dragTarget = if (grabbedIsHat) null else {
-                                val id = dragId
-                                val remaining = if (id != null) detachTail(canvas, id).first else canvas
-                                nearestSlot(layoutCanvas(remaining).slots, cx, cy)   // 좁은 반경(기본 14dp)
+                            val id = dragId
+                            // 잡은 블록의 "현재 레이아웃상 실제 위치"를 조회해 커넥터를 만든다(저장값 X).
+                            val g = id?.let { theId -> layoutCanvas(canvas).placed.firstOrNull { it.block.id == theId } }
+                            if (id != null && g != null) {
+                                val cx = g.x + dragDelta.x
+                                val cy = g.y + dragDelta.y
+                                // 꼬리를 먼저 떼어낸 나머지에서만 연결점 탐색 → 제자리 재흡착 방지.
+                                // 가까운 연결점이 없으면 null → 그 자리에 자유 배치.
+                                dragTarget = if (grabbedIsHat) null else
+                                    nearestSlot(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy)
                             }
                         },
                         onDragEnd = {
                             val id = dragId
                             if (id != null) {
+                                val g = layoutCanvas(canvas).placed.firstOrNull { it.block.id == id }
                                 val (newCanvas, tail) = detachTail(canvas, id)
-                                if (tail.isNotEmpty()) {
+                                if (tail.isNotEmpty() && g != null) {
                                     val tgt = dragTarget
                                     canvas = if (tgt != null && !isHat(tail.first())) {
                                         insertAtSlot(newCanvas, tgt, tail)
                                     } else {
-                                        addClump(newCanvas, tail, dragOrigin.x + dragDelta.x, dragOrigin.y + dragDelta.y)
+                                        addClump(newCanvas, tail, g.x + dragDelta.x, g.y + dragDelta.y)
                                     }
                                     persist()
                                 }
@@ -238,6 +236,14 @@ fun BlockCanvas(
                 LoopyIcon(Icon.PLAY, p.accent, size = 16.dp)
             }
         }
+
+        // [임시 진단] 덩어리 수 · 드래그 델타 · 스냅 판정. 원인 확인용, 나중에 제거.
+        Text(
+            text = "\uB369\uC5B4\uB9AC ${canvas.children.size} \u00B7 \u0394(${dragDelta.x.roundToInt()},${dragDelta.y.roundToInt()}) \u00B7 ${if (dragTarget != null) "\uC2A4\uB0C5" else "\uC790\uC720"}",
+            color = p.textStrong,
+            fontSize = Type.label,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp),
+        )
 
         NeuFab(
             onClick = { picking = true },

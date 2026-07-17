@@ -152,9 +152,17 @@ fun newClump(children: List<Material>, x: Float, y: Float): Material =
 fun migrate(build: Material): Material {
     val kids = build.children
     val alreadyCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
-    if (alreadyCanvas) return build
+    if (alreadyCanvas) return build.copy(children = kids.map { dedupeHats(it) })
     val stack = if (kids.firstOrNull()?.let { isHat(it) } == true) kids else listOf(freshHat()) + kids
-    return build.copy(children = listOf(newClump(stack, 24f, 24f)))
+    return build.copy(children = listOf(dedupeHats(newClump(stack, 24f, 24f))))
+}
+
+/** 덩어리 맨 앞 모자는 최대 1개만 남긴다. 중복 모자(실행하면 두 개)를 정리한다. */
+private fun dedupeHats(clump: Material): Material {
+    val leadingHats = clump.children.takeWhile { isHat(it) }
+    if (leadingHats.size <= 1) return clump
+    val rest = clump.children.dropWhile { isHat(it) }
+    return clump.copy(children = listOf(leadingHats.first()) + rest)
 }
 
 // ---- 캔버스 트리 변형 (전부 불변 복사) ----
