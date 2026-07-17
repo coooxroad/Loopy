@@ -27,6 +27,13 @@ interface Io {
      */
     suspend fun playStroke(stroke: Stroke)
 
+    /**
+     * 여러 궤적을 하나의 멀티터치로 동시에 재생한다. items = (시작 지연 ms, strokeId).
+     * parallel(동시에) 갈래가 전부 단순 터치일 때, 손가락을 따로따로 주입하면 서로 취소되어
+     * 한 손가락만 찍힌다. 그래서 한 번의 주입에 여러 손가락으로 묶는다. 끝날 때까지 기다린다.
+     */
+    suspend fun playStrokesById(items: List<Pair<Long, String>>)
+
     /** 진행 중인 주입을 중단. 킬 스위치가 어디서든 동작하려면 필요하다. */
     fun stopPlayback()
 

@@ -3,6 +3,7 @@ package com.loopy.app.core.exec
 import com.loopy.app.core.material.IfParams
 import com.loopy.app.core.material.LoopParams
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.TouchParams
 import com.loopy.app.core.material.WaitParams
 import kotlinx.coroutines.delay
 
@@ -62,8 +63,32 @@ object IfExecutor : Executor {
 
 object ParallelExecutor : Executor {
     override val typeId = "parallel"
-    override suspend fun run(material: Material, ctx: ExecContext): Flow =
-        Engine.runParallel(material.children, ctx)
+    override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        // 갈래가 전부 "단순 터치"(터치 하나, 또는 lead 대기 + 터치)면 한 번의 멀티터치로 묶는다.
+        // 손가락을 갈래마다 따로 주입하면 서로 취소되어 한 손가락만 찍히기 때문이다.
+        val strokes = material.children.map { simpleStroke(it) }
+        if (strokes.isNotEmpty() && strokes.all { it != null }) {
+            ctx.io.playStrokesById(strokes.filterNotNull())
+            return Flow.Next
+        }
+        // 복잡한 갈래(루프·조건 등)는 진짜 동시 실행으로.
+        return Engine.runParallel(material.children, ctx)
+    }
+
+    /** 갈래에서 (시작 지연 ms, strokeId) 를 뽑는다. 단순 터치가 아니면 null. */
+    private fun simpleStroke(branch: Material): Pair<Long, String>? {
+        if (branch.typeId == "touch") {
+            return 0L to (branch.params as TouchParams).strokeId
+        }
+        if (branch.typeId == "build" && branch.children.size == 2) {
+            val a = branch.children[0]
+            val b = branch.children[1]
+            if (a.typeId == "wait" && b.typeId == "touch") {
+                return (a.params as WaitParams).ms to (b.params as TouchParams).strokeId
+            }
+        }
+        return null
+    }
 }
 
 object BuildExecutor : Executor {

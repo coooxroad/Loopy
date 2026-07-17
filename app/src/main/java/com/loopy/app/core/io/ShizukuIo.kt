@@ -5,6 +5,7 @@ import android.view.Display
 import android.view.WindowManager
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.core.record.Stroke
+import com.loopy.app.core.record.StrokeStore
 import com.loopy.app.service.LoopyService
 import com.loopy.app.shizuku.Shell
 import com.loopy.app.shizuku.ShizukuManager
@@ -81,6 +82,48 @@ class ShizukuIo(
             }
         } finally {
             releaseFinger(finger)
+        }
+    }
+
+    /** 여러 궤적을 손가락 여러 개로 묶어 한 번에 주입한다(진짜 멀티터치). 녹화 재생과 같은 경로. */
+    override suspend fun playStrokesById(items: List<Pair<Long, String>>) {
+        if (items.isEmpty()) return
+        val (w, h) = screenSize()
+        val defRot = rotation()
+
+        val fingerIds = ArrayList<Int>()
+        val startMs = ArrayList<Long>()
+        val durationsMs = ArrayList<Long>()
+        val sampleCounts = ArrayList<Int>()
+        val xs = ArrayList<Int>()
+        val ys = ArrayList<Int>()
+        val ts = ArrayList<Long>()
+
+        var finger = 0
+        for ((lead, strokeId) in items) {
+            val stroke = StrokeStore.get(context, strokeId) ?: continue
+            if (stroke.samples.isEmpty()) continue
+            val rot = if (stroke.rotation >= 0) stroke.rotation else defRot
+            fingerIds.add(finger)
+            startMs.add(lead)
+            durationsMs.add(stroke.durationMs)
+            sampleCounts.add(stroke.samples.size)
+            for (p in stroke.samples) {
+                val (px, py) = toPixels(p.nx, p.ny, rot, w, h)
+                xs.add(px); ys.add(py); ts.add(p.t)
+            }
+            finger++
+        }
+        if (fingerIds.isEmpty()) return
+
+        withContext(Dispatchers.IO) {
+            LoopyService.playMulti(
+                fingerIds.toIntArray(),
+                startMs.toLongArray(),
+                durationsMs.toLongArray(),
+                sampleCounts.toIntArray(),
+                xs.toIntArray(), ys.toIntArray(), ts.toLongArray(),
+            )
         }
     }
 
