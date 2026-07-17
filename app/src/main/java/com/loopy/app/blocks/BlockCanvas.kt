@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -183,9 +184,13 @@ fun BlockCanvas(
                             val cy = dragOrigin.y + dragDelta.y
                             // 모자로 시작하는 덩어리(스크립트)는 다른 블록 밑에 못 붙으니 스냅 안 함.
                             // 현재 canvas 로 매번 다시 계산한다(고정 캡처는 드롭 뒤 어긋난다).
+                            // 꼬리를 먼저 (가상으로) 떼어낸 나머지에서 연결점을 찾는다. 그래야 원래
+                            // 자리로 도로 붙지 않고, 남은 머리의 실제 연결점이나 다른 덩어리에만 스냅된다.
+                            // 가까운 연결점이 없으면 null → 놓은 그 자리에 자유 배치된다.
                             dragTarget = if (grabbedIsHat) null else {
-                                val open = layoutCanvas(canvas).slots.filter { it.parentId !in dragGroup }
-                                nearestSlot(open, cx, cy)   // 좁은 반경(기본 14dp)
+                                val id = dragId
+                                val remaining = if (id != null) detachTail(canvas, id).first else canvas
+                                nearestSlot(layoutCanvas(remaining).slots, cx, cy)   // 좁은 반경(기본 14dp)
                             }
                         },
                         onDragEnd = {
@@ -315,6 +320,10 @@ private fun BlockView(
     onClick: () -> Unit,
 ) {
     val spec = specOf(material.typeId)
+    val curStart by rememberUpdatedState(onDragStart)
+    val curDrag by rememberUpdatedState(onDrag)
+    val curEnd by rememberUpdatedState(onDragEnd)
+    val curClick by rememberUpdatedState(onClick)
     val px = (xDp * density).roundToInt()
     val py = (yDp * density).roundToInt()
 
@@ -332,14 +341,14 @@ private fun BlockView(
                 lifted = lifted,
             )
             .pointerInput(material.id) {
-                detectTapGestures(onTap = { onClick() })
+                detectTapGestures(onTap = { curClick() })
             }
             .pointerInput(material.id) {
                 detectDragGestures(
-                    onDragStart = { onDragStart() },
-                    onDrag = { change, amount -> change.consume(); onDrag(amount) },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() },
+                    onDragStart = { curStart() },
+                    onDrag = { change, amount -> change.consume(); curDrag(amount) },
+                    onDragEnd = { curEnd() },
+                    onDragCancel = { curEnd() },
                 )
             },
     ) {
