@@ -6,8 +6,7 @@ package com.loopy.app.core.material
  * 터치 매크로도, 대기도, 조건도, 반복도, 트리거도, 그것들을 모아 만든 빌드까지도 전부 Material 이다.
  * 빌드가 Material 이므로 빌드 안에 빌드를 넣을 수 있고, 그래서 플레이리스트 같은 별도 개념이 없다.
  *
- * 새 기능을 추가할 때 이 구조는 바뀌지 않는다. 새 [MaterialType] 과 그에 맞는
- * Params · 실행기 · 편집 UI 를 등록할 뿐이다. 스크립트든 API 연동이든 마찬가지다.
+ * 새 기능을 추가할 때 이 구조는 바뀌지 않는다. 새 BlockDef 하나와 실행기를 등록할 뿐이다.
  */
 data class Material(
     val id: String,
@@ -18,7 +17,8 @@ data class Material(
     /** 삭제하지 않고 잠시 꺼두기. 실험하며 만드는 도구에는 반드시 필요하다. */
     val enabled: Boolean = true,
 ) {
-    val type: MaterialType get() = MaterialRegistry.require(typeId)
+    /** 실행에 필요한 성격만. 값은 BlockDef 등록 시 TypeKinds 에 함께 채워진다. */
+    val kind: Kind get() = TypeKinds.kindOf(typeId)
 }
 
 data class Meta(
@@ -49,59 +49,14 @@ data class Meta(
 enum class Kind { HAT, ACTION, CONTROL, REPORTER, BOOLEAN }
 
 /**
- * children 을 어떤 축으로 배치·편집하는가. 두 가지뿐이다.
+ * typeId → Kind.
  *
- * 순서축만으로는 동시 실행을 표현할 수 없다. 그래서 시간축(촬영 매크로)이 따로 있고,
- * 순서축에서 동시성이 필요하면 PARALLEL 제어 블록을 쓴다.
+ * 실행 엔진은 "이 블록이 모자냐/제어냐"만 알면 된다. 모양·색·필드 등 나머지는 BlockDef(상위 층)가
+ * 가지므로, 도메인은 이 최소 정보만 둔다. BlockDef 등록 시 함께 채워진다.
+ * (구 MaterialType/MaterialRegistry 를 흡수한 자리 — 타입 정의는 이제 BlockDef 하나뿐이다.)
  */
-enum class EditorKind {
-    /** 시간축. 각 자식이 시작 시각을 가지며, 겹치면 동시에 실행된다. 촬영 매크로. */
-    TIMELINE,
-
-    /** 순서축. 자식을 세로로 쌓고 가지친다. 빌드. */
-    BLOCKS,
-}
-
-/** 파라미터를 어떻게 입력받는가. 컨테이너 편집기와는 다른 층위다. */
-enum class ParamInput { NONE, INLINE, SHEET, CODE }
-
-interface MaterialType {
-    val id: String
-    val kind: Kind
-    val label: String
-
-    /** 파라미터 입력 방식. */
-    val input: ParamInput get() = ParamInput.NONE
-
-    /** children 을 가진다면 어떤 축으로 편집하는가. CONTROL 이 아니면 null. */
-    val editor: EditorKind? get() = null
-
-    /** 자식들을 순서대로가 아니라 동시에 실행한다. PARALLEL 이 이것을 켠다. */
-    val parallel: Boolean get() = false
-
-
-    val hasChildren: Boolean get() = kind == Kind.CONTROL
-}
-
-/**
- * 타입 레지스트리.
- *
- * 런타임 등록이라 새 타입을 추가해도 기존 코드를 건드리지 않는다.
- * 플러그인이 자기 타입을 밀어 넣는 것도 같은 방식이 된다.
- */
-object MaterialRegistry {
-    private val types = LinkedHashMap<String, MaterialType>()
-
-    fun register(type: MaterialType) {
-        types[type.id] = type
-    }
-
-    fun find(id: String): MaterialType? = types[id]
-
-    fun require(id: String): MaterialType =
-        types[id] ?: error("등록되지 않은 Material 타입: $id")
-
-    fun all(): List<MaterialType> = types.values.toList()
-
-    fun byKind(kind: Kind): List<MaterialType> = types.values.filter { it.kind == kind }
+object TypeKinds {
+    private val map = HashMap<String, Kind>()
+    fun register(id: String, kind: Kind) { map[id] = kind }
+    fun kindOf(id: String): Kind = map[id] ?: Kind.ACTION
 }

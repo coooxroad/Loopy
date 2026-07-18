@@ -5,8 +5,6 @@ import com.loopy.app.core.exec.TouchExecutor
 import com.loopy.app.core.exec.registerBuiltinExecutors
 import com.loopy.app.core.exec.ExecutorRegistry
 import com.loopy.app.core.exec.registerSystemExecutors
-import com.loopy.app.core.material.registerBuiltins
-import com.loopy.app.core.material.registerSystemTypes
 import com.loopy.app.blocks.registerBlockDefs
 
 /**
@@ -20,8 +18,6 @@ class LoopyApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        registerBuiltins()
-        registerSystemTypes()
         registerBlockDefs()
         registerBuiltinExecutors()
         registerSystemExecutors()

@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.loopy.app.core.material.Field
 import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.ParamBag
+import com.loopy.app.core.material.TypeKinds
 import com.loopy.app.core.material.defaults
 import com.loopy.app.ui.components.Icon
 
@@ -180,4 +181,6 @@ val LitmusBlocks: List<BlockDef> = listOf(
 /** 앱 시작 시 호출 — LoopyApp 에서 등록 통로에 합류. 현재 14개 실블록만 등록. */
 fun registerBlockDefs() {
     BlockRegistry.register(LoopyBlocks)
+    // 도메인(실행)에 kind 만 넘긴다. 나머지는 BlockDef 가 가진다.
+    LoopyBlocks.forEach { TypeKinds.register(it.id, it.kind) }
 }

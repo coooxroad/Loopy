@@ -97,14 +97,14 @@ object BuildExecutor : Executor {
         val isCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
         if (isCanvas) {
             for (clump in kids) {
-                if (clump.children.firstOrNull()?.type?.kind != com.loopy.app.core.material.Kind.HAT) continue
-                val body = clump.children.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
+                if (clump.children.firstOrNull()?.kind != com.loopy.app.core.material.Kind.HAT) continue
+                val body = clump.children.filter { it.kind != com.loopy.app.core.material.Kind.HAT }
                 if (Engine.runChildren(body, ctx) == Flow.Stop) return Flow.Stop
             }
             return Flow.Next
         }
         // 시퀀스(레거시/중첩/갈래): 트리거(HAT)는 발동 조건이므로 건너뛰고 순서대로 실행.
-        val body = kids.filter { it.type.kind != com.loopy.app.core.material.Kind.HAT }
+        val body = kids.filter { it.kind != com.loopy.app.core.material.Kind.HAT }
         return when (Engine.runChildren(body, ctx)) {
             Flow.Stop -> Flow.Stop
             else -> Flow.Next

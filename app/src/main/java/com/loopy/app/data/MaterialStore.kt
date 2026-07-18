@@ -2,7 +2,6 @@ package com.loopy.app.data
 
 import android.content.Context
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.MaterialRegistry
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
 import org.json.JSONArray
@@ -89,7 +88,6 @@ object MaterialStore {
 
     private fun readMaterial(o: JSONObject): Material {
         val typeId = o.getString("type")
-        val type = MaterialRegistry.find(typeId)
 
         val paramsMap = HashMap<String, Any?>()
         o.optJSONObject("params")?.let { p ->
