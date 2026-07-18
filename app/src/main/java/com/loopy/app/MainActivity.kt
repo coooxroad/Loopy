@@ -69,7 +69,7 @@ import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.SoftCard
 import com.loopy.app.ui.theme.LoopyCard
 import com.loopy.app.blocks.BlockCanvas
-import com.loopy.app.core.material.BuildParams
+import com.loopy.app.core.material.ParamBag
 import com.loopy.app.core.material.Meta
 import com.loopy.app.ui.components.EmptyState
 import com.loopy.app.ui.components.NeuFab
@@ -279,7 +279,7 @@ private fun RootScreen(
                         val fresh = Material(
                             id = MaterialStore.newId(),
                             typeId = "build",
-                            params = BuildParams(null),
+                            params = ParamBag.EMPTY,
                             meta = Meta(name = "새 빌드", createdAt = System.currentTimeMillis()),
                         )
                         MaterialStore.upsert(context, fresh)

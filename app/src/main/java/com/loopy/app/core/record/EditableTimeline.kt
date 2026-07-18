@@ -1,7 +1,6 @@
 package com.loopy.app.core.record
 
 import android.content.Context
-import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Material
 
 /**
@@ -42,7 +41,7 @@ class EditableTimeline(
     companion object {
 
         fun open(ctx: Context, build: Material): EditableTimeline {
-            val recId = (build.params as? BuildParams)?.recordingId
+            val recId = build.params.str("recordingId").ifEmpty { null }
             return EditableTimeline(
                 buildId = build.id,
                 recording = recId?.let { RecordingStore.get(ctx, it) },

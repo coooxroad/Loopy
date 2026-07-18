@@ -1,11 +1,6 @@
 package com.loopy.app.core.exec
 
-import com.loopy.app.core.material.AppParams
-import com.loopy.app.core.material.BrightnessParams
-import com.loopy.app.core.material.DimParams
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.ShellParams
-import com.loopy.app.core.material.VarSetParams
 
 /**
  * 시스템 원자들의 실행 규칙.
@@ -17,7 +12,7 @@ import com.loopy.app.core.material.VarSetParams
 object DimExecutor : Executor {
     override val typeId = "screen.dim"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        ctx.io.setDim((material.params as DimParams).on)
+        ctx.io.setDim(material.params.bool("on"))
         return Flow.Next
     }
 }
@@ -25,7 +20,7 @@ object DimExecutor : Executor {
 object BrightnessExecutor : Executor {
     override val typeId = "screen.brightness"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val level = (material.params as BrightnessParams).level
+        val level = material.params.int("level")
         if (level < 0) {
             ctx.io.putSetting("system", "screen_brightness_mode", "1")
         } else {
@@ -39,10 +34,10 @@ object BrightnessExecutor : Executor {
 object VarSetExecutor : Executor {
     override val typeId = "var.set"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val p = material.params as VarSetParams
-        if (p.name.isBlank()) return Flow.Next
-        val value = ctx.scope.expand(p.value)
-        if (p.global) ctx.scope.setGlobal(p.name, value) else ctx.scope.setLocal(p.name, value)
+        val name = material.params.str("name")
+        if (name.isBlank()) return Flow.Next
+        val value = ctx.scope.expand(material.params.str("value"))
+        if (material.params.bool("global")) ctx.scope.setGlobal(name, value) else ctx.scope.setLocal(name, value)
         return Flow.Next
     }
 }
@@ -58,7 +53,7 @@ object AlarmOffExecutor : Executor {
 object LaunchAppExecutor : Executor {
     override val typeId = "app.launch"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val pkg = ctx.scope.expand((material.params as AppParams).pkg)
+        val pkg = ctx.scope.expand(material.params.str("pkg"))
         if (pkg.isNotBlank()) ctx.io.launchApp(pkg)
         return Flow.Next
     }
@@ -67,7 +62,7 @@ object LaunchAppExecutor : Executor {
 object ShellExecutor : Executor {
     override val typeId = "shell"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val cmd = ctx.scope.expand((material.params as ShellParams).cmd)
+        val cmd = ctx.scope.expand(material.params.str("cmd"))
         if (cmd.isNotBlank()) {
             val out = ctx.io.shell(cmd)
             ctx.log.add(material.id, "shell: ${out?.take(80) ?: "실패"}")

@@ -12,7 +12,7 @@ package com.loopy.app.core.material
 data class Material(
     val id: String,
     val typeId: String,
-    val params: Params,
+    val params: ParamBag,
     val children: List<Material> = emptyList(),
     val meta: Meta = Meta(),
     /** 삭제하지 않고 잠시 꺼두기. 실험하며 만드는 도구에는 반드시 필요하다. */
@@ -38,14 +38,6 @@ data class Meta(
 )
 
 /** 타입별 설정값. */
-interface Params {
-    fun toMap(): Map<String, Any?>
-}
-
-object NoParams : Params {
-    override fun toMap(): Map<String, Any?> = emptyMap()
-}
-
 /**
  * 블록의 성격.
  *
@@ -87,7 +79,6 @@ interface MaterialType {
     /** 자식들을 순서대로가 아니라 동시에 실행한다. PARALLEL 이 이것을 켠다. */
     val parallel: Boolean get() = false
 
-    fun parse(map: Map<String, Any?>): Params
 
     val hasChildren: Boolean get() = kind == Kind.CONTROL
 }

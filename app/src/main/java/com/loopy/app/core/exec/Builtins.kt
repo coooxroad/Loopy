@@ -1,10 +1,6 @@
 package com.loopy.app.core.exec
 
-import com.loopy.app.core.material.IfParams
-import com.loopy.app.core.material.LoopParams
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.TouchParams
-import com.loopy.app.core.material.WaitParams
 import kotlinx.coroutines.delay
 
 /**
@@ -17,7 +13,7 @@ import kotlinx.coroutines.delay
 object WaitExecutor : Executor {
     override val typeId = "wait"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val ms = (material.params as WaitParams).ms
+        val ms = material.params.long("ms", 1000L)
         // 통째로 재우면 취소에 늦게 반응한다. 잘게 쪼개 킬 스위치가 즉시 먹히게 한다.
         var left = ms
         while (left > 0) {
@@ -33,9 +29,10 @@ object WaitExecutor : Executor {
 object LoopExecutor : Executor {
     override val typeId = "loop"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val p = material.params as LoopParams
+        val count = material.params.int("count", 1)
+        val infinite = material.params.bool("infinite", false)
         var i = 0
-        while (p.infinite || i < p.count) {
+        while (infinite || i < count) {
             ctx.cancel.throwIfCancelled()
             ctx.scope.setLocal("_i", i.toString())
             when (Engine.runChildren(material.children, ctx)) {
@@ -52,7 +49,7 @@ object LoopExecutor : Executor {
 object IfExecutor : Executor {
     override val typeId = "if"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val cond = (material.params as IfParams).condition
+        val cond = material.params.str("condition")
         return if (Conditions.eval(cond, ctx)) {
             Engine.runChildren(material.children, ctx)
         } else {
@@ -78,13 +75,13 @@ object ParallelExecutor : Executor {
     /** 갈래에서 (시작 지연 ms, strokeId) 를 뽑는다. 단순 터치가 아니면 null. */
     private fun simpleStroke(branch: Material): Pair<Long, String>? {
         if (branch.typeId == "touch") {
-            return 0L to (branch.params as TouchParams).strokeId
+            return 0L to branch.params.str("strokeId")
         }
         if (branch.typeId == "build" && branch.children.size == 2) {
             val a = branch.children[0]
             val b = branch.children[1]
             if (a.typeId == "wait" && b.typeId == "touch") {
-                return (a.params as WaitParams).ms to (b.params as TouchParams).strokeId
+                return a.params.long("ms") to b.params.str("strokeId")
             }
         }
         return null

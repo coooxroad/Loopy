@@ -4,7 +4,7 @@ import android.content.Context
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.MaterialRegistry
 import com.loopy.app.core.material.Meta
-import com.loopy.app.core.material.NoParams
+import com.loopy.app.core.material.ParamBag
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -72,7 +72,7 @@ object MaterialStore {
             .put("id", m.id)
             .put("type", m.typeId)
             .put("enabled", m.enabled)
-            .put("params", JSONObject(m.params.toMap()))
+            .put("params", JSONObject(m.params.map))
             .put("children", kids)
             .put(
                 "meta",
@@ -114,7 +114,7 @@ object MaterialStore {
             id = o.getString("id"),
             typeId = typeId,
             // 미등록 타입(플러그인 미설치 등)이라도 데이터를 잃지 않도록 빈 파라미터로 살려둔다.
-            params = type?.parse(paramsMap) ?: NoParams,
+            params = ParamBag(paramsMap),
             children = kids,
             meta = meta,
             enabled = o.optBoolean("enabled", true),

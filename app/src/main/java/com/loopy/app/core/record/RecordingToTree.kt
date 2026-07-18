@@ -1,12 +1,9 @@
 package com.loopy.app.core.record
 
 import android.content.Context
-import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
-import com.loopy.app.core.material.NoParams
-import com.loopy.app.core.material.TouchParams
-import com.loopy.app.core.material.WaitParams
+import com.loopy.app.core.material.ParamBag
 import java.util.UUID
 
 /**
@@ -55,7 +52,7 @@ object RecordingToTree {
         return Material(
             id = UUID.randomUUID().toString(),
             typeId = "build",
-            params = BuildParams(recordingId),
+            params = ParamBag(mapOf("recordingId" to recordingId)),
             children = children,
             meta = Meta(name = name, createdAt = System.currentTimeMillis()),
         )
@@ -101,7 +98,7 @@ object RecordingToTree {
                 Material(
                     id = UUID.randomUUID().toString(),
                     typeId = "build",
-                    params = BuildParams(null),
+                    params = ParamBag.EMPTY,
                     children = listOf(wait(lead), touch),
                 )
             }
@@ -109,7 +106,7 @@ object RecordingToTree {
         return Material(
             id = UUID.randomUUID().toString(),
             typeId = "parallel",
-            params = NoParams,
+            params = ParamBag.EMPTY,
             children = branches,
         )
     }
@@ -119,13 +116,13 @@ object RecordingToTree {
         return Material(
             id = UUID.randomUUID().toString(),
             typeId = "touch",
-            params = TouchParams(id),
+            params = ParamBag(mapOf("strokeId" to id)),
         )
     }
 
     private fun wait(ms: Long) = Material(
         id = UUID.randomUUID().toString(),
         typeId = "wait",
-        params = WaitParams(ms),
+        params = ParamBag(mapOf("ms" to ms)),
     )
 }

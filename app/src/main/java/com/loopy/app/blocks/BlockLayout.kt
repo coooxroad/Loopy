@@ -3,10 +3,9 @@ package com.loopy.app.blocks
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import com.loopy.app.core.material.BuildParams
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.ParamBag
 import com.loopy.app.core.material.Meta
-import com.loopy.app.core.material.NoParams
 import java.util.UUID
 import kotlin.math.hypot
 import kotlin.math.min
@@ -153,11 +152,11 @@ fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 20f): Slo
 // ---- 덩어리/블록 만들기 ----
 
 private fun freshHat(): Material =
-    Material(UUID.randomUUID().toString(), "trigger.manual", NoParams)
+    Material(UUID.randomUUID().toString(), "trigger.manual", ParamBag.EMPTY)
 
 /** 위치를 가진 새 덩어리(build). */
 fun newClump(children: List<Material>, x: Float, y: Float): Material =
-    Material(UUID.randomUUID().toString(), "build", BuildParams(null), children, Meta(x = x, y = y))
+    Material(UUID.randomUUID().toString(), "build", ParamBag.EMPTY, children, Meta(x = x, y = y))
 
 /**
  * 레거시 빌드(자식=블록 스택)를 캔버스 모양(덩어리들)으로 바꾼다. 멱등:

@@ -41,13 +41,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import com.loopy.app.core.material.BuildParams
-import com.loopy.app.core.material.IfParams
-import com.loopy.app.core.material.LoopParams
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.ParamBag
 import com.loopy.app.core.material.Meta
-import com.loopy.app.core.material.NoParams
-import com.loopy.app.core.material.WaitParams
 import com.loopy.app.data.MaterialStore
 import com.loopy.app.ui.components.GradientText
 import com.loopy.app.ui.components.Icon
@@ -293,7 +289,7 @@ fun BlockCanvas(
                     val block = Material(
                         id = UUID.randomUUID().toString(),
                         typeId = def.id,
-                        params = defaultParams(def.id),
+                        params = def.defaultParams(),
                         meta = Meta(),
                     )
                     val first = canvas.children.firstOrNull()
@@ -329,7 +325,7 @@ fun BlockCanvas(
                         val branch = Material(
                             id = UUID.randomUUID().toString(),
                             typeId = "build",
-                            params = BuildParams(null),
+                            params = ParamBag.EMPTY,
                             meta = Meta(),
                         )
                         canvas = addChild(canvas, m.id, branch)
@@ -443,27 +439,14 @@ private fun fmtSec(ms: Long): String {
     return if (v.signum() == 0) "0" else v.toPlainString()
 }
 
-private fun slotText(m: Material): String = when (val pr = m.params) {
-    is WaitParams -> fmtSec(pr.ms)
-    is LoopParams -> if (pr.infinite) "\u221E" else pr.count.toString()
-    is IfParams -> pr.condition.ifEmpty { "?" }
-    is com.loopy.app.core.material.BrightnessParams -> pr.level.toString()
-    is com.loopy.app.core.material.AppParams -> pr.pkg.ifEmpty { "\uC571" }
-    is com.loopy.app.core.material.ShellParams -> pr.cmd.take(10).ifEmpty { "\uBA85\uB839" }
-    is com.loopy.app.core.material.VarSetParams -> pr.name.ifEmpty { "\uC774\uB984" }
+private fun slotText(m: Material): String = when (m.typeId) {
+    "wait" -> fmtSec(m.params.long("ms"))
+    "loop" -> if (m.params.bool("infinite")) "\u221E" else m.params.int("count").toString()
+    "if" -> m.params.str("condition").ifEmpty { "?" }
+    "screen.brightness" -> m.params.int("level").toString()
+    "app.launch" -> m.params.str("pkg").ifEmpty { "\uC571" }
+    "shell" -> m.params.str("cmd").take(10).ifEmpty { "\uBA85\uB839" }
+    "var.set" -> m.params.str("name").ifEmpty { "\uC774\uB984" }
     else -> ""
 }
 
-private fun defaultParams(typeId: String): com.loopy.app.core.material.Params = when (typeId) {
-    "wait" -> WaitParams(1000L)
-    "loop" -> LoopParams(count = 2)
-    "if" -> IfParams("")
-    "build" -> BuildParams(null)
-    "screen.brightness" -> com.loopy.app.core.material.BrightnessParams(128)
-    "screen.dim" -> com.loopy.app.core.material.DimParams(false)
-    "var.set" -> com.loopy.app.core.material.VarSetParams("", "", false)
-    "app.launch" -> com.loopy.app.core.material.AppParams("")
-    "shell" -> com.loopy.app.core.material.ShellParams("")
-    "touch" -> com.loopy.app.core.material.TouchParams("")
-    else -> NoParams
-}

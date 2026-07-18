@@ -2,7 +2,6 @@ package com.loopy.app.core.exec
 
 import android.content.Context
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.TouchParams
 import com.loopy.app.core.record.StrokeStore
 
 /**
@@ -18,7 +17,7 @@ class TouchExecutor(private val context: Context) : Executor {
     override val typeId = "touch"
 
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val id = (material.params as TouchParams).strokeId
+        val id = material.params.str("strokeId")
         val stroke = StrokeStore.get(context, id)
         if (stroke == null) {
             ctx.log.add(material.id, "궤적을 찾을 수 없음: $id")

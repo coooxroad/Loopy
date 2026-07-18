@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,15 +37,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.loopy.app.core.material.AppParams
-import com.loopy.app.core.material.BrightnessParams
-import com.loopy.app.core.material.IfParams
-import com.loopy.app.core.material.LoopParams
+import kotlin.math.roundToInt
+import com.loopy.app.core.material.Field
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.NoParams
-import com.loopy.app.core.material.ShellParams
-import com.loopy.app.core.material.VarSetParams
-import com.loopy.app.core.material.WaitParams
 import com.loopy.app.ui.components.LoopyIcon
 import com.loopy.app.ui.components.NeuButton
 import com.loopy.app.ui.components.NeuIconButton
@@ -144,7 +140,11 @@ fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockDef) -> Unit) {
     }
 }
 
-/** 블록 설정. 타입마다 필요한 값이 다르다. */
+/**
+ * 블록 설정 — 이제 BlockDef 의 Field 스키마에서 자동 생성된다.
+ * 타입마다 손으로 짜던 시트/변환(applyParam·fieldLabel)이 사라졌다. 값은 ParamBag(Map)로 다룬다.
+ * Field 하나를 더하면 편집 위젯이 저절로 생긴다.
+ */
 @Composable
 fun BlockParamSheet(
     material: Material,
@@ -154,29 +154,8 @@ fun BlockParamSheet(
     onAddFork: (() -> Unit)? = null,
 ) {
     val p = palette
-    val spec = specOf(material.typeId)
-
-    var text by remember {
-        mutableStateOf(
-            when (val pr = material.params) {
-                is WaitParams -> (pr.ms / 1000.0).toString()
-                is LoopParams -> pr.count.toString()
-                is IfParams -> pr.condition
-                is BrightnessParams -> pr.level.toString()
-                is AppParams -> pr.pkg
-                is ShellParams -> pr.cmd
-                is VarSetParams -> pr.value
-                else -> ""
-            },
-        )
-    }
-    var name by remember {
-        mutableStateOf((material.params as? VarSetParams)?.name.orEmpty())
-    }
-
-    val numeric = material.params is WaitParams ||
-        material.params is LoopParams ||
-        material.params is BrightnessParams
+    val def = BlockRegistry.find(material.typeId)
+    var bag by remember(material.id) { mutableStateOf(material.params) }
 
     Box(
         Modifier
@@ -197,118 +176,95 @@ fun BlockParamSheet(
                     Modifier
                         .size(32.dp)
                         .clip(RoundedCornerShape(Radius.sm))
-                        .background(spec.color),
+                        .background(def?.color ?: p.accent),
                     contentAlignment = Alignment.Center,
                 ) {
-                    LoopyIcon(spec.icon, Color.White, size = 16.dp)
+                    LoopyIcon(def?.icon ?: com.loopy.app.ui.components.Icon.MORE, Color.White, size = 16.dp)
                 }
                 Spacer(Modifier.width(Space.md))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        spec.label,
+                        def?.label ?: material.typeId,
                         color = p.textStrong,
                         fontSize = Type.heading,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Text(spec.hint, color = p.textMuted, fontSize = Type.caption)
+                    Text(def?.hint ?: "", color = p.textMuted, fontSize = Type.caption)
                 }
                 NeuIconButton(onClick = onDelete, size = 40.dp) {
                     LoopyIcon(com.loopy.app.ui.components.Icon.DELETE, p.danger, size = 16.dp)
                 }
             }
 
-            if (material.params is VarSetParams) {
+            def?.fields?.forEach { field ->
                 Spacer(Modifier.height(Space.md))
-                Text("이름", color = p.textMuted, fontSize = Type.label)
+                Text(field.label, color = p.textMuted, fontSize = Type.label)
                 Spacer(Modifier.height(Space.xs))
-                NeuWell(Modifier.fillMaxWidth()) {
-                    BasicTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        singleLine = true,
-                        textStyle = TextStyle(color = p.textStrong, fontSize = Type.body),
-                        cursorBrush = SolidColor(p.accent),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
+                when (field) {
+                    is Field.IntSlider -> {
+                        val v = bag.int(field.key, field.default)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Slider(
+                                value = v.toFloat(),
+                                onValueChange = { bag = bag.with(field.key, it.roundToInt()) },
+                                valueRange = field.min.toFloat()..field.max.toFloat(),
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(Space.sm))
+                            Text("$v${field.unit}", color = p.textStrong, fontSize = Type.body)
+                        }
+                    }
 
-            if (material.params !is NoParams) {
-                Spacer(Modifier.height(Space.md))
-                Text(fieldLabel(material), color = p.textMuted, fontSize = Type.label)
-                Spacer(Modifier.height(Space.xs))
-                NeuWell(Modifier.fillMaxWidth()) {
-                    BasicTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        singleLine = true,
-                        textStyle = TextStyle(color = p.textStrong, fontSize = Type.body),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = when {
-                                material.params is WaitParams -> KeyboardType.Decimal
-                                numeric -> KeyboardType.Number
-                                else -> KeyboardType.Text
-                            },
-                        ),
-                        cursorBrush = SolidColor(p.accent),
-                        modifier = Modifier.fillMaxWidth(),
+                    is Field.Toggle -> Switch(
+                        checked = bag.bool(field.key, field.default),
+                        onCheckedChange = { bag = bag.with(field.key, it) },
                     )
+
+                    is Field.Choice -> Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+                        field.options.forEach { opt ->
+                            val sel = bag.str(field.key, field.default) == opt.value
+                            Box(Modifier.weight(1f)) {
+                                if (sel) {
+                                    NeuButton(opt.label, onClick = { bag = bag.with(field.key, opt.value) }, modifier = Modifier.fillMaxWidth())
+                                } else {
+                                    NeuOutlineButton(opt.label, onClick = { bag = bag.with(field.key, opt.value) }, modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                        }
+                    }
+
+                    is Field.TextField -> ParamText(bag.str(field.key), field.hint) { bag = bag.with(field.key, it) }
+                    is Field.AppPick -> ParamText(bag.str(field.key), "\uD328\uD0A4\uC9C0\uBA85 (\uC608: com.kakao.talk)") { bag = bag.with(field.key, it) }
+                    is Field.ElementPick -> ParamText(bag.str(field.key), "\uC694\uC18C ID / \uD14D\uC2A4\uD2B8") { bag = bag.with(field.key, it) }
                 }
             }
 
             if (onAddFork != null) {
                 Spacer(Modifier.height(Space.md))
-                NeuOutlineButton(
-                    "갈래 추가",
-                    onClick = onAddFork,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                NeuOutlineButton("\uAC08\uB798 \uCD94\uAC00", onClick = onAddFork, modifier = Modifier.fillMaxWidth())
             }
 
             Spacer(Modifier.height(Space.md))
-            NeuButton(
-                "저장",
-                onClick = { onSave(applyParam(material, text, name)) },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            NeuButton("\uC800\uC7A5", onClick = { onSave(material.copy(params = bag)) }, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(Space.lg))
         }
     }
 }
 
-private fun fieldLabel(m: Material): String = when (m.params) {
-    is WaitParams -> "초"
-    is LoopParams -> "횟수"
-    is IfParams -> "조건 (예: {slock} == 1)"
-    is BrightnessParams -> "밝기 (0~255, -1은 자동)"
-    is AppParams -> "패키지 이름"
-    is ShellParams -> "명령"
-    is VarSetParams -> "값"
-    else -> ""
-}
-
-private fun applyParam(m: Material, text: String, name: String): Material = when (m.params) {
-    is WaitParams -> m.copy(
-        params = WaitParams(((text.toDoubleOrNull() ?: 1.0) * 1000).toLong().coerceAtLeast(0L)),
-    )
-
-    is LoopParams -> m.copy(
-        params = LoopParams(count = (text.toIntOrNull() ?: 1).coerceAtLeast(1)),
-    )
-
-    is IfParams -> m.copy(params = IfParams(text))
-
-    is BrightnessParams -> m.copy(
-        params = BrightnessParams(text.toIntOrNull() ?: 0),
-    )
-
-    is AppParams -> m.copy(params = AppParams(text))
-
-    is ShellParams -> m.copy(params = ShellParams(text))
-
-    is VarSetParams -> m.copy(
-        params = VarSetParams(name = name, value = text, global = true),
-    )
-
-    else -> m
+@Composable
+private fun ParamText(value: String, hint: String, onChange: (String) -> Unit) {
+    val p = palette
+    NeuWell(Modifier.fillMaxWidth()) {
+        Box {
+            if (value.isEmpty()) Text(hint, color = p.textMuted, fontSize = Type.body)
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                singleLine = true,
+                textStyle = TextStyle(color = p.textStrong, fontSize = Type.body),
+                cursorBrush = SolidColor(p.accent),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
 }

@@ -2,8 +2,6 @@ package com.loopy.app.core.record
 
 import android.content.Context
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.TouchParams
-import com.loopy.app.core.material.WaitParams
 
 /**
  * 트리 ↔ 시간축 변환.
@@ -37,10 +35,10 @@ object Timeline {
         for (b in blocks) {
             if (!b.enabled) continue
             when (b.typeId) {
-                "wait" -> cursor += (b.params as WaitParams).ms
+                "wait" -> cursor += b.params.long("ms")
 
                 "touch" -> {
-                    val id = (b.params as TouchParams).strokeId
+                    val id = b.params.str("strokeId")
                     val stroke = StrokeStore.get(ctx, id)
                     if (stroke != null) {
                         out.add(PlacedStroke(b.id, id, cursor, stroke))
