@@ -28,11 +28,7 @@ object MaterialStore {
 
     fun load(ctx: Context): List<Material> {
         val f = file(ctx)
-        if (!f.exists()) {
-            val migrated = Migration.fromLegacy(ctx)
-            if (migrated.isNotEmpty()) save(ctx, migrated)
-            return migrated
-        }
+        if (!f.exists()) return emptyList()
         return runCatching {
             val root = JSONObject(f.readText())
             val arr = root.optJSONArray("materials") ?: JSONArray()

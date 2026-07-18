@@ -2,6 +2,8 @@ package com.loopy.app.core.record
 
 import android.content.Context
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.Kind
+import com.loopy.app.core.material.TypeKinds
 
 /**
  * 트리 ↔ 시간축 변환.
@@ -75,10 +77,27 @@ object Timeline {
      */
     fun isLinear(build: Material): Boolean = build.children.all { linear(it) }
 
-    private fun linear(m: Material): Boolean = when (m.typeId) {
-        "wait", "touch" -> true
-        "parallel", "build" -> m.children.all { linear(it) }
+    private fun linear(m: Material): Boolean = when {
+        TypeKinds.kindOf(m.typeId) == Kind.HAT -> true   // 모자는 발동 조건, 시간축엔 영향 없음
+        m.typeId == "wait" || m.typeId == "touch" -> true
+        m.typeId == "parallel" || m.typeId == "build" -> m.children.all { linear(it) }
         else -> false
+    }
+
+    private fun isHat(m: Material): Boolean = TypeKinds.kindOf(m.typeId) == Kind.HAT
+
+    /**
+     * 이 빌드(캔버스)를 타임라인으로 열 수 있는가.
+     * 표준은 "선형 덩어리 하나"뿐이다 — 모자 하나 + wait/touch/parallel. 여기서 벗어나면
+     * (모자 여러 개, if·반복, 아직 시간축에 정의 없는 블록) 타임라인이 표현할 수 없으므로 열지 않는다.
+     * (억지로 열면 저장 때 표현 못 하는 블록이 사라진다.)
+     */
+    fun canOpenAsTimeline(build: Material): Boolean {
+        val clumps = build.children.filter { it.typeId == "build" }
+        if (clumps.isEmpty()) return build.children.all { linear(it) }   // 레거시 평평
+        val hatClumps = clumps.filter { c -> c.children.firstOrNull()?.let { isHat(it) } == true }
+        if (hatClumps.size != 1) return false
+        return hatClumps.first().children.all { linear(it) }
     }
 }
 

@@ -1,7 +1,9 @@
 package com.loopy.app.core.record
 
 import android.content.Context
+import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.TypeKinds
 
 /**
  * 편집기가 다루는 시간축 모델.
@@ -14,6 +16,8 @@ import com.loopy.app.core.material.Material
  */
 class EditableTimeline(
     val buildId: String,
+    /** 편집 중인 덩어리 id. null = 레거시 평평 빌드(캔버스 아님). 저장 때 이 덩어리만 접는다. */
+    val clumpId: String?,
     val recording: Recording?,
     val name: String,
     strokes: List<PlacedStroke>,
@@ -41,13 +45,24 @@ class EditableTimeline(
     companion object {
 
         fun open(ctx: Context, build: Material): EditableTimeline {
+            val target = targetClump(build)
             val recId = build.params.str("recordingId").ifEmpty { null }
             return EditableTimeline(
                 buildId = build.id,
+                clumpId = if (target === build) null else target.id,
                 recording = recId?.let { RecordingStore.get(ctx, it) },
                 name = build.meta.name,
-                strokes = Timeline.flatten(ctx, build),
+                strokes = Timeline.flatten(ctx, target),
             )
+        }
+
+        /** 캔버스에서 시간축으로 열 덩어리를 고른다. 모자로 시작하는 첫 덩어리(=녹화본). 레거시면 빌드 자신. */
+        private fun targetClump(build: Material): Material {
+            val clumps = build.children.filter { it.typeId == "build" }
+            if (clumps.isEmpty()) return build
+            return clumps.firstOrNull { c ->
+                c.children.firstOrNull()?.let { TypeKinds.kindOf(it.typeId) == Kind.HAT } == true
+            } ?: clumps.first()
         }
     }
 
@@ -67,6 +82,16 @@ class EditableTimeline(
         for (p in strokes) StrokeStore.update(ctx, p.strokeId, p.stroke)
 
         val rebuilt = RecordingToTree.build(ctx, timed, recording?.id, name)
-        return original.copy(children = rebuilt.children)
+
+        // 여는 덩어리만 새 스택으로 교체한다. 모자·위치·다른 덩어리는 그대로 둬 캔버스를 보존한다.
+        // (예전엔 children 을 통째 덮어써 자유 배치·갈래가 사라졌다.)
+        if (clumpId == null) return original.copy(children = rebuilt.children)
+        return original.copy(children = original.children.map { clump ->
+            if (clump.id != clumpId) clump
+            else {
+                val hat = clump.children.firstOrNull()?.takeIf { TypeKinds.kindOf(it.typeId) == Kind.HAT }
+                clump.copy(children = (if (hat != null) listOf(hat) else emptyList()) + rebuilt.children)
+            }
+        })
     }
 }

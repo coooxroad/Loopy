@@ -13,6 +13,7 @@ import android.app.Activity
 import android.media.projection.MediaProjectionManager
 import com.loopy.app.overlay.VideoSession
 import com.loopy.app.editor.MacroEditorScreen
+import com.loopy.app.core.record.Timeline
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -273,7 +274,7 @@ private fun RootScreen(
                     onRefresh = { refresh() },
                     onRename = { renaming = it; nameField = it.meta.name },
                     onDelete = { MaterialStore.delete(context, it.id); refresh() },
-                    onEdit = { editingBuild = it },
+                    onEdit = { if (Timeline.canOpenAsTimeline(it)) editingBuild = it else blocksBuild = it },
                     onOpenBlocks = { blocksBuild = it },
                     onNewBuild = {
                         val fresh = Material(
