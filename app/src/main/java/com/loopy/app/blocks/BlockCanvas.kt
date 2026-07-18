@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +84,9 @@ fun BlockCanvas(
     val ctx = LocalContext.current
     val p = palette
     val density = LocalDensity.current.density
+    val cfg = LocalConfiguration.current
+    val screenWpx = cfg.screenWidthDp * density
+    val screenHpx = cfg.screenHeightDp * density
 
     DisposableEffect(Unit) {
         val window = (ctx as? android.app.Activity)?.window
@@ -106,6 +110,7 @@ fun BlockCanvas(
     var dragDelta by remember { mutableStateOf(Offset.Zero) }   // dp
     var grabbedIsHat by remember { mutableStateOf(false) }
     var dragTarget by remember { mutableStateOf<Slot?>(null) }
+    var overTrash by remember { mutableStateOf(false) }
 
     fun persist() { MaterialStore.upsert(ctx, canvas) }
 
@@ -182,33 +187,44 @@ fun BlockCanvas(
                             // 잡은 블록의 "현재 레이아웃상 실제 위치"를 조회해 커넥터를 만든다(저장값 X).
                             val g = id?.let { theId -> layoutCanvas(canvas).placed.firstOrNull { it.block.id == theId } }
                             if (id != null && g != null) {
+                                // 화면 우하단(휴지통 FAB) 위에 있는지. dp→px 화면 좌표로 변환.
+                                val sx = (g.x + dragDelta.x) * density * zoom + cameraPx.x
+                                val sy = (g.y + dragDelta.y) * density * zoom + cameraPx.y
+                                overTrash = sx > screenWpx * 0.66f && sy > screenHpx * 0.80f
                                 val cx = g.x + dragDelta.x
                                 val cy = g.y + dragDelta.y
                                 // 꼬리를 먼저 떼어낸 나머지에서만 연결점 탐색 → 제자리 재흡착 방지.
-                                // 가까운 연결점이 없으면 null → 그 자리에 자유 배치.
-                                dragTarget = if (grabbedIsHat) null else
+                                // 휴지통 위면 스냅 억제(삭제 의도). 가까운 연결점 없으면 null → 자유 배치.
+                                dragTarget = if (grabbedIsHat || overTrash) null else
                                     nearestSlot(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy)
                             }
                         },
                         onDragEnd = {
                             val id = dragId
                             if (id != null) {
-                                val g = layoutCanvas(canvas).placed.firstOrNull { it.block.id == id }
-                                val (newCanvas, tail) = detachTail(canvas, id)
-                                if (tail.isNotEmpty() && g != null) {
-                                    val tgt = dragTarget
-                                    canvas = if (tgt != null && !isHat(tail.first())) {
-                                        insertAtSlot(newCanvas, tgt, tail)
-                                    } else {
-                                        addClump(newCanvas, tail, g.x + dragDelta.x, g.y + dragDelta.y)
-                                    }
+                                if (overTrash) {
+                                    // 휴지통에 놓음 → 딸려온 덩어리 통째 삭제.
+                                    canvas = detachTail(canvas, id).first
                                     persist()
+                                } else {
+                                    val g = layoutCanvas(canvas).placed.firstOrNull { it.block.id == id }
+                                    val (newCanvas, tail) = detachTail(canvas, id)
+                                    if (tail.isNotEmpty() && g != null) {
+                                        val tgt = dragTarget
+                                        canvas = if (tgt != null && !isHat(tail.first())) {
+                                            insertAtSlot(newCanvas, tgt, tail)
+                                        } else {
+                                            addClump(newCanvas, tail, g.x + dragDelta.x, g.y + dragDelta.y)
+                                        }
+                                        persist()
+                                    }
                                 }
                             }
                             dragId = null
                             dragGroup = emptySet()
                             dragDelta = Offset.Zero
                             dragTarget = null
+                            overTrash = false
                         },
                         onClick = {
                             if (pl.block.typeId == "touch") onOpenTouch(pl.block) else editing = pl.block
@@ -237,19 +253,15 @@ fun BlockCanvas(
             }
         }
 
-        // [임시 진단] 덩어리 수 · 드래그 델타 · 스냅 판정. 원인 확인용, 나중에 제거.
-        Text(
-            text = "\uB369\uC5B4\uB9AC ${canvas.children.size} \u00B7 \u0394(${dragDelta.x.roundToInt()},${dragDelta.y.roundToInt()}) \u00B7 ${if (dragTarget != null) "\uC2A4\uB0C5" else "\uC790\uC720"}",
-            color = p.textStrong,
-            fontSize = Type.label,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 64.dp),
-        )
-
         NeuFab(
             onClick = { picking = true },
             modifier = Modifier.align(Alignment.BottomEnd).padding(Space.lg),
         ) {
-            LoopyIcon(Icon.ADD, Color.White, size = 22.dp)
+            if (dragId != null) {
+                LoopyIcon(Icon.DELETE, if (overTrash) Color(0xFFFF5A5F) else Color.White, size = if (overTrash) 26.dp else 22.dp)
+            } else {
+                LoopyIcon(Icon.ADD, Color.White, size = 22.dp)
+            }
         }
 
         if (picking) {

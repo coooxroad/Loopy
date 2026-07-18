@@ -122,7 +122,7 @@ fun layoutCanvas(canvas: Material): Layout {
  * 드래그 지점에서 가장 가까운 연결점. **좁게** 잡는다 — 스냅은 조립 편의 기능일 뿐,
  * 기본은 자유 배치다. 가까이 갔을 때만 자석이 걸린다.
  */
-fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 14f): Slot? {
+fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 20f): Slot? {
     var best: Slot? = null
     var bestD = radius
     for (s in slots) {
