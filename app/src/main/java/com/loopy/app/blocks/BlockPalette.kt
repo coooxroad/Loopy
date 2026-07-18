@@ -61,7 +61,7 @@ import com.loopy.app.ui.theme.palette
  * 기억하기 쉽고, 새 블록이 추가되어도 자리가 정해져 있다.
  */
 @Composable
-fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockSpec) -> Unit) {
+fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockDef) -> Unit) {
     val p = palette
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
 
@@ -106,13 +106,14 @@ fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockSpec) -> Unit) {
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(Space.sm),
             ) {
-                BlockSpecs.filter { it.category == tab }.forEach { spec ->
+                // 팔레트는 이제 BlockRegistry(정의)에서 자동으로 채워진다. 블록 추가 = 정의 하나.
+                BlockRegistry.all().filter { it.category == tab }.forEach { def ->
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(Radius.sm))
-                            .clickable { onPick(spec) }
-                            .background(spec.color.copy(alpha = 0.12f))
+                            .clickable { onPick(def) }
+                            .background(def.color.copy(alpha = 0.12f))
                             .padding(Space.md),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -120,20 +121,20 @@ fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockSpec) -> Unit) {
                             Modifier
                                 .size(32.dp)
                                 .clip(RoundedCornerShape(Radius.sm))
-                                .background(spec.color),
+                                .background(def.color),
                             contentAlignment = Alignment.Center,
                         ) {
-                            LoopyIcon(spec.icon, Color.White, size = 16.dp)
+                            LoopyIcon(def.icon, Color.White, size = 16.dp)
                         }
                         Spacer(Modifier.width(Space.md))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                spec.label,
+                                def.label,
                                 color = p.textStrong,
                                 fontSize = Type.body,
                                 fontWeight = FontWeight.Medium,
                             )
-                            Text(spec.hint, color = p.textMuted, fontSize = Type.label)
+                            Text(def.hint, color = p.textMuted, fontSize = Type.label)
                         }
                     }
                 }

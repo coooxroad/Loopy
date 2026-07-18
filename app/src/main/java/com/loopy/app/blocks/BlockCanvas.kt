@@ -289,11 +289,11 @@ fun BlockCanvas(
         if (picking) {
             BlockPalette(
                 onDismiss = { picking = false },
-                onPick = { spec ->
+                onPick = { def ->
                     val block = Material(
                         id = UUID.randomUUID().toString(),
-                        typeId = spec.typeId,
-                        params = defaultParams(spec.typeId),
+                        typeId = def.id,
+                        params = defaultParams(def.id),
                         meta = Meta(),
                     )
                     val first = canvas.children.firstOrNull()
