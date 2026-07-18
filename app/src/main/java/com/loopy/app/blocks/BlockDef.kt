@@ -117,10 +117,10 @@ val LoopyBlocks: List<BlockDef> = listOf(
 
     Block("wait", Kind.ACTION, BlockCategory.CONTROL, BlockShape.STACK, Icon.PAUSE,
         "기다리기", "정해진 시간만큼 멈춥니다",
-        fields = listOf(Field.IntSlider("ms", "대기(ms)", 0, 5000, default = 1000, unit = "ms"))),
+        fields = listOf(Field.TextField("ms", "시간(ms)", default = "1000", hint = "밀리초"))),
     Block("loop", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.C_BLOCK, Icon.REDO,
         "반복하기", "안의 블록을 여러 번 실행합니다", container = EditorAxis.BLOCKS,
-        fields = listOf(Field.IntSlider("count", "횟수", 1, 999, default = 10))),
+        fields = listOf(Field.TextField("count", "횟수", default = "10", hint = "몇 번"))),
     Block("if", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.C_BLOCK, Icon.SPLIT,
         "만약", "조건이 맞을 때만 안의 블록을 실행합니다", container = EditorAxis.BLOCKS,
         slots = listOf(SlotDef("cond", SlotKind.BOOLEAN, "조건"))),

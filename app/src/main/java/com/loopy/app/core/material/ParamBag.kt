@@ -11,10 +11,26 @@ package com.loopy.app.core.material
  */
 @JvmInline
 value class ParamBag(val map: Map<String, Any?> = emptyMap()) {
-    fun int(key: String, default: Int = 0): Int = (map[key] as? Number)?.toInt() ?: default
-    fun long(key: String, default: Long = 0L): Long = (map[key] as? Number)?.toLong() ?: default
-    fun bool(key: String, default: Boolean = false): Boolean = map[key] as? Boolean ?: default
-    fun str(key: String, default: String = ""): String = map[key] as? String ?: default
+    fun int(key: String, default: Int = 0): Int = when (val v = map[key]) {
+        is Number -> v.toInt()
+        is String -> v.trim().toIntOrNull() ?: default
+        else -> default
+    }
+    fun long(key: String, default: Long = 0L): Long = when (val v = map[key]) {
+        is Number -> v.toLong()
+        is String -> v.trim().toLongOrNull() ?: default
+        else -> default
+    }
+    fun bool(key: String, default: Boolean = false): Boolean = when (val v = map[key]) {
+        is Boolean -> v
+        is String -> v.equals("true", ignoreCase = true) || v == "1"
+        else -> default
+    }
+    fun str(key: String, default: String = ""): String = when (val v = map[key]) {
+        is String -> v
+        null -> default
+        else -> v.toString()
+    }
     fun has(key: String): Boolean = map.containsKey(key)
     fun with(key: String, value: Any?): ParamBag = ParamBag(map + (key to value))
 
