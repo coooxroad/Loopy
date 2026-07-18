@@ -144,13 +144,15 @@ fun BlockCanvas(
                 drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
             }
 
-            // 놓을 자리: 합쳐질 판정일 때만 반투명 고스트(스크래치처럼 밑에 깔린다).
+            // 놓을 자리: 합쳐질 판정일 때만 반투명 고스트. 블록들 위에 그려야(zIndex) 스냅 지점이
+            // 상대 블록에 가려지지 않고 보인다 — 안 그러면 "위에 얹기"에서 고스트가 묻힌다.
             if (ghostBlock != null) {
                 dragTarget?.let { s ->
                     Box(
                         Modifier
+                            .zIndex(1f)
                             .offset { IntOffset((s.x * density).roundToInt(), (s.y * density).roundToInt()) }
-                            .graphicsLayer(alpha = 0.38f)
+                            .graphicsLayer(alpha = 0.5f)
                             .height(blockHeight(ghostBlock).dp)
                             .widthIn(min = 132.dp)
                             .blockShape(
