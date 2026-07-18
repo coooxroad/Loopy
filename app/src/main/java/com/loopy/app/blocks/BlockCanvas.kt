@@ -114,8 +114,16 @@ fun BlockCanvas(
 
     fun persist() { MaterialStore.upsert(ctx, canvas) }
 
-    val layout = layoutCanvas(canvas)
-    val ghostBlock = dragId?.let { findBlock(canvas, it) }
+    // 스냅 판정 중이면 "미리보기 캔버스"(꼬리를 대상 자리에 끼운 상태)를 배치한다.
+    // 그러면 상대 블록이 미리 자리를 벌려(스크래치처럼) 빈 자리가 보이고, 위/아래 조립이 대칭이며
+    // 놓을 때 텔레포트가 없다 — 보이는 그대로 놓인다. insertAtSlot 이 이미 있어 렌더만 바꾸면 된다.
+    val curDrag = dragId
+    val curTgt = dragTarget
+    val previewing = curDrag != null && curTgt != null
+    val renderCanvas = if (curDrag != null && curTgt != null)
+        insertAtSlot(detachTail(canvas, curDrag).first, curTgt, tailOf(canvas, curDrag))
+    else canvas
+    val layout = layoutCanvas(renderCanvas)
 
     Box(
         Modifier
@@ -144,31 +152,11 @@ fun BlockCanvas(
                 drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
             }
 
-            // 놓을 자리: 합쳐질 판정일 때만 반투명 고스트. 블록들 위에 그려야(zIndex) 스냅 지점이
-            // 상대 블록에 가려지지 않고 보인다 — 안 그러면 "위에 얹기"에서 고스트가 묻힌다.
-            if (ghostBlock != null) {
-                dragTarget?.let { s ->
-                    Box(
-                        Modifier
-                            .zIndex(1f)
-                            .offset { IntOffset((s.x * density).roundToInt(), (s.y * density).roundToInt()) }
-                            .graphicsLayer(alpha = 0.5f)
-                            .height(blockHeight(ghostBlock).dp)
-                            .widthIn(min = 132.dp)
-                            .blockShape(
-                                shape = specOf(ghostBlock.typeId).shape,
-                                color = specOf(ghostBlock.typeId).color,
-                                innerTop = C_HEADER * density,
-                                innerHeight = innerHeight(ghostBlock) * density,
-                            ),
-                    ) {}
-                }
-            }
-
             layout.placed.forEach { pl ->
                 val inDrag = pl.block.id in dragGroup
-                val bx = pl.x + if (inDrag) dragDelta.x else 0f
-                val by = pl.y + if (inDrag) dragDelta.y else 0f
+                // 스냅 중엔 미리보기 자리에 이미 놓여 있으니 delta 0(제자리), 자유 드래그일 때만 손가락 따라감.
+                val bx = pl.x + if (inDrag && !previewing) dragDelta.x else 0f
+                val by = pl.y + if (inDrag && !previewing) dragDelta.y else 0f
                 key(pl.block.id) {
                     BlockView(
                         material = pl.block,
