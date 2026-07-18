@@ -114,16 +114,18 @@ fun BlockCanvas(
 
     fun persist() { MaterialStore.upsert(ctx, canvas) }
 
-    // 스냅 판정 중이면 "미리보기 캔버스"(꼬리를 대상 자리에 끼운 상태)를 배치한다.
-    // 그러면 상대 블록이 미리 자리를 벌려(스크래치처럼) 빈 자리가 보이고, 위/아래 조립이 대칭이며
-    // 놓을 때 텔레포트가 없다 — 보이는 그대로 놓인다. insertAtSlot 이 이미 있어 렌더만 바꾸면 된다.
+    // 조립 미리보기(스크래치식): 스냅 판정이 서면 상대 블록이 "미리보기 캔버스"에서 자리를 벌리고,
+    // 갈 자리에 반투명 고스트가 뜬다. 끌던 블록 자체는 항상 손가락을 따라간다(아래 렌더). 놓으면
+    // 보이는 그대로 확정 — 위/아래 대칭, 텔레포트 없음.
     val curDrag = dragId
     val curTgt = dragTarget
     val previewing = curDrag != null && curTgt != null
-    val renderCanvas = if (curDrag != null && curTgt != null)
+    val previewCanvas = if (curDrag != null && curTgt != null)
         insertAtSlot(detachTail(canvas, curDrag).first, curTgt, tailOf(canvas, curDrag))
     else canvas
-    val layout = layoutCanvas(renderCanvas)
+    val origLayout = layoutCanvas(canvas)
+    val previewLayout = layoutCanvas(previewCanvas)
+    val ghostAt = if (previewing) previewLayout.placed.firstOrNull { it.block.id == curDrag } else null
 
     Box(
         Modifier
@@ -152,11 +154,40 @@ fun BlockCanvas(
                 drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
             }
 
-            layout.placed.forEach { pl ->
+            // 갈 자리 반투명 고스트 (스냅 중)
+            ghostAt?.let { gp ->
+                val gb = gp.block
+                Box(
+                    Modifier
+                        .offset { IntOffset((gp.x * density).roundToInt(), (gp.y * density).roundToInt()) }
+                        .graphicsLayer(alpha = 0.4f)
+                        .height(blockHeight(gb).dp)
+                        .widthIn(min = 132.dp)
+                        .blockShape(
+                            shape = specOf(gb.typeId).shape,
+                            color = specOf(gb.typeId).color,
+                            innerTop = C_HEADER * density,
+                            innerHeight = innerHeight(gb) * density,
+                        ),
+                ) {}
+            }
+
+            origLayout.placed.forEach { pl ->
                 val inDrag = pl.block.id in dragGroup
-                // 스냅 중엔 미리보기 자리에 이미 놓여 있으니 delta 0(제자리), 자유 드래그일 때만 손가락 따라감.
-                val bx = pl.x + if (inDrag && !previewing) dragDelta.x else 0f
-                val by = pl.y + if (inDrag && !previewing) dragDelta.y else 0f
+                // 끌던 블록은 손가락 따라(원위치+delta). 나머지는 스냅 중이면 자리 벌린 미리보기 위치로.
+                val bx: Float
+                val by: Float
+                if (inDrag) {
+                    bx = pl.x + dragDelta.x
+                    by = pl.y + dragDelta.y
+                } else if (previewing) {
+                    val pv = previewLayout.placed.firstOrNull { it.block.id == pl.block.id }
+                    bx = pv?.x ?: pl.x
+                    by = pv?.y ?: pl.y
+                } else {
+                    bx = pl.x
+                    by = pl.y
+                }
                 key(pl.block.id) {
                     BlockView(
                         material = pl.block,
@@ -183,13 +214,11 @@ fun BlockCanvas(
                                 overTrash = sx > screenWpx * 0.66f && sy > screenHpx * 0.80f
                                 val cx = g.x + dragDelta.x
                                 val cy = g.y + dragDelta.y
-                                // 꼬리를 먼저 떼어낸 나머지에서만 연결점 탐색 → 제자리 재흡착 방지.
-                                // 윗변(cx,cy)은 "아래로 붙이기", 아랫변(cx,cy+botOff)은 "위로 얹기"를 잡는다.
+                                // 끌던 블록 윗변(cx,cy)이 놓일 연결점을 찾는다(위·아래 대칭). 미리보기에서
+                                // 상대가 자리를 벌리므로 놓을 때 어긋나지 않는다.
                                 // 휴지통 위면 스냅 억제(삭제 의도). 가까운 연결점 없으면 null → 자유 배치.
-                                val firstTail = tailOf(canvas, id).firstOrNull()
-                                val botOff = if (firstTail != null) meshStep(firstTail) else 0f
                                 dragTarget = if (grabbedIsHat || overTrash) null else
-                                    nearestSlot2(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy, cx, cy + botOff)
+                                    nearestSlot(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy)
                             }
                         },
                         onDragEnd = {
