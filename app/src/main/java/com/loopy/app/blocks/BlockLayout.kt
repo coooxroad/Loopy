@@ -9,6 +9,7 @@ import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.NoParams
 import java.util.UUID
 import kotlin.math.hypot
+import kotlin.math.min
 
 /**
  * 블록 배치 엔진 — 구조 우선, 자유 배치.
@@ -122,6 +123,20 @@ fun layoutCanvas(canvas: Material): Layout {
  * 드래그 지점에서 가장 가까운 연결점. **좁게** 잡는다 — 스냅은 조립 편의 기능일 뿐,
  * 기본은 자유 배치다. 가까이 갔을 때만 자석이 걸린다.
  */
+/**
+ * 위·아래 두 기준점으로 가장 가까운 연결점을 찾는다. 끌고 온 블록의 윗변(아래로 붙이기)과
+ * 아랫변(다른 블록 위로 얹기) 둘 다 보므로, 위에 얹는 조립도 잡힌다.
+ */
+fun nearestSlot2(slots: List<Slot>, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float = 20f): Slot? {
+    var best: Slot? = null
+    var bestD = radius
+    for (s in slots) {
+        val d = min(hypot(s.x - x1, s.y - y1), hypot(s.x - x2, s.y - y2))
+        if (d < bestD) { bestD = d; best = s }
+    }
+    return best
+}
+
 fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 20f): Slot? {
     var best: Slot? = null
     var bestD = radius

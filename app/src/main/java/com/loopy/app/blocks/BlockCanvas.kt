@@ -194,9 +194,12 @@ fun BlockCanvas(
                                 val cx = g.x + dragDelta.x
                                 val cy = g.y + dragDelta.y
                                 // 꼬리를 먼저 떼어낸 나머지에서만 연결점 탐색 → 제자리 재흡착 방지.
+                                // 윗변(cx,cy)은 "아래로 붙이기", 아랫변(cx,cy+botOff)은 "위로 얹기"를 잡는다.
                                 // 휴지통 위면 스냅 억제(삭제 의도). 가까운 연결점 없으면 null → 자유 배치.
+                                val firstTail = tailOf(canvas, id).firstOrNull()
+                                val botOff = if (firstTail != null) meshStep(firstTail) else 0f
                                 dragTarget = if (grabbedIsHat || overTrash) null else
-                                    nearestSlot(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy)
+                                    nearestSlot2(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy, cx, cy + botOff)
                             }
                         },
                         onDragEnd = {
