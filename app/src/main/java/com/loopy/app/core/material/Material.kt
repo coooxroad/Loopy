@@ -54,7 +54,7 @@ object NoParams : Params {
  *
  * CONTROL 은 children 을 가지고 흐름을 바꾼다. 조건·반복·동시실행·빌드가 여기 속한다.
  */
-enum class Kind { HAT, ACTION, CONTROL }
+enum class Kind { HAT, ACTION, CONTROL, REPORTER, BOOLEAN }
 
 /**
  * children 을 어떤 축으로 배치·편집하는가. 두 가지뿐이다.

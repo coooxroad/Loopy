@@ -145,6 +145,29 @@ private fun DrawScope.blockPath(
                 bottomEdge(w, h, nl, nw, nd, cr)
                 close()
             }
+
+            BlockShape.REPORTER -> {
+                val r = h / 2f
+                moveTo(r, 0f)
+                lineTo(w - r, 0f)
+                quadraticBezierTo(w, 0f, w, r)
+                quadraticBezierTo(w, h, w - r, h)
+                lineTo(r, h)
+                quadraticBezierTo(0f, h, 0f, r)
+                quadraticBezierTo(0f, 0f, r, 0f)
+                close()
+            }
+
+            BlockShape.HEXAGON -> {
+                val c = h / 2f
+                moveTo(c, 0f)
+                lineTo(w - c, 0f)
+                lineTo(w, h / 2f)
+                lineTo(w - c, h)
+                lineTo(c, h)
+                lineTo(0f, h / 2f)
+                close()
+            }
         }
     }
 }
