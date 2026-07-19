@@ -20,16 +20,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -42,8 +40,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.loopy.app.core.material.Material
-import com.loopy.app.core.material.ParamBag
-import com.loopy.app.core.material.Meta
 import com.loopy.app.data.MaterialStore
 import com.loopy.app.ui.components.GradientText
 import com.loopy.app.ui.components.Icon
@@ -53,7 +49,6 @@ import com.loopy.app.ui.components.NeuIconButton
 import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
 import com.loopy.app.ui.theme.palette
-import java.util.UUID
 import kotlin.math.roundToInt
 
 /**
@@ -95,33 +90,25 @@ fun BlockCanvas(
         onDispose { controller?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
     }
 
-    var canvas by remember(build.id) { mutableStateOf(migrate(build)) }
-    var cameraPx by remember { mutableStateOf(Offset.Zero) }   // 화면 px 이동
-    var zoom by remember { mutableStateOf(1f) }
-    var picking by remember { mutableStateOf(false) }
-    var editing by remember { mutableStateOf<Material?>(null) }
+    // 모든 상태·규칙은 순수 상태홀더(EditorState)에. 화면은 ui 를 그리고 제스처를 이벤트로만 넘긴다.
+    val editor = remember(build.id) { EditorState(build) { MaterialStore.upsert(ctx, it) } }
+    val ui = editor.ui
 
-    var dragId by remember { mutableStateOf<String?>(null) }
-    var dragGroup by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var dragDelta by remember { mutableStateOf(Offset.Zero) }   // dp
-    var grabbedIsHat by remember { mutableStateOf(false) }
-    var dragTarget by remember { mutableStateOf<Slot?>(null) }
-    var overTrash by remember { mutableStateOf(false) }
-
-    fun persist() { MaterialStore.upsert(ctx, canvas) }
-
-    // 조립 미리보기(스크래치식): 스냅 판정이 서면 상대 블록이 "미리보기 캔버스"에서 자리를 벌리고,
-    // 갈 자리에 반투명 고스트가 뜬다. 끌던 블록 자체는 항상 손가락을 따라간다(아래 렌더). 놓으면
-    // 보이는 그대로 확정 — 위/아래 대칭, 텔레포트 없음.
-    val curDrag = dragId
-    val curTgt = dragTarget
+    // 렌더용 파생 — 상태(canvas·drag)로만 계산(상태홀더엔 안 둔다). 스냅 중이면 상대가 자리를 벌리고
+    // 갈 자리에 반투명 고스트가 뜬다. 끌던 블록은 손가락을 따라간다.
+    val drag = ui.drag
+    val curDrag = drag?.blockId
+    val curTgt = drag?.target
     val previewing = curDrag != null && curTgt != null
     val previewCanvas = if (curDrag != null && curTgt != null)
-        insertAtSlot(detachTail(canvas, curDrag).first, curTgt, tailOf(canvas, curDrag))
-    else canvas
-    val origLayout = layoutCanvas(canvas)
+        insertAtSlot(detachTail(ui.canvas, curDrag).first, curTgt, tailOf(ui.canvas, curDrag))
+    else ui.canvas
+    val origLayout = layoutCanvas(ui.canvas)
     val previewLayout = layoutCanvas(previewCanvas)
     val ghostAt = if (previewing) previewLayout.placed.firstOrNull { it.block.id == curDrag } else null
+    val dragGroup = drag?.group ?: emptySet()
+    val dragDelta = drag?.delta ?: Offset.Zero
+    val overTrash = drag?.overTrash ?: false
 
     Box(
         Modifier
@@ -129,8 +116,8 @@ fun BlockCanvas(
             .background(p.surface)
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, gestureZoom, _ ->
-                    zoom = (zoom * gestureZoom).coerceIn(0.5f, 2.5f)
-                    cameraPx += pan
+                    editor.onEvent(EditorEvent.Zoom(gestureZoom))
+                    editor.onEvent(EditorEvent.Pan(pan))
                 }
             },
     ) {
@@ -139,10 +126,10 @@ fun BlockCanvas(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer(
-                    scaleX = zoom,
-                    scaleY = zoom,
-                    translationX = cameraPx.x,
-                    translationY = cameraPx.y,
+                    scaleX = ui.zoom,
+                    scaleY = ui.zoom,
+                    translationX = ui.camera.x,
+                    translationY = ui.camera.y,
                     transformOrigin = TransformOrigin(0f, 0f),
                 ),
         ) {
@@ -191,61 +178,14 @@ fun BlockCanvas(
                         yDp = by,
                         density = density,
                         lifted = inDrag,
-                        onDragStart = {
-                            dragId = pl.block.id
-                            dragGroup = allIds(tailOf(canvas, pl.block.id))
-                            grabbedIsHat = isHat(pl.block)
-                            dragDelta = Offset.Zero
-                            dragTarget = null
-                        },
+                        onDragStart = { editor.onEvent(EditorEvent.DragStart(pl.block.id)) },
                         onDrag = { amount ->
-                            dragDelta += Offset(amount.x / density, amount.y / density)
-                            val id = dragId
-                            // 잡은 블록의 "현재 레이아웃상 실제 위치"를 조회해 커넥터를 만든다(저장값 X).
-                            val g = id?.let { theId -> layoutCanvas(canvas).placed.firstOrNull { it.block.id == theId } }
-                            if (id != null && g != null) {
-                                // 화면 우하단(휴지통 FAB) 위에 있는지. dp→px 화면 좌표로 변환.
-                                val sx = (g.x + dragDelta.x) * density * zoom + cameraPx.x
-                                val sy = (g.y + dragDelta.y) * density * zoom + cameraPx.y
-                                overTrash = sx > screenWpx * 0.66f && sy > screenHpx * 0.80f
-                                val cx = g.x + dragDelta.x
-                                val cy = g.y + dragDelta.y
-                                // 끌던 블록 윗변(cx,cy)이 놓일 연결점을 찾는다(위·아래 대칭). 미리보기에서
-                                // 상대가 자리를 벌리므로 놓을 때 어긋나지 않는다.
-                                // 휴지통 위면 스냅 억제(삭제 의도). 가까운 연결점 없으면 null → 자유 배치.
-                                dragTarget = if (grabbedIsHat || overTrash) null else
-                                    nearestSlot(layoutCanvas(detachTail(canvas, id).first).slots, cx, cy)
-                            }
+                            editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx)))
                         },
-                        onDragEnd = {
-                            val id = dragId
-                            if (id != null) {
-                                if (overTrash) {
-                                    // 휴지통에 놓음 → 딸려온 덩어리 통째 삭제.
-                                    canvas = detachTail(canvas, id).first
-                                    persist()
-                                } else {
-                                    val g = layoutCanvas(canvas).placed.firstOrNull { it.block.id == id }
-                                    val (newCanvas, tail) = detachTail(canvas, id)
-                                    if (tail.isNotEmpty() && g != null) {
-                                        val tgt = dragTarget
-                                        canvas = if (tgt != null && !isHat(tail.first())) {
-                                            insertAtSlot(newCanvas, tgt, tail)
-                                        } else {
-                                            addClump(newCanvas, tail, g.x + dragDelta.x, g.y + dragDelta.y)
-                                        }
-                                        persist()
-                                    }
-                                }
-                            }
-                            dragId = null
-                            dragGroup = emptySet()
-                            dragDelta = Offset.Zero
-                            dragTarget = null
-                            overTrash = false
-                        },
+                        onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                         onClick = {
-                            if (pl.block.typeId == "touch") onOpenTouch(pl.block) else editing = pl.block
+                            if (pl.block.typeId == "touch") onOpenTouch(pl.block)
+                            else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
                     )
                 }
@@ -266,72 +206,37 @@ fun BlockCanvas(
                 fontSize = Type.heading,
                 modifier = Modifier.weight(1f),
             )
-            NeuIconButton(onClick = { onRun(canvas) }, size = 40.dp) {
+            NeuIconButton(onClick = { onRun(ui.canvas) }, size = 40.dp) {
                 LoopyIcon(Icon.PLAY, p.accent, size = 16.dp)
             }
         }
 
         NeuFab(
-            onClick = { picking = true },
+            onClick = { editor.onEvent(EditorEvent.OpenPalette) },
             modifier = Modifier.align(Alignment.BottomEnd).padding(Space.lg),
         ) {
-            if (dragId != null) {
+            if (curDrag != null) {
                 LoopyIcon(Icon.DELETE, if (overTrash) Color(0xFFFF5A5F) else Color.White, size = if (overTrash) 26.dp else 22.dp)
             } else {
                 LoopyIcon(Icon.ADD, Color.White, size = 22.dp)
             }
         }
 
-        if (picking) {
+        if (ui.picking) {
             BlockPalette(
-                onDismiss = { picking = false },
-                onPick = { def ->
-                    val block = Material(
-                        id = UUID.randomUUID().toString(),
-                        typeId = def.id,
-                        params = def.defaultParams(),
-                        meta = Meta(),
-                    )
-                    val first = canvas.children.firstOrNull()
-                    canvas = if (isHat(block) || first == null) {
-                        // 모자는 새 덩어리(스크립트)로. 덩어리가 없어도 새로 만든다.
-                        addClump(canvas, listOf(block), ORIGIN_X, ORIGIN_Y)
-                    } else {
-                        // 그 외엔 첫 덩어리 맨 끝에 붙인다.
-                        insertAtSlot(canvas, Slot(first.id, null, first.children.size, 0f, 0f), listOf(block))
-                    }
-                    persist()
-                    picking = false
-                },
+                onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
+                onPick = { def -> editor.onEvent(EditorEvent.Pick(def)) },
             )
         }
 
-        editing?.let { m ->
+        ui.editing?.let { m ->
             BlockParamSheet(
                 material = m,
-                onDismiss = { editing = null },
-                onSave = { updated ->
-                    canvas = updateBlock(canvas, updated)
-                    persist()
-                    editing = null
-                },
-                onDelete = {
-                    canvas = removeBlock(canvas, m.id)
-                    persist()
-                    editing = null
-                },
+                onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
+                onSave = { updated -> editor.onEvent(EditorEvent.SaveParams(updated)) },
+                onDelete = { editor.onEvent(EditorEvent.Delete(m.id)) },
                 onAddFork = if (m.typeId == "parallel") {
-                    {
-                        val branch = Material(
-                            id = UUID.randomUUID().toString(),
-                            typeId = "build",
-                            params = ParamBag.EMPTY,
-                            meta = Meta(),
-                        )
-                        canvas = addChild(canvas, m.id, branch)
-                        persist()
-                        editing = null
-                    }
+                    { editor.onEvent(EditorEvent.AddFork(m.id)) }
                 } else {
                     null
                 },
@@ -340,8 +245,6 @@ fun BlockCanvas(
     }
 }
 
-private const val ORIGIN_X = 24f
-private const val ORIGIN_Y = 24f
 /** 블록 하나. 위치는 월드 dp. 화면엔 density 곱해 px. 줌/이동은 부모 컨테이너가 건다. */
 @Composable
 private fun BlockView(
