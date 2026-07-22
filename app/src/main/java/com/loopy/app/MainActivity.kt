@@ -131,7 +131,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val label: String, val icon: String) {
+enum class Tab(val label: String, val icon: String) {
     DASHBOARD("대시보드", "◈"), LIBRARY("라이브러리", "▤"), SETTINGS("설정", "⚙"),
 }
 
@@ -165,61 +165,39 @@ private fun RootScreen(
         }
     }
 
-    var state by remember { mutableStateOf(ShizukuManager.state()) }
-    var canOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var overlayMsg by remember { mutableStateOf("오버레이를 켜고 게임으로 전환한 뒤, 컨트롤 바에서 녹화/재생.") }
-    var builds by remember { mutableStateOf(MaterialStore.load(context).filter { it.typeId == "build" }) }
-    var renaming by remember { mutableStateOf<Material?>(null) }
-    var nameField by remember { mutableStateOf("") }
-    var tab by remember { mutableStateOf(Tab.DASHBOARD) }
-
-    // 앱 시작 시 권한 안내 팝업 (Shizuku 우선, 그다음 오버레이)
-    var showShizukuDialog by remember { mutableStateOf(state != ShizukuState.READY) }
-    var showOverlayDialog by remember { mutableStateOf(false) }
-
-    // 편집기 상태
-    var editingBuild by remember { mutableStateOf<Material?>(null) }
-    var blocksBuild by remember { mutableStateOf<Material?>(null) }
-
-    fun refresh() {
-        builds = MaterialStore.load(context).filter { it.typeId == "build" }
+    // 화면 상태는 홀더 한 곳에 모여 있다. 여기서는 그리기와 이벤트 전달만 한다.
+    val app = remember {
+        AppState(
+            shizuku = ShizukuManager.state(),
+            canOverlay = Settings.canDrawOverlays(context),
+            builds = AppState.loadBuilds(context),
+        )
     }
-
 
     LaunchedEffect(Unit) {
-        registerRefresh {
-            state = ShizukuManager.state()
-            canOverlay = Settings.canDrawOverlays(context)
-            refresh()
-        }
+        registerRefresh { app.recheckAll(context) }
     }
-    LaunchedEffect(state) {
-        if (state == ShizukuState.READY) {
+    LaunchedEffect(app.shizuku) {
+        if (app.shizuku == ShizukuState.READY) {
             LoopyService.bind(context)
-            if (!canOverlay) showOverlayDialog = true
+            if (!app.canOverlay) app.askOverlayPermission()
         }
     }
 
-    if (blocksBuild != null) {
+    if (app.blocksBuild != null) {
         BlockCanvas(
-            build = blocksBuild!!,
-            onBack = { blocksBuild = null; refresh() },
+            build = app.blocksBuild!!,
+            onBack = { app.closeEditors(context) },
             onRun = { m -> OverlayService.runBuild(context, m.id) },
-            onOpenTouch = {
-                // 터치 블록 → 궤적 편집(타임라인). blocksBuild 를 비워야 화면이 실제로 넘어간다
-                // (분기가 blocksBuild 를 먼저 보기 때문). 시간축으로 못 여는 캔버스면 그대로 둔다.
-                blocksBuild?.let { b ->
-                    if (Timeline.canOpenAsTimeline(b)) { editingBuild = b; blocksBuild = null }
-                }
-            },
+            onOpenTouch = { app.openTouchTimeline() },
         )
         return
     }
 
-    if (editingBuild != null) {
+    if (app.editingBuild != null) {
         MacroEditorScreen(
-            build = editingBuild!!,
-            onBack = { editingBuild = null; refresh() },
+            build = app.editingBuild!!,
+            onBack = { app.closeEditors(context) },
         )
         return
     }
@@ -230,9 +208,9 @@ private fun RootScreen(
             NavigationBar(containerColor = NeuBase) {
                 Tab.entries.forEach { t ->
                     NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = { LineIcon(kind = t.name.lowercase(), color = if (tab == t) Accent else TextLo) },
+                        selected = app.tab == t,
+                        onClick = { app.selectTab(t) },
+                        icon = { LineIcon(kind = t.name.lowercase(), color = if (app.tab == t) Accent else TextLo) },
                         label = { Text(t.label, fontSize = 11.sp) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = Accent, selectedTextColor = Accent,
@@ -248,56 +226,47 @@ private fun RootScreen(
         Box(Modifier.fillMaxSize().background(palette.surface).padding(padding)) {
             AnimatedBottomGradient()
 
-            when (tab) {
+            when (app.tab) {
                 Tab.DASHBOARD -> DashboardTab(
-                    state = state, canOverlay = canOverlay, msg = overlayMsg,
-                    recentBuild = builds.firstOrNull(),
+                    state = app.shizuku, canOverlay = app.canOverlay, msg = app.overlayMsg,
+                    recentBuild = app.builds.firstOrNull(),
                     onToggleOverlay = { turningOn ->
                         if (turningOn) {
                             context.startForegroundService(Intent(context, OverlayService::class.java))
-                            overlayMsg = "켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록."
+                            app.setOverlayMsg("켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록.")
                         } else {
                             context.stopService(Intent(context, OverlayService::class.java))
-                            overlayMsg = "오버레이를 껐어."
+                            app.setOverlayMsg("오버레이를 껐어.")
                         }
                     },
                     sessionActive = VideoSession.active,
                     onToggleSession = { toggleSession(it) },
                 )
                 Tab.LIBRARY -> LibraryTab(
-                    builds = builds,
-                    onRefresh = { refresh() },
-                    onRename = { renaming = it; nameField = it.meta.name },
-                    onDelete = { MaterialStore.delete(context, it.id); refresh() },
-                    onEdit = { if (Timeline.canOpenAsTimeline(it)) editingBuild = it else blocksBuild = it },
-                    onOpenBlocks = { blocksBuild = it },
-                    onNewBuild = {
-                        val fresh = Material(
-                            id = MaterialStore.newId(),
-                            typeId = "build",
-                            params = ParamBag.EMPTY,
-                            meta = Meta(name = "새 빌드", createdAt = System.currentTimeMillis()),
-                        )
-                        MaterialStore.upsert(context, fresh)
-                        blocksBuild = fresh
-                    },
+                    builds = app.builds,
+                    onRefresh = { app.refresh(context) },
+                    onRename = { app.startRename(it) },
+                    onDelete = { app.delete(context, it) },
+                    onEdit = { app.edit(it) },
+                    onOpenBlocks = { app.openBlocks(it) },
+                    onNewBuild = { app.newBuild(context) },
                 )
                 Tab.SETTINGS -> SettingsTab(
                     themeMode = themeMode,
                     onThemeChange = onThemeChange,
-                    state = state, canOverlay = canOverlay,
+                    state = app.shizuku, canOverlay = app.canOverlay,
                     onRequestShizuku = {
                         ShizukuManager.requestPermission { g ->
-                            state = if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION
+                            app.setShizuku(if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION)
                         }
                     },
-                    onRecheckShizuku = { state = ShizukuManager.state() },
+                    onRecheckShizuku = { app.recheckShizuku() },
                     onOpenOverlaySettings = {
                         context.startActivity(
                             Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
                         )
                     },
-                    onRecheckOverlay = { canOverlay = Settings.canDrawOverlays(context) },
+                    onRecheckOverlay = { app.recheckOverlay(context) },
                     sessionActive = VideoSession.active,
                     onToggleSession = { toggleSession(it) },
                 )
@@ -306,52 +275,49 @@ private fun RootScreen(
     }
 
     // ── 권한 안내 팝업 ──
-    if (showShizukuDialog && state != ShizukuState.READY) {
+    if (app.showShizukuDialog && app.shizuku != ShizukuState.READY) {
         AlertDialog(
-            onDismissRequest = { showShizukuDialog = false },
+            onDismissRequest = { app.dismissDialogs() },
             confirmButton = {
-                TextButton(onClick = { showShizukuDialog = false; tab = Tab.SETTINGS }) {
+                TextButton(onClick = { app.goToSettings() }) {
                     Text("설정으로 이동", color = Accent)
                 }
             },
-            dismissButton = { TextButton(onClick = { showShizukuDialog = false }) { Text("나중에", color = TextLo) } },
+            dismissButton = { TextButton(onClick = { app.dismissDialogs() }) { Text("나중에", color = TextLo) } },
             title = { Text("Shizuku 연결 필요", color = TextHi) },
             text = { Text("터치 재현에 Shizuku 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
             containerColor = LoopyCard,
         )
-    } else if (showOverlayDialog && !canOverlay) {
+    } else if (app.showOverlayDialog && !app.canOverlay) {
         AlertDialog(
-            onDismissRequest = { showOverlayDialog = false },
+            onDismissRequest = { app.dismissDialogs() },
             confirmButton = {
-                TextButton(onClick = { showOverlayDialog = false; tab = Tab.SETTINGS }) {
+                TextButton(onClick = { app.goToSettings() }) {
                     Text("설정으로 이동", color = Accent)
                 }
             },
-            dismissButton = { TextButton(onClick = { showOverlayDialog = false }) { Text("나중에", color = TextLo) } },
+            dismissButton = { TextButton(onClick = { app.dismissDialogs() }) { Text("나중에", color = TextLo) } },
             title = { Text("오버레이 권한 필요", color = TextHi) },
             text = { Text("화면 위에 컨트롤을 띄우려면 '다른 앱 위에 표시' 권한이 필요합니다", color = TextLo, fontSize = 13.sp) },
             containerColor = LoopyCard,
         )
     }
 
-    val editing = renaming
-    if (editing != null) {
+    if (app.renaming != null) {
         AlertDialog(
-            onDismissRequest = { renaming = null },
+            onDismissRequest = { app.cancelRename() },
             confirmButton = {
-                TextButton(onClick = {
-                    if (nameField.isNotBlank()) {
-                        MaterialStore.upsert(
-                            context,
-                            editing.copy(meta = editing.meta.copy(name = nameField.trim())),
-                        )
-                    }
-                    renaming = null; refresh()
-                }) { Text("저장", color = Accent) }
+                TextButton(onClick = { app.commitRename(context) }) { Text("저장", color = Accent) }
             },
-            dismissButton = { TextButton(onClick = { renaming = null }) { Text("취소", color = TextLo) } },
+            dismissButton = { TextButton(onClick = { app.cancelRename() }) { Text("취소", color = TextLo) } },
             title = { Text("이름 변경", color = TextHi) },
-            text = { OutlinedTextField(value = nameField, onValueChange = { nameField = it }, singleLine = true) },
+            text = {
+                OutlinedTextField(
+                    value = app.nameField,
+                    onValueChange = { app.editName(it) },
+                    singleLine = true,
+                )
+            },
             containerColor = LoopyCard,
         )
     }
