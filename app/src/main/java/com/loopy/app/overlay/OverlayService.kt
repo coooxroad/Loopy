@@ -73,10 +73,22 @@ class OverlayService : Service() {
         }
     }
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var buildCancel: CancelSignal? = null
-    private val globalVars = HashMap<String, String>()
     private var videoEnabled = false
     private val screenRecorder by lazy { ScreenRecorder(this) }
+
+    /** 재생은 PlaybackController 가 전담한다. */
+    private val play by lazy {
+        PlaybackController(
+            scope = scope,
+            io = io,
+            onStatus = { msg -> if (::status.isInitialized) status.text = msg },
+            onRunningChanged = { on ->
+                if (::stopPlayBtn.isInitialized) {
+                    stopPlayBtn.visibility = if (on) View.VISIBLE else View.GONE
+                }
+            },
+        )
+    }
 
     /** 녹화는 RecordController 가 전담한다. 화면 갱신만 콜백으로 돌려받는다. */
     private val rec by lazy {
@@ -123,7 +135,6 @@ class OverlayService : Service() {
         const val EX_CODE = "code"
         const val EX_DATA = "data"
     }
-    private var playJob: Job? = null
 
     private lateinit var bar: LinearLayout
     private lateinit var barParams: WindowManager.LayoutParams
@@ -500,35 +511,10 @@ class OverlayService : Service() {
      */
     private fun playBuild(build: Material) {
         if (rec.isRecording) rec.stop()
-        stopPlayback(null)
-        stopPlayBtn.visibility = View.VISIBLE
-        val name = build.meta.name.ifEmpty { "빌드" }
-        status.text = "▶ $name"
-
-        val cancel = CancelSignal()
-        buildCancel = cancel
-        playJob = scope.launch {
-            val ctx = ExecContext(
-                io = io,
-                scope = VarScope(globalVars),
-                cancel = cancel,
-                log = ExecLog(),
-            )
-            runCatching { Engine.run(build, ctx) }
-            status.text = "완료 · $name"
-            stopPlayBtn.visibility = View.GONE
-            playJob = null
-            buildCancel = null
-        }
+        play.play(build)
     }
 
-    private fun stopPlayback(msg: String?) {
-        buildCancel?.cancel()
-        playJob?.cancel()
-        playJob = null
-        stopPlayBtn.visibility = View.GONE
-        if (msg != null) status.text = msg
-    }
+    private fun stopPlayback(msg: String?) = play.stop(msg)
 
     /** 스트로크들을 현재 화면 방향에 맞춰 순차 주입. 취소 가능. */
     /** 모든 스트로크를 절대 시각(startMs) 기준으로 병합해 playMulti 로 한 번에 동시 재생. */
