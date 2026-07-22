@@ -148,8 +148,8 @@ fun BlockCanvas(
                         .height(blockHeight(gb).dp)
                         .widthIn(min = 132.dp)
                         .blockShape(
-                            shape = specOf(gb.typeId).shape,
-                            color = specOf(gb.typeId).color,
+                            shape = defOf(gb.typeId).shape,
+                            color = defOf(gb.typeId).color,
                             innerTop = C_HEADER * density,
                             innerHeight = innerHeight(gb) * density,
                         ),
@@ -259,7 +259,7 @@ private fun BlockView(
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
 ) {
-    val spec = specOf(material.typeId)
+    val def = defOf(material.typeId)
     val curStart by rememberUpdatedState(onDragStart)
     val curDrag by rememberUpdatedState(onDrag)
     val curEnd by rememberUpdatedState(onDragEnd)
@@ -274,8 +274,8 @@ private fun BlockView(
             .height(blockHeight(material).dp)
             .widthIn(min = 132.dp)
             .blockShape(
-                shape = spec.shape,
-                color = spec.color,
+                shape = def.shape,
+                color = def.color,
                 innerTop = C_HEADER * density,
                 innerHeight = innerHeight(material) * density,
                 lifted = lifted,
@@ -296,25 +296,9 @@ private fun BlockView(
             Modifier.height(C_HEADER.dp).padding(start = Space.md, end = Space.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LoopyIcon(spec.icon, Color.White, size = 15.dp)
+            LoopyIcon(def.icon, Color.White, size = 15.dp)
             Spacer(Modifier.width(Space.sm))
-            if (spec.before.isNotEmpty()) {
-                Text(spec.before, color = Color.White, fontSize = Type.label, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.width(4.dp))
-            }
-            when (spec.slot) {
-                SlotKind.VALUE -> SlotChip(slotText(material), rounded = true)
-                SlotKind.BOOLEAN -> SlotChip(slotText(material), rounded = false)
-                SlotKind.NONE -> Unit
-            }
-            if (spec.slot != SlotKind.NONE) Spacer(Modifier.width(4.dp))
-            Text(
-                if (spec.after.isNotEmpty()) spec.after else spec.label,
-                color = Color.White,
-                fontSize = Type.label,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
+            BlockSentence(def, material)
         }
     }
 }
@@ -337,20 +321,43 @@ private fun SlotChip(text: String, rounded: Boolean) {
     }
 }
 
-/** 초를 읽기 좋게: 0.300 -> 0.3, 1.000 -> 1, 10.789 -> 10.789. */
-private fun fmtSec(ms: Long): String {
-    val v = java.math.BigDecimal.valueOf(ms).movePointLeft(3).stripTrailingZeros()
-    return if (v.signum() == 0) "0" else v.toPlainString()
+/** 문장 안의 `{키}` 자리. 값 칩으로 바뀐다. */
+private val SENTENCE_SLOT = Regex("\\{([A-Za-z_][\\w.]*)\\}")
+
+/**
+ * 블록 안 문장을 그린다.
+ *
+ * 정의의 [BlockDef.template] 을 `{키}` 기준으로 잘라, 글자는 그대로 쓰고 자리에는 값 칩을 넣는다.
+ * 타입별 분기를 두지 않으므로 새 블록이 늘어도 이 함수는 그대로다.
+ */
+@Composable
+private fun BlockSentence(def: BlockDef, m: Material) {
+    val text = def.template
+    var cursor = 0
+    for (hit in SENTENCE_SLOT.findAll(text)) {
+        val before = text.substring(cursor, hit.range.first).trim()
+        if (before.isNotEmpty()) {
+            Text(before, color = Color.White, fontSize = Type.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+        }
+        val key = hit.groupValues[1]
+        // 참/거짓 홈은 육각으로 그린다 — 모양이 무엇을 넣을 수 있는지 말한다.
+        val boolean = def.slots.any { it.key == key && it.accepts == SlotKind.BOOLEAN }
+        SlotChip(slotValue(def, m, key), rounded = !boolean)
+        Spacer(Modifier.width(4.dp))
+        cursor = hit.range.last + 1
+    }
+    val tail = text.substring(cursor).trim()
+    if (tail.isNotEmpty()) {
+        Text(tail, color = Color.White, fontSize = Type.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
 }
 
-private fun slotText(m: Material): String = when (m.typeId) {
-    "wait" -> fmtSec(m.params.long("ms"))
-    "loop" -> if (m.params.bool("infinite")) "\u221E" else m.params.int("count").toString()
-    "if" -> m.params.str("condition").ifEmpty { "?" }
-    "screen.brightness" -> m.params.int("level").toString()
-    "app.launch" -> m.params.str("pkg").ifEmpty { "\uC571" }
-    "shell" -> m.params.str("cmd").take(10).ifEmpty { "\uBA85\uB839" }
-    "var.set" -> m.params.str("name").ifEmpty { "\uC774\uB984" }
-    else -> ""
+/** 칩에 쓸 글자. 값이 비었으면 그 자리가 무엇인지(스키마의 이름) 보여준다. */
+private fun slotValue(def: BlockDef, m: Material, key: String): String {
+    val raw = m.params.str(key)
+    if (raw.isNotEmpty()) return raw
+    return def.fields.firstOrNull { it.key == key }?.label
+        ?: def.slots.firstOrNull { it.key == key }?.label
+        ?: ""
 }
-

@@ -3,12 +3,12 @@ package com.loopy.app.blocks
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.ParamBag
 import com.loopy.app.core.material.Meta
 import java.util.UUID
 import kotlin.math.hypot
-import kotlin.math.min
 
 /**
  * 블록 배치 엔진 — 구조 우선, 자유 배치.
@@ -32,8 +32,11 @@ const val C_FOOT = 22f          // C블록 발
 const val INDENT = 22f          // C블록 안쪽 들여쓰기
 const val MOUTH_MIN = 34f       // 빈 C블록 입 최소 높이
 
-fun isC(m: Material): Boolean = specOf(m.typeId).shape == BlockShape.C_BLOCK
-fun isHat(m: Material): Boolean = specOf(m.typeId).shape == BlockShape.HAT
+/** 모양·성격은 정의(BlockDef)에서 온다. 여기서 다시 판정하면 정의가 두 곳이 된다. */
+fun isC(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.C_BLOCK
+
+/** 모자인지는 도메인이 아는 성격(kind)이다. 시간축(Timeline)도 같은 기준을 쓴다. */
+fun isHat(m: Material): Boolean = m.kind == Kind.HAT
 
 /** 위 블록에서 아래 블록으로 내려갈 거리. 노치 두 겹만큼 겹쳐야 볼록이 오목에 딱 든다. */
 fun meshStep(m: Material): Float = blockHeight(m) - NOTCH_DEPTH * 2f
@@ -122,20 +125,6 @@ fun layoutCanvas(canvas: Material): Layout {
  * 드래그 지점에서 가장 가까운 연결점. **좁게** 잡는다 — 스냅은 조립 편의 기능일 뿐,
  * 기본은 자유 배치다. 가까이 갔을 때만 자석이 걸린다.
  */
-/**
- * 위·아래 두 기준점으로 가장 가까운 연결점을 찾는다. 끌고 온 블록의 윗변(아래로 붙이기)과
- * 아랫변(다른 블록 위로 얹기) 둘 다 보므로, 위에 얹는 조립도 잡힌다.
- */
-fun nearestSlot2(slots: List<Slot>, x1: Float, y1: Float, x2: Float, y2: Float, radius: Float = 20f): Slot? {
-    var best: Slot? = null
-    var bestD = radius
-    for (s in slots) {
-        val d = min(hypot(s.x - x1, s.y - y1), hypot(s.x - x2, s.y - y2))
-        if (d < bestD) { bestD = d; best = s }
-    }
-    return best
-}
-
 fun nearestSlot(slots: List<Slot>, x: Float, y: Float, radius: Float = 20f): Slot? {
     var best: Slot? = null
     var bestD = radius
@@ -235,11 +224,6 @@ fun addClump(canvas: Material, blocks: List<Material>, x: Float, y: Float): Mate
 fun addChild(canvas: Material, parentId: String, block: Material): Material =
     canvas.copy(children = canvas.children.map { insertInto(it, parentId, Int.MAX_VALUE, listOf(block)) })
 
-/** 덩어리의 위치를 옮긴다(스택 전체를 통째로 잡아 옮길 때). */
-fun moveClump(canvas: Material, clumpId: String, x: Float, y: Float): Material =
-    canvas.copy(children = canvas.children.map {
-        if (it.id == clumpId) it.copy(meta = it.meta.copy(x = x, y = y)) else it
-    })
 
 /** [parentId] (null=덩어리 최상위) 의 자식 [index] 자리에 blocks 를 끼운다(덩어리 내부). */
 private fun insertInto(root: Material, parentId: String?, index: Int, blocks: List<Material>): Material {
