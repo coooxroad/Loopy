@@ -63,10 +63,10 @@ class AppState(shizuku: ShizukuState, canOverlay: Boolean, builds: List<Material
         refresh(ctx)
     }
 
-    fun setShizuku(s: ShizukuState) { shizuku = s }
+    fun updateShizuku(s: ShizukuState) { shizuku = s }
     fun recheckShizuku() { shizuku = ShizukuManager.state() }
     fun recheckOverlay(ctx: Context) { canOverlay = Settings.canDrawOverlays(ctx) }
-    fun setOverlayMsg(msg: String) { overlayMsg = msg }
+    fun updateOverlayMsg(msg: String) { overlayMsg = msg }
 
     fun askOverlayPermission() { showOverlayDialog = true }
     fun dismissDialogs() { showShizukuDialog = false; showOverlayDialog = false }

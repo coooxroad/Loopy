@@ -233,10 +233,10 @@ private fun RootScreen(
                     onToggleOverlay = { turningOn ->
                         if (turningOn) {
                             context.startForegroundService(Intent(context, OverlayService::class.java))
-                            app.setOverlayMsg("켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록.")
+                            app.updateOverlayMsg("켜졌어! 게임으로 전환 → 녹화/재생, 📁 목록.")
                         } else {
                             context.stopService(Intent(context, OverlayService::class.java))
-                            app.setOverlayMsg("오버레이를 껐어.")
+                            app.updateOverlayMsg("오버레이를 껐어.")
                         }
                     },
                     sessionActive = VideoSession.active,
@@ -257,7 +257,7 @@ private fun RootScreen(
                     state = app.shizuku, canOverlay = app.canOverlay,
                     onRequestShizuku = {
                         ShizukuManager.requestPermission { g ->
-                            app.setShizuku(if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION)
+                            app.updateShizuku(if (g) ShizukuState.READY else ShizukuState.NEEDS_PERMISSION)
                         }
                     },
                     onRecheckShizuku = { app.recheckShizuku() },
