@@ -212,7 +212,13 @@ private fun RootScreen(
             build = blocksBuild!!,
             onBack = { blocksBuild = null; refresh() },
             onRun = { m -> OverlayService.runBuild(context, m.id) },
-            onOpenTouch = { editingBuild = blocksBuild },
+            onOpenTouch = {
+                // 터치 블록 → 궤적 편집(타임라인). blocksBuild 를 비워야 화면이 실제로 넘어간다
+                // (분기가 blocksBuild 를 먼저 보기 때문). 시간축으로 못 여는 캔버스면 그대로 둔다.
+                blocksBuild?.let { b ->
+                    if (Timeline.canOpenAsTimeline(b)) { editingBuild = b; blocksBuild = null }
+                }
+            },
         )
         return
     }
