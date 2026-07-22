@@ -66,7 +66,6 @@ class OverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var wm: WindowManager
 
-    private val reader = GeteventReader()
     private val io by lazy {
         ShizukuIo(this, scope).also {
             // 윈도우를 띄우는 일은 서비스만 할 수 있으므로 Io 가 이쪽으로 되돌아오게 연결한다.
@@ -76,15 +75,27 @@ class OverlayService : Service() {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var buildCancel: CancelSignal? = null
     private val globalVars = HashMap<String, String>()
-    private val recorder = RawRecorder()
-    private var device: TouchDevice? = null
-    private var recording = false
-    /** 녹화 중 회전 변화 기록. (절대 uptimeMs, 회전값) — 저장 시 baseUptime 기준 상대시각으로 변환 */
-    private val rotEventsRaw = ArrayList<Pair<Long, Int>>()
-    private var rotListener: DisplayManager.DisplayListener? = null
     private var videoEnabled = false
-    private var currentVideoPath: String? = null
     private val screenRecorder by lazy { ScreenRecorder(this) }
+
+    /** 녹화는 RecordController 가 전담한다. 화면 갱신만 콜백으로 돌려받는다. */
+    private val rec by lazy {
+        RecordController(
+            ctx = this,
+            scope = scope,
+            io = io,
+            wm = wm,
+            screenRecorder = screenRecorder,
+            onStatus = { msg ->
+                if (::status.isInitialized) { status.visibility = View.VISIBLE; status.text = msg }
+            },
+            onRecordingChanged = { on ->
+                if (::recordBtn.isInitialized) {
+                    recordBtn.setImageResource(if (on) R.drawable.ic_ov_stop else R.drawable.ic_ov_record)
+                }
+            },
+        )
+    }
     private var videoBtn: ImageButton? = null
 
     companion object {
@@ -128,9 +139,6 @@ class OverlayService : Service() {
     private lateinit var stopPlayBtn: TextView
     private var listPanel: LinearLayout? = null
 
-    private val displayObj by lazy {
-        (getSystemService(DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
-    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -148,7 +156,7 @@ class OverlayService : Service() {
                 }
             }
             ACTION_START_VIDEO -> beginVideoThenRecord(intent) // 세션 없을 때 팝업 폴백
-            ACTION_START_MACRO_ONLY -> startRecord(null)
+            ACTION_START_MACRO_ONLY -> rec.start(null)
             else -> ensureOverlay() // "오버레이 켜기"(action 없음) 또는 재시작
         }
         return START_STICKY
@@ -176,7 +184,7 @@ class OverlayService : Service() {
         startAsForeground()
         LoopyService.bind(this)
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        recorder.shouldIgnore = { u, v -> if (::bar.isInitialized) barContains(u, v) else false }
+        rec.shouldIgnore = { u, v -> if (::bar.isInitialized) barContains(u, v) else false }
         // 오버레이는 여기서 만들지 않음 — SET_SESSION 등 세션 전용 시작 시 오버레이가 안 뜨게.
         // "오버레이 켜기"(action 없는 시작)일 때만 onStartCommand 에서 생성.
     }
@@ -426,12 +434,12 @@ class OverlayService : Service() {
     }
 
     private fun toggleRecord() {
-        if (recording) { stopRecord(); return }
+        if (rec.isRecording) { rec.stop(); return }
         if (videoEnabled) {
             if (screenRecorder.hasSession()) {
                 // 세션 재사용 — 팝업/앱전환 없이 즉시
                 val ok = screenRecorder.startRecording()
-                startRecord(if (ok) screenRecorder.currentUri else null)
+                rec.start(if (ok) screenRecorder.currentUri else null)
             } else {
                 // 세션 없음 → 예외적으로 팝업 1회(이후 세션으로 유지됨)
                 val i = Intent(this, com.loopy.app.ProjectionActivity::class.java)
@@ -439,7 +447,7 @@ class OverlayService : Service() {
                 startActivity(i)
             }
         } else {
-            startRecord(null)
+            rec.start(null)
         }
     }
 
@@ -448,15 +456,15 @@ class OverlayService : Service() {
         val code = intent.getIntExtra(EX_CODE, Activity.RESULT_CANCELED)
         @Suppress("DEPRECATION")
         val data = intent.getParcelableExtra<Intent>(EX_DATA)
-        if (code != Activity.RESULT_OK || data == null) { startRecord(null); return }
+        if (code != Activity.RESULT_OK || data == null) { rec.start(null); return }
         runCatching { promoteForegroundForProjection() }
         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val proj = runCatching { mpm.getMediaProjection(code, data) }.getOrNull()
-        if (proj == null) { startRecord(null); return }
+        if (proj == null) { rec.start(null); return }
         screenRecorder.setSession(proj)
         VideoSession.active = true
         val ok = screenRecorder.startRecording()
-        startRecord(if (ok) screenRecorder.currentUri else null)
+        rec.start(if (ok) screenRecorder.currentUri else null)
     }
 
     private fun promoteForegroundForProjection() {
@@ -469,103 +477,12 @@ class OverlayService : Service() {
         }
     }
 
-    private fun startRecord(videoPath: String?) {
-        stopPlayback(null)
-        val devs = reader.probe()
-        val dev = devs.firstOrNull { it.name.contains("touchscreen", true) } ?: devs.firstOrNull()
-        if (dev == null) { status.text = "터치 장치 없음"; return }
-        device = dev
-        currentVideoPath = videoPath
-        recorder.reset()
-        recorder.currentRotation = { io.rotation() }
-        recording = true
-        rotEventsRaw.clear()
-        registerRotationListener()
-        recordBtn.setImageResource(R.drawable.ic_ov_stop)
-        status.visibility = View.VISIBLE
-        status.text = if (videoPath != null) "● 녹화 중 · 영상" else "● 녹화 중"
-        reader.stream(scope, listOf(dev)) { _, p -> recorder.onPoint(p) }
-    }
-
-    private fun stopRecord() {
-        reader.stop()
-        recording = false
-        unregisterRotationListener()
-        recordBtn.setImageResource(R.drawable.ic_ov_record)
-        val videoStart = if (screenRecorder.active) screenRecorder.startUptime else 0L
-        val vpath = if (screenRecorder.active) screenRecorder.stopRecording() else currentVideoPath
-        currentVideoPath = null
-        val snap = recorder.snapshot()
-        if (snap.isEmpty()) {
-            status.text = "행동 없음 (저장 안 함)"
-            return
-        }
-        val offset = if (vpath != null && videoStart > 0 && recorder.baseUptime > 0)
-            (recorder.baseUptime - videoStart).coerceAtLeast(0L) else 0L
-        val rot = runCatching {
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.rotation * 90
-        }.getOrDefault(0)
-        // 회전 이벤트: 절대 uptime → 매크로 시작(baseUptime) 기준 상대 ms
-        val base = recorder.baseUptime
-        val startRot = rotEventsRaw.lastOrNull { it.first <= base }?.second ?: rot
-        val evts = ArrayList<RotationEvent>()
-        evts.add(RotationEvent(0L, startRot))
-        if (base > 0) {
-            for ((up, r) in rotEventsRaw) {
-                val rel = up - base
-                if (rel > 0L) evts.add(RotationEvent(rel, r))
-            }
-        }
-        // 녹화 결과를 Material 트리로 바꾼다. 시각은 순서와 대기가 되고, 겹친 궤적은 parallel 이 된다.
-        val recId = RecordingStore.newId()
-        RecordingStore.put(
-            this,
-            Recording(id = recId, videoPath = vpath, videoOffsetMs = offset, rotationEvents = evts),
-        )
-        val name = autoName()
-        val build = RecordingToTree.build(this, snap, recId, name)
-        MaterialStore.upsert(this, build)
-        status.text = "저장됨: $name · ${snap.size}개" + if (vpath != null) " · 영상" else ""
-    }
-
-    private fun autoName(): String {
-        val f = java.text.SimpleDateFormat("MMM d a h:mm", java.util.Locale.getDefault())
-        return f.format(java.util.Date())
-    }
-
-    /** 녹화 중 화면 회전 변화를 타임스탬프와 함께 기록. */
-    private fun registerRotationListener() {
-        val dm = getSystemService(DISPLAY_SERVICE) as DisplayManager
-        var lastRot = displayObj.rotation * 90
-        val l = object : DisplayManager.DisplayListener {
-            override fun onDisplayAdded(displayId: Int) {}
-            override fun onDisplayRemoved(displayId: Int) {}
-            override fun onDisplayChanged(displayId: Int) {
-                if (!recording || displayId != Display.DEFAULT_DISPLAY) return
-                val r = displayObj.rotation * 90
-                if (r == lastRot) return
-                lastRot = r
-                rotEventsRaw.add(android.os.SystemClock.uptimeMillis() to r)
-            }
-        }
-        dm.registerDisplayListener(l, null)
-        rotListener = l
-    }
-
-    private fun unregisterRotationListener() {
-        rotListener?.let {
-            runCatching { (getSystemService(DISPLAY_SERVICE) as DisplayManager).unregisterDisplayListener(it) }
-        }
-        rotListener = null
-    }
-
     // ── 재생 ──
 
     /** 방금 녹화한 것을 바로 재생. 저장하지 않고 트리로만 만들어 돌린다. */
     private fun playRecorded() {
-        if (recording) stopRecord()
-        val snap = recorder.snapshot()
+        if (rec.isRecording) rec.stop()
+        val snap = rec.snapshot()
         if (snap.isEmpty()) {
             status.text = "재생할 내용 없음"
             return
@@ -582,7 +499,7 @@ class OverlayService : Service() {
      * 엔진에 트리를 넘기기만 하면 된다. 새 블록이 추가돼도 이 함수는 바뀌지 않는다.
      */
     private fun playBuild(build: Material) {
-        if (recording) stopRecord()
+        if (rec.isRecording) rec.stop()
         stopPlayback(null)
         stopPlayBtn.visibility = View.VISIBLE
         val name = build.meta.name.ifEmpty { "빌드" }
@@ -703,7 +620,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        reader.stop()
+        rec.release()
         runCatching { screenRecorder.endSession() }
         VideoSession.active = false
         scope.cancel()
