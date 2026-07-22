@@ -188,10 +188,6 @@ class OverlayService : Service() {
         overlayBuilt = true
     }
 
-    private fun dp(v: Int): Int = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics
-    ).toInt()
-
     private fun buildOverlay() {
         // 루트: 세로. 위=[FAB + 가로 슬림 패널], 아래=상태/힌트/목록.
         bar = LinearLayout(this).apply {
@@ -284,23 +280,6 @@ class OverlayService : Service() {
     }
 
     /** 원형 아이콘 버튼 — 아이콘 tint + 옅은 원형 배경으로 airy 하게. */
-    private fun iconBtn(iconRes: Int, tint: Int, bgTint: Int, onClick: () -> Unit) =
-        ImageButton(this).apply {
-            setImageResource(iconRes)
-            setColorFilter(tint)
-            background = circleBg(bgTint)
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            val sz = dp(42)
-            layoutParams = LinearLayout.LayoutParams(sz, sz)
-            setPadding(dp(11), dp(11), dp(11), dp(11))
-            setOnClickListener { onClick() }
-        }
-
-    private fun circleBg(color: Int) = android.graphics.drawable.GradientDrawable().apply {
-        shape = android.graphics.drawable.GradientDrawable.OVAL
-        setColor(color)
-    }
-
     /**
      * 화면 가리기.
      *
@@ -684,31 +663,6 @@ class OverlayService : Service() {
         }
     }
 
-    private fun hint(t: String) = TextView(this).apply {
-        text = t; setTextColor(0xFF9AA0B4.toInt()); textSize = 10f
-        setPadding(dp(2), dp(8), 0, dp(4))
-        letterSpacing = 0.06f
-    }
-
-    private fun listRow(t: String, color: Int, onClick: () -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(8), dp(9), dp(10), dp(9))
-        background = pill(0x0A000000, dp(12)) // 아주 옅은 행 배경
-        val dot = View(this@OverlayService).apply {
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(color)
-            }
-        }
-        addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)))
-        addView(TextView(this@OverlayService).apply {
-            text = t; setTextColor(0xFF2B2D42.toInt()); textSize = 13f
-            setPadding(dp(10), 0, 0, 0)
-        })
-        setOnClickListener { onClick() }
-    }
-
 
     /** 패널 좌표가 컨트롤 바 위인지. 바를 누른 터치는 매크로로 기록하지 않는다. */
     private fun barContains(u: Float, v: Float): Boolean {
@@ -721,10 +675,6 @@ class OverlayService : Service() {
         return Rect(loc[0], loc[1], loc[0] + bar.width, loc[1] + bar.height).contains(px, py)
     }
 
-
-    private fun pill(color: Int, radius: Int) = GradientDrawable().apply {
-        setColor(color); cornerRadius = radius.toFloat()
-    }
 
     private fun buildNotif(): Notification {
         val channelId = "loopy_overlay"
