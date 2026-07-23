@@ -48,7 +48,6 @@ import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.stroke.StrokeOps
 import com.loopy.app.core.record.EditableTimeline
 import com.loopy.app.core.record.PlacedStroke
-import com.loopy.app.ui.theme.NeuBase
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.neu
 import com.loopy.app.ui.theme.neuColor

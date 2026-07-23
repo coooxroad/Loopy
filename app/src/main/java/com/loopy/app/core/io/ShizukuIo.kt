@@ -1,7 +1,6 @@
 package com.loopy.app.core.io
 
 import android.content.Context
-import android.view.Display
 import android.view.WindowManager
 import com.loopy.app.input.GeteventReader
 import com.loopy.app.core.record.Stroke
