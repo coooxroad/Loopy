@@ -90,7 +90,27 @@ object ParallelExecutor : Executor {
 
 object BuildExecutor : Executor {
     override val typeId = "build"
+
+    /** 순환 참조 방어. A→B→A 로 무한히 부르지 못하게 불러오기 깊이를 제한한다. */
+    private const val MAX_LOAD_DEPTH = 50
+
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
+        // 대상 빌드가 지정돼 있으면(불러오기) 저장소에서 찾아 실행한다. 없으면 자기 몸을 실행한다.
+        // 이 분기 덕분에 "빌드 실행" 블록이 다른 저장된 빌드를 부를 수 있다(빌드 불러오기).
+        val targetId = material.params.str("buildId")
+        if (targetId.isNotEmpty()) {
+            if (ctx.loadDepth >= MAX_LOAD_DEPTH) {
+                ctx.log.add(material.id, "빌드 불러오기 깊이 초과: $targetId")
+                return Flow.Next
+            }
+            val target = ctx.materials.find(targetId)
+            if (target == null) {
+                ctx.log.add(material.id, "빌드 없음: $targetId")
+                return Flow.Next
+            }
+            return Engine.run(target, ctx.copy(loadDepth = ctx.loadDepth + 1))
+        }
+
         val kids = material.children
         // 캔버스: 자식이 전부 덩어리(build)면, 모자로 시작하는 덩어리만 실행한다.
         // 모자 없는 덩어리(조각)는 저장만 되고 돌지 않는다. (스크래치와 같은 최적화)

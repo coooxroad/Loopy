@@ -7,6 +7,7 @@ import com.loopy.app.core.exec.ExecLog
 import com.loopy.app.core.exec.VarScope
 import com.loopy.app.core.io.Io
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.MaterialSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -22,6 +23,8 @@ class PlaybackController(
     private val io: Io,
     private val onStatus: (String) -> Unit,
     private val onRunningChanged: (Boolean) -> Unit,
+    /** 다른 빌드를 불러올 때 대상을 찾는 소스. 서비스가 저장소로 연결해 준다. */
+    private val materials: MaterialSource = MaterialSource.Empty,
 ) {
     private var playJob: Job? = null
     private var buildCancel: CancelSignal? = null
@@ -46,6 +49,7 @@ class PlaybackController(
                 scope = VarScope(globalVars),
                 cancel = cancel,
                 log = ExecLog(),
+                materials = materials,
             )
             runCatching { Engine.run(build, ctx) }
             onStatus("완료 · $name")

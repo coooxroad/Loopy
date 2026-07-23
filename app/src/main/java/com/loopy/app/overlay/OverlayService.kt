@@ -62,6 +62,7 @@ class OverlayService : Service() {
         PlaybackController(
             scope = scope,
             io = io,
+            materials = { id -> MaterialStore.get(this@OverlayService, id) },
             onStatus = { msg -> if (::status.isInitialized) status.text = msg },
             onRunningChanged = { on ->
                 if (::stopPlayBtn.isInitialized) {

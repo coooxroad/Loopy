@@ -2,6 +2,7 @@ package com.loopy.app.core.exec
 
 import com.loopy.app.core.io.Io
 import com.loopy.app.core.material.Material
+import com.loopy.app.core.material.MaterialSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -91,12 +92,22 @@ class ExecLog {
     fun clear() = entries.clear()
 }
 
-/** 실행기에 넘어가는 모든 맥락. 새 Material 이 필요로 할 것들이 전부 여기 모인다. */
-class ExecContext(
+/**
+ * 실행기에 넘어가는 모든 맥락 — 실행이 세상에 닿는 능력들의 가방.
+ *
+ * 새 능력(다른 빌드 불러오기·네트워크·화면 캡처·비밀값)은 여기 필드로 더한다. 기본값을 주므로
+ * 기존 생성 지점은 안 깨지고, data class 라 갈래는 [copy] 로 능력을 그대로 물려준다 —
+ * 능력이 늘어도 이 파일 밖을 고칠 일이 없다.
+ */
+data class ExecContext(
     val io: Io,
     val scope: VarScope,
     val cancel: CancelSignal,
     val log: ExecLog,
+    /** 다른 Material 을 id 로 불러오는 능력. 주입되지 않으면 안전한 빈 소스. */
+    val materials: MaterialSource = MaterialSource.Empty,
+    /** 빌드가 빌드를 부르는 깊이. 순환 참조로 무한히 도는 것을 막는다. */
+    val loadDepth: Int = 0,
 )
 
 /** 타입별 실행 규칙. 새 Material 은 이것만 구현해 등록하면 된다. */
@@ -155,7 +166,7 @@ object Engine {
     suspend fun runParallel(children: List<Material>, ctx: ExecContext): Flow = coroutineScope {
         val results = children.map { child ->
             async {
-                val branch = ExecContext(ctx.io, ctx.scope.child(), ctx.cancel, ctx.log)
+                val branch = ctx.copy(scope = ctx.scope.child())
                 run(child, branch)
             }
         }.awaitAll()

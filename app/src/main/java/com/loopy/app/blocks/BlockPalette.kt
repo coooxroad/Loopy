@@ -244,6 +244,7 @@ fun BlockParamSheet(
                     is Field.TextField -> ParamText(bag.str(field.key), field.hint) { bag = bag.with(field.key, it) }
                     is Field.AppPick -> ParamText(bag.str(field.key), "\uD328\uD0A4\uC9C0\uBA85 (\uC608: com.kakao.talk)") { bag = bag.with(field.key, it) }
                     is Field.ElementPick -> ParamText(bag.str(field.key), "\uC694\uC18C ID / \uD14D\uC2A4\uD2B8") { bag = bag.with(field.key, it) }
+                    is Field.BuildPick -> ParamText(bag.str(field.key), "\uBE4C\uB4DC id (\uD53C\uCEE4\uB294 \uB098\uC911)") { bag = bag.with(field.key, it) }
                 }
             }
 

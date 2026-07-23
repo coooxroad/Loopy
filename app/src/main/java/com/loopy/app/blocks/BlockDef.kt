@@ -144,7 +144,9 @@ val LoopyBlocks: List<BlockDef> = listOf(
     Block("touch", Kind.ACTION, BlockCategory.ACTION, BlockShape.STACK, Icon.RECORD,
         "터치", "녹화된 궤적을 재생합니다"),
     Block("build", Kind.CONTROL, BlockCategory.ACTION, BlockShape.STACK, Icon.FOLDER,
-        "빌드 실행", "다른 빌드를 실행합니다", container = EditorAxis.BLOCKS),
+        "빌드 실행", "다른 빌드를 실행합니다", container = EditorAxis.BLOCKS,
+        // 대상을 지정하지 않으면(빈 값) 자기 몸을 실행 = 기존 동작. 지정하면 그 빌드를 불러온다.
+        fields = listOf(Field.BuildPick("buildId", "빌드"))),
 
     Block("wait", Kind.ACTION, BlockCategory.CONTROL, BlockShape.STACK, Icon.PAUSE,
         "기다리기", "정해진 시간만큼 멈춥니다", sentence = "{ms}초 기다리기",

@@ -105,6 +105,15 @@ sealed interface Field {
         override val defaultValue: Any get() = default
     }
 
+    /** 저장된 빌드 선택 피커. 값은 빌드(Material) id. 피커 UI 는 플랫폼 쪽에서(나중). */
+    data class BuildPick(
+        override val key: String,
+        override val label: String,
+        val default: String = "",
+    ) : Field {
+        override val defaultValue: Any get() = default
+    }
+
     /** 선택지 한 개. */
     data class Opt(val value: String, val label: String)
 }
