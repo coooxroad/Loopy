@@ -41,23 +41,38 @@ fun isHat(m: Material): Boolean = m.kind == Kind.HAT
 /** 위 블록에서 아래 블록으로 내려갈 거리. 노치 두 겹만큼 겹쳐야 볼록이 오목에 딱 든다. */
 fun meshStep(m: Material): Float = blockHeight(m) - NOTCH_DEPTH * 2f
 
-/** 자식 스택이 차지하는 높이(맞물린 상태). 비어 있으면 최소치. */
-fun stackHeight(children: List<Material>): Float {
-    if (children.isEmpty()) return MOUTH_MIN
+/**
+ * 자식 스택이 화면에서 차지하는 세로 길이(맞물린 상태).
+ * 마지막 블록은 볼록까지 포함하므로 겹침 두 겹을 더한다.
+ */
+fun stackSpan(children: List<Material>): Float {
     var h = 0f
     for (c in children) h += meshStep(c)
     return h + NOTCH_DEPTH * 2f
 }
 
+/**
+ * C블록 입의 높이.
+ *
+ * 입천장은 y=innerTop-nd 에 있고 볼록이 innerTop 까지 내려온다. 바닥은 y=innerTop+innerHeight 에서
+ * 오목이 nd 만큼 파인다. 자식의 첫 오목(nd~2nd)이 천장 볼록을 물고, 마지막 볼록이 바닥 오목에
+ * 앉으려면 입 높이는 스택 길이에서 겹침 한 겹을 뺀 값이어야 한다. 이 관계가 어긋나면 틈이 생긴다.
+ */
+fun innerHeight(m: Material): Float = when {
+    !isC(m) -> 0f
+    m.children.isEmpty() -> MOUTH_MIN
+    else -> stackSpan(m.children) - NOTCH_DEPTH
+}
+
+/** 자식이 C블록 안에서 시작하는 y. 천장 볼록과 물리려면 겹침 두 겹만큼 올라가야 한다. */
+const val C_INNER_TOP = C_HEADER - NOTCH_DEPTH * 2f
+
 /** 블록 한 칸의 높이. C블록은 자식에 따라 커진다. */
 fun blockHeight(m: Material): Float = when {
-    isC(m) -> C_HEADER + stackHeight(m.children) + C_FOOT
+    isC(m) -> C_HEADER + innerHeight(m) + C_FOOT
     isHat(m) -> HAT_H
     else -> ROW
 }
-
-/** C블록 입(자식이 들어가는 홈)의 높이. 렌더가 참조한다. */
-fun innerHeight(m: Material): Float = if (isC(m)) stackHeight(m.children) else 0f
 
 /** 화면에 놓인 블록 하나. */
 data class Placed(
@@ -102,7 +117,7 @@ private fun layoutStack(
         out.placed.add(Placed(c, x, y, depth))
 
         if (isC(c)) {
-            layoutStack(clumpId, c.id, c.children, x + INDENT, y + C_HEADER, depth + 1, out)
+            layoutStack(clumpId, c.id, c.children, x + INDENT, y + C_INNER_TOP, depth + 1, out)
         }
         // parallel(동시) 는 지금은 평범한 블록으로 둔다. 노드+갈래 UI 는 다음 업데이트에서 복원.
         y += meshStep(c)

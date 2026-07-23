@@ -355,9 +355,9 @@ private fun BlockSentence(def: BlockDef, m: Material) {
 
 /** 칩에 쓸 글자. 값이 비었으면 그 자리가 무엇인지(스키마의 이름) 보여준다. */
 private fun slotValue(def: BlockDef, m: Material, key: String): String {
-    val raw = m.params.str(key)
-    if (raw.isNotEmpty()) return raw
-    return def.fields.firstOrNull { it.key == key }?.label
-        ?: def.slots.firstOrNull { it.key == key }?.label
-        ?: ""
+    val field = def.fields.firstOrNull { it.key == key }
+    val shown = field?.display(m.params) ?: m.params.str(key)
+    if (shown.isNotEmpty()) return shown
+    // 비었으면 그 자리가 무엇인지 이름으로 알린다.
+    return field?.label ?: def.slots.firstOrNull { it.key == key }?.label ?: ""
 }

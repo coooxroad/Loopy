@@ -233,6 +233,17 @@ fun BlockParamSheet(
                         }
                     }
 
+                    is Field.Seconds -> {
+                        // 초로 입력받아 밀리초로 저장한다. 숫자가 아니면 값을 건드리지 않는다.
+                        var text by remember(material.id, field.key) {
+                            mutableStateOf(Field.Seconds.fromMs(bag.long(field.key, field.defaultMs)))
+                        }
+                        ParamText(text, "초") { typed ->
+                            text = typed
+                            Field.Seconds.toMs(typed)?.let { bag = bag.with(field.key, it) }
+                        }
+                    }
+
                     is Field.TextField -> ParamText(bag.str(field.key), field.hint) { bag = bag.with(field.key, it) }
                     is Field.AppPick -> ParamText(bag.str(field.key), "\uD328\uD0A4\uC9C0\uBA85 (\uC608: com.kakao.talk)") { bag = bag.with(field.key, it) }
                     is Field.ElementPick -> ParamText(bag.str(field.key), "\uC694\uC18C ID / \uD14D\uC2A4\uD2B8") { bag = bag.with(field.key, it) }

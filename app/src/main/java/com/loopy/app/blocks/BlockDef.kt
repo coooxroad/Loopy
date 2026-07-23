@@ -147,8 +147,8 @@ val LoopyBlocks: List<BlockDef> = listOf(
         "빌드 실행", "다른 빌드를 실행합니다", container = EditorAxis.BLOCKS),
 
     Block("wait", Kind.ACTION, BlockCategory.CONTROL, BlockShape.STACK, Icon.PAUSE,
-        "기다리기", "정해진 시간만큼 멈춥니다", sentence = "{ms}ms 기다리기",
-        fields = listOf(Field.TextField("ms", "시간(ms)", default = "1000", hint = "밀리초"))),
+        "기다리기", "정해진 시간만큼 멈춥니다", sentence = "{ms}초 기다리기",
+        fields = listOf(Field.Seconds("ms", "시간(초)"))),
     Block("loop", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.C_BLOCK, Icon.REDO,
         "반복하기", "안의 블록을 여러 번 실행합니다", sentence = "{count}번 반복하기",
         container = EditorAxis.BLOCKS,
