@@ -70,6 +70,7 @@ fun BlockCanvas(
     onBack: () -> Unit,
     onRun: (Material) -> Unit,
     onOpenTouch: (Material) -> Unit,
+    builds: List<Material> = emptyList(),
 ) {
     val ctx = LocalContext.current
     val p = palette
@@ -231,6 +232,7 @@ fun BlockCanvas(
         ui.editing?.let { m ->
             BlockParamSheet(
                 material = m,
+                builds = builds.filter { it.id != build.id },
                 onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
                 onSave = { updated -> editor.onEvent(EditorEvent.SaveParams(updated)) },
                 onDelete = { editor.onEvent(EditorEvent.Delete(m.id)) },

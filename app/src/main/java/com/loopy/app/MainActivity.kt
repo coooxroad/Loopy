@@ -144,6 +144,7 @@ private fun RootScreen(
     if (app.blocksBuild != null) {
         BlockCanvas(
             build = app.blocksBuild!!,
+            builds = app.builds,
             onBack = { app.closeEditors(context) },
             onRun = { m -> OverlayService.runBuild(context, m.id) },
             onOpenTouch = { app.openTouchTimeline() },

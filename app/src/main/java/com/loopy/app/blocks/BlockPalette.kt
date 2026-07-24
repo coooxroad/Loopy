@@ -149,6 +149,8 @@ fun BlockParamSheet(
     onSave: (Material) -> Unit,
     onDelete: () -> Unit,
     onAddFork: (() -> Unit)? = null,
+    /** "빌드 실행"의 대상 후보. 저장된 빌드 목록을 화면에서 넘겨준다(자기 자신은 빼고). */
+    builds: List<Material> = emptyList(),
 ) {
     val p = palette
     val def = BlockRegistry.find(material.typeId)
@@ -244,7 +246,23 @@ fun BlockParamSheet(
                     is Field.TextField -> ParamText(bag.str(field.key), field.hint) { bag = bag.with(field.key, it) }
                     is Field.AppPick -> ParamText(bag.str(field.key), "\uD328\uD0A4\uC9C0\uBA85 (\uC608: com.kakao.talk)") { bag = bag.with(field.key, it) }
                     is Field.ElementPick -> ParamText(bag.str(field.key), "\uC694\uC18C ID / \uD14D\uC2A4\uD2B8") { bag = bag.with(field.key, it) }
-                    is Field.BuildPick -> ParamText(bag.str(field.key), "\uBE4C\uB4DC id (\uD53C\uCEE4\uB294 \uB098\uC911)") { bag = bag.with(field.key, it) }
+                    is Field.BuildPick -> {
+                        val selected = bag.str(field.key)
+                        if (builds.isEmpty()) {
+                            Text("\uC800\uC7A5\uB41C \uBE4C\uB4DC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4", color = p.textMuted, fontSize = Type.body)
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                                builds.forEach { b ->
+                                    val name = b.meta.name.ifEmpty { "\uC774\uB984 \uC5C6\uC74C" }
+                                    if (b.id == selected) {
+                                        NeuButton(name, onClick = { bag = bag.with(field.key, b.id) }, modifier = Modifier.fillMaxWidth())
+                                    } else {
+                                        NeuOutlineButton(name, onClick = { bag = bag.with(field.key, b.id) }, modifier = Modifier.fillMaxWidth())
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
