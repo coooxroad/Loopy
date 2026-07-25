@@ -247,6 +247,8 @@ fun BlockCanvas(
             BlockParamSheet(
                 material = m,
                 builds = builds.filter { it.id != build.id },
+                onPickSocket = { key, accepts -> editor.onEvent(EditorEvent.OpenSocket(m.id, key, accepts)) },
+                onClearSocket = { key -> editor.onEvent(EditorEvent.ClearSocketAt(m.id, key)) },
                 onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
                 onSave = { updated -> editor.onEvent(EditorEvent.SaveParams(updated)) },
                 onDelete = { editor.onEvent(EditorEvent.Delete(m.id)) },

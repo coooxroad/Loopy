@@ -36,7 +36,6 @@ data class Drag(
     val blockId: String,
     val group: Set<String>,             // 딸려오는 꼬리 id들
     val delta: Offset = Offset.Zero,    // dp
-    val grabbedIsHat: Boolean,
     val target: Slot? = null,           // 스냅 대상(있으면 미리보기)
     val overTrash: Boolean = false,
 )
@@ -79,7 +78,6 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         s.copy(drag = Drag(
             blockId = e.blockId,
             group = allIds(tailOf(s.canvas, e.blockId)),
-            grabbedIsHat = block != null && isHat(block),
         ))
     }
 
@@ -100,11 +98,15 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             // 덩어리 맨 위 연결점은 "첫 블록의 윗변"에 있다. 그대로 두면 위에 붙이려 할 때
             // 기존 블록과 겹칠 만큼 내려야 잡혀서, 판정이 아래에 있는 것처럼 느껴진다.
             // 잡은 블록 높이만큼 올려두면 "기존 바로 위"에 놓는 자리에서 잡힌다.
-            val grabbedH = findBlock(s.canvas, d.blockId)?.let { meshStep(it) } ?: 0f
-            val slots = layoutCanvas(detachTail(s.canvas, d.blockId).first).slots.map { sl ->
-                if (sl.parentId == null && sl.index == 0) sl.copy(y = sl.y - grabbedH) else sl
-            }
-            val target = if (d.grabbedIsHat || overTrash) null else nearestSlot(slots, cx, cy)
+            val grabbed = findBlock(s.canvas, d.blockId)
+            val grabbedH = grabbed?.let { meshStep(it) } ?: 0f
+            val slots = layoutCanvas(detachTail(s.canvas, d.blockId).first).slots
+                // 모자도 다른 블록과 똑같이 자리를 찾는다. 다만 넣을 수 있는 자리만 후보가 된다.
+                .filter { grabbed == null || canPlaceAt(grabbed, it) }
+                .map { sl ->
+                    if (sl.parentId == null && sl.index == 0) sl.copy(y = sl.y - grabbedH) else sl
+                }
+            val target = if (overTrash) null else nearestSlot(slots, cx, cy)
             s.copy(drag = d.copy(delta = delta, overTrash = overTrash, target = target))
         }
     } ?: s
@@ -135,10 +137,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             null
         } else {
             layoutCanvas(s.canvas).slots
-                .filter { it.clumpId == first.id && it.parentId == null }
+                .filter { it.clumpId == first.id && canPlaceAt(block, it) }
                 .maxByOrNull { it.index }
         }
-        val canvas = if (isHat(block) || end == null) {
+        val canvas = if (end == null) {
             addClump(s.canvas, listOf(block), ORIGIN_X, ORIGIN_Y)
         } else {
             insertAtSlot(s.canvas, end, listOf(block))
@@ -159,7 +161,7 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         s.copy(canvas = addChild(s.canvas, e.parentId, branch), editing = null)
     }
 
-    is EditorEvent.OpenSocket -> s.copy(socketPick = SocketPick(e.hostId, e.key, e.accepts))
+    is EditorEvent.OpenSocket -> s.copy(socketPick = SocketPick(e.hostId, e.key, e.accepts), editing = null)
 
     is EditorEvent.FillSocket -> s.socketPick?.let { pick ->
         val block = Material(
@@ -184,7 +186,8 @@ private fun commitDrag(canvas: Material, d: Drag): Material {
     val (newCanvas, tail) = detachTail(canvas, id)
     if (tail.isEmpty()) return canvas
     val tgt = d.target
-    return if (tgt != null && !isHat(tail.first())) {
+    // 넣을 수 있는 자리인지는 자리를 고를 때 이미 걸렀다. 여기서 종류를 또 따지지 않는다.
+    return if (tgt != null) {
         insertAtSlot(newCanvas, tgt, tail)
     } else {
         addClump(newCanvas, tail, g.x + d.delta.x, g.y + d.delta.y)

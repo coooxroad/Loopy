@@ -38,6 +38,19 @@ fun isC(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.C_BLOCK
 /** 모자인지는 도메인이 아는 성격(kind)이다. 시간축(Timeline)도 같은 기준을 쓴다. */
 fun isHat(m: Material): Boolean = m.kind == Kind.HAT
 
+/**
+ * 이 블록을 그 자리에 넣을 수 있는가.
+ *
+ * 결합 규칙은 여기 **한 곳**에만 둔다. 드래그든 + 버튼이든 같은 판단을 쓰게 해서,
+ * 경로마다 규칙이 갈리는 일이 없게 한다.
+ *  - 모자: 줄기의 맨 위(index 0)에만. 위에 아무것도 없어야 하는 블록이므로.
+ *    (이미 모자로 시작하는 줄기에는 그 자리가 아예 만들어지지 않는다 → 저절로 막힌다.)
+ *  - 그 밖: 만들어진 자리면 어디든.
+ * 마개 뒤·모자 앞처럼 "자리 자체가 없어야 하는" 규칙은 자리를 만들 때(layoutStack) 건다.
+ */
+fun canPlaceAt(block: Material, slot: Slot): Boolean =
+    if (isHat(block)) slot.parentId == null && slot.index == 0 else true
+
 /** 마개(아래가 평평한 블록). 뒤에 아무것도 이어붙일 수 없다 — 모양이 곧 문법이다. */
 fun isCap(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.CAP
 

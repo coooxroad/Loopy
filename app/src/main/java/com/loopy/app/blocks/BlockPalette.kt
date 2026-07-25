@@ -169,6 +169,10 @@ fun BlockParamSheet(
     onAddFork: (() -> Unit)? = null,
     /** "빌드 실행"의 대상 후보. 저장된 빌드 목록을 화면에서 넘겨준다(자기 자신은 빼고). */
     builds: List<Material> = emptyList(),
+    /** 홈에 꽂을 블록 고르기 열기. */
+    onPickSocket: ((String, SlotKind) -> Unit)? = null,
+    /** 홈 비우기. */
+    onClearSocket: ((String) -> Unit)? = null,
 ) {
     val p = palette
     val def = BlockRegistry.find(material.typeId)
@@ -210,6 +214,26 @@ fun BlockParamSheet(
                 }
                 NeuIconButton(onClick = onDelete, size = 40.dp) {
                     LoopyIcon(com.loopy.app.ui.components.Icon.DELETE, p.danger, size = 16.dp)
+                }
+            }
+
+            // 홈(값·조건 자리). 캔버스에서 홈을 직접 눌러도 되지만, 여기서도 채울 수 있어야
+            // 작은 홈을 정확히 누르지 못해도 막히지 않는다.
+            def?.slots?.forEach { sd ->
+                Spacer(Modifier.height(Space.md))
+                Text(sd.label.ifEmpty { sd.key }, color = p.textMuted, fontSize = Type.label)
+                Spacer(Modifier.height(Space.xs))
+                val filled = material.slots[sd.key]
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    NeuButton(
+                        filled?.let { BlockRegistry.find(it.typeId)?.label ?: it.typeId } ?: "\uBE14\uB85D \uAF42\uAE30",
+                        onClick = { onPickSocket?.invoke(sd.key, sd.accepts) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (filled != null) {
+                        Spacer(Modifier.width(Space.sm))
+                        NeuOutlineButton("\uBE44\uC6B0\uAE30", onClick = { onClearSocket?.invoke(sd.key) })
+                    }
                 }
             }
 
