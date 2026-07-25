@@ -63,7 +63,7 @@ object MaterialStore {
     private fun writeMaterial(m: Material): JSONObject {
         val kids = JSONArray()
         for (c in m.children) kids.put(writeMaterial(c))
-        return JSONObject()
+        val obj = JSONObject()
             .put("id", m.id)
             .put("type", m.typeId)
             .put("enabled", m.enabled)
@@ -80,6 +80,13 @@ object MaterialStore {
                     .put("x", m.meta.x.toDouble())
                     .put("y", m.meta.y.toDouble()),
             )
+        // 홈에 꽂힌 값은 있을 때만 적는다. 옛 파일과의 호환을 위해 없으면 키 자체를 만들지 않는다.
+        if (m.slots.isNotEmpty()) {
+            val slotsObj = JSONObject()
+            for ((k, v) in m.slots) slotsObj.put(k, writeMaterial(v))
+            obj.put("slots", slotsObj)
+        }
+        return obj
     }
 
     private fun readMaterial(o: JSONObject): Material {
@@ -92,6 +99,11 @@ object MaterialStore {
 
         val kidsArr = o.optJSONArray("children") ?: JSONArray()
         val kids = (0 until kidsArr.length()).map { readMaterial(kidsArr.getJSONObject(it)) }
+
+        val slots = HashMap<String, Material>()
+        o.optJSONObject("slots")?.let { s ->
+            for (k in s.keys()) slots[k] = readMaterial(s.getJSONObject(k))
+        }
 
         val mo = o.optJSONObject("meta")
         val meta = Meta(
@@ -112,6 +124,7 @@ object MaterialStore {
             children = kids,
             meta = meta,
             enabled = o.optBoolean("enabled", true),
+            slots = slots,
         )
     }
 

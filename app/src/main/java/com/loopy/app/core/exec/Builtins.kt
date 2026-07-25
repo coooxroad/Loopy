@@ -49,8 +49,14 @@ object LoopExecutor : Executor {
 object IfExecutor : Executor {
     override val typeId = "if"
     override suspend fun run(material: Material, ctx: ExecContext): Flow {
-        val cond = material.params.str("condition")
-        return if (Conditions.eval(cond, ctx)) {
+        // 조건 홈에 블록이 꽂혀 있으면 그것을 평가하고, 없으면 기존 글자 조건으로 평가한다(하위호환).
+        val condSlot = material.slots["condition"]
+        val ok = if (condSlot != null) {
+            Evaluator.bool(condSlot, ctx)
+        } else {
+            Conditions.eval(material.params.str("condition"), ctx)
+        }
+        return if (ok) {
             Engine.runChildren(material.children, ctx)
         } else {
             Flow.Next

@@ -16,6 +16,14 @@ data class Material(
     val meta: Meta = Meta(),
     /** 삭제하지 않고 잠시 꺼두기. 실험하며 만드는 도구에는 반드시 필요하다. */
     val enabled: Boolean = true,
+    /**
+     * 홈(slot)에 꽂힌 값·조건 Material. 키는 [com.loopy.app.blocks.SlotDef.key].
+     *
+     * children(세로 몸통)과 다르다: children 은 순서대로 실행되는 흐름이고, slots 는 "이 자리에
+     * 들어갈 값 하나"다. 예) if 의 "condition" 홈에 비교 블록이 꽂힌다. 비어 있으면 기존처럼
+     * params 의 글자 조건으로 평가한다(하위호환).
+     */
+    val slots: Map<String, Material> = emptyMap(),
 ) {
     /** 실행에 필요한 성격만. 값은 BlockDef 등록 시 TypeKinds 에 함께 채워진다. */
     val kind: Kind get() = TypeKinds.kindOf(typeId)
