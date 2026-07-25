@@ -319,6 +319,37 @@ private fun BlockView(
 }
 
 /**
+ * 비어 있는 홈.
+ *
+ * 값 칩과 달리 **안으로 파인** 것처럼 어둡게 그린다 — 얹힌 값이 아니라 무언가를 넣는 자리라는
+ * 뜻이 모양에서 읽히게. 눌러서 꽂을 블록을 고른다.
+ */
+@Composable
+private fun SocketHole(text: String, boolean: Boolean, onClick: () -> Unit) {
+    val shape = if (boolean) {
+        androidx.compose.foundation.shape.CutCornerShape(percent = 50)
+    } else {
+        androidx.compose.foundation.shape.RoundedCornerShape(50)
+    }
+    Box(
+        Modifier
+            .clip(shape)
+            .background(Color.Black.copy(alpha = 0.22f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text.ifEmpty { "+" },
+            color = Color.White.copy(alpha = 0.85f),
+            fontSize = Type.label,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
  * 홈에 꽂힌 블록.
  *
  * 자기 모양(둥근/육각)으로 그리고, 그 안의 문장도 같은 규칙으로 그린다 — 재귀이므로
@@ -389,9 +420,7 @@ private fun BlockSentence(def: BlockDef, m: Material, onSocket: (String, SlotKin
             // 홈에 블록이 꽂혀 있으면 그 블록을 그 자리에 그린다(중첩).
             filled != null -> NestedBlock(filled, onSocket)
             // 빈 홈이면 눌러서 꽂을 수 있다.
-            slot != null -> Box(Modifier.clickable { onSocket(key, slot.accepts) }) {
-                SlotChip(slotValue(def, m, key), rounded = !boolean)
-            }
+            slot != null -> SocketHole(slotValue(def, m, key), boolean) { onSocket(key, slot.accepts) }
             else -> SlotChip(slotValue(def, m, key), rounded = !boolean)
         }
         Spacer(Modifier.width(4.dp))

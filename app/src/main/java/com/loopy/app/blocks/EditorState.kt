@@ -97,8 +97,14 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             val cx = g.x + delta.x
             val cy = g.y + delta.y
             // 휴지통 위면 스냅 억제(삭제 의도). 가까운 연결점 없으면 null → 자유 배치.
-            val target = if (d.grabbedIsHat || overTrash) null
-            else nearestSlot(layoutCanvas(detachTail(s.canvas, d.blockId).first).slots, cx, cy)
+            // 덩어리 맨 위 연결점은 "첫 블록의 윗변"에 있다. 그대로 두면 위에 붙이려 할 때
+            // 기존 블록과 겹칠 만큼 내려야 잡혀서, 판정이 아래에 있는 것처럼 느껴진다.
+            // 잡은 블록 높이만큼 올려두면 "기존 바로 위"에 놓는 자리에서 잡힌다.
+            val grabbedH = findBlock(s.canvas, d.blockId)?.let { meshStep(it) } ?: 0f
+            val slots = layoutCanvas(detachTail(s.canvas, d.blockId).first).slots.map { sl ->
+                if (sl.parentId == null && sl.index == 0) sl.copy(y = sl.y - grabbedH) else sl
+            }
+            val target = if (d.grabbedIsHat || overTrash) null else nearestSlot(slots, cx, cy)
             s.copy(drag = d.copy(delta = delta, overTrash = overTrash, target = target))
         }
     } ?: s
@@ -123,10 +129,19 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             meta = Meta(),
         )
         val first = s.canvas.children.firstOrNull()
-        val canvas = if (isHat(block) || first == null) {
+        // 붙일 자리는 레이아웃이 내주는 **진짜 연결점** 중 마지막을 쓴다. 여기서 "맨 끝"을 직접
+        // 만들어 쓰면 마개 뒤처럼 붙으면 안 되는 자리에도 붙는다(연결점 규칙을 우회하게 된다).
+        val end = if (first == null) {
+            null
+        } else {
+            layoutCanvas(s.canvas).slots
+                .filter { it.clumpId == first.id && it.parentId == null }
+                .maxByOrNull { it.index }
+        }
+        val canvas = if (isHat(block) || end == null) {
             addClump(s.canvas, listOf(block), ORIGIN_X, ORIGIN_Y)
         } else {
-            insertAtSlot(s.canvas, Slot(first.id, null, first.children.size, 0f, 0f), listOf(block))
+            insertAtSlot(s.canvas, end, listOf(block))
         }
         s.copy(canvas = canvas, picking = false)
     }
