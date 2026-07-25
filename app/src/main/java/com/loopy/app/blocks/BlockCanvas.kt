@@ -121,7 +121,13 @@ fun BlockCanvas(
                 }
             },
     ) {
-        // 월드: 줌/이동을 통째로 건다. 블록·격자는 전부 월드 좌표(dp×density).
+        // 배경 모눈은 월드 변환 밖(화면 좌표)에 그린다. 안쪽에 두면 격자 천이 화면 크기로 잘려
+        // 밀었을 때 끝이 보인다. 카메라/줌만 넘겨 같은 무늬가 무한히 이어지게 한다.
+        Canvas(Modifier.fillMaxSize()) {
+            drawGrid(p.shadowColor.copy(alpha = 0.10f), ui.camera.x, ui.camera.y, ui.zoom)
+        }
+
+        // 월드: 줌/이동을 통째로 건다. 블록은 전부 월드 좌표(dp×density).
         Box(
             Modifier
                 .fillMaxSize()
@@ -133,10 +139,6 @@ fun BlockCanvas(
                     transformOrigin = TransformOrigin(0f, 0f),
                 ),
         ) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawGrid(p.shadowColor.copy(alpha = 0.10f), 0f, 0f)
-            }
-
             // 갈 자리 반투명 고스트 (스냅 중)
             ghostAt?.let { gp ->
                 val gb = gp.block
@@ -149,8 +151,8 @@ fun BlockCanvas(
                         .blockShape(
                             shape = defOf(gb.typeId).shape,
                             color = defOf(gb.typeId).color,
-                            innerTop = C_HEADER * density,
-                            innerHeight = innerHeight(gb) * density,
+                            innerTop = mouthOf(gb).top * density,
+                            innerHeight = mouthOf(gb).height * density,
                         ),
                 ) {}
             }
@@ -276,8 +278,8 @@ private fun BlockView(
             .blockShape(
                 shape = def.shape,
                 color = def.color,
-                innerTop = C_HEADER * density,
-                innerHeight = innerHeight(material) * density,
+                innerTop = mouthOf(material).top * density,
+                innerHeight = mouthOf(material).height * density,
                 lifted = lifted,
             )
             .pointerInput(material.id) {

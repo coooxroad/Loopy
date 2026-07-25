@@ -8,10 +8,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
-import com.loopy.app.ui.theme.palette
 
 /**
  * 블록 모양.
@@ -33,11 +33,16 @@ fun Modifier.blockShape(
     innerHeight: Float = 0f,
     lifted: Boolean = false,
 ): Modifier = composed {
-    val p = palette
     drawBehind {
         val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
         val off = (if (lifted) 10.dp else 5.dp).toPx()
         val blur = (if (lifted) 24.dp else 13.dp).toPx()
+
+        // 명암은 배경이 아니라 **블록 자기 색**에서 뽑는다. 배경 기준 그림자를 유색 면에 씌우면
+        // 색이 탁해지고 공중에 뜬 스티커처럼 보인다. 자기 색의 어두운/밝은 쪽을 쓰면 같은 재질이
+        // 접힌 것처럼 읽힌다. (SHADE_DEEP/LITE 만 만지면 깊이감을 조절할 수 있다.)
+        val deep = lerp(color, Color.Black, SHADE_DEEP)
+        val lite = lerp(color, Color.White, SHADE_LITE)
 
         drawIntoCanvas { canvas ->
             val fw = canvas.nativeCanvas
@@ -53,14 +58,14 @@ fun Modifier.blockShape(
             val dark = android.graphics.Paint().apply {
                 isAntiAlias = true
                 this.color = color.toArgb()
-                setShadowLayer(blur, off, off, p.shadowColor.copy(alpha = 0.65f).toArgb())
+                setShadowLayer(blur, off, off, deep.copy(alpha = 0.65f).toArgb())
             }
             fw.drawPath(native, dark)
 
             val light = android.graphics.Paint().apply {
                 isAntiAlias = true
                 this.color = color.toArgb()
-                setShadowLayer(blur * 0.8f, -off * 0.7f, -off * 0.7f, p.light.copy(alpha = 0.5f).toArgb())
+                setShadowLayer(blur * 0.8f, -off * 0.7f, -off * 0.7f, lite.copy(alpha = 0.5f).toArgb())
             }
             fw.drawPath(native, light)
         }
@@ -68,6 +73,12 @@ fun Modifier.blockShape(
         drawPath(path, color)
     }
 }
+
+/** 그림자를 만들 때 블록 색을 검정 쪽으로 섞는 정도. */
+private const val SHADE_DEEP = 0.55f
+
+/** 하이라이트를 만들 때 블록 색을 흰색 쪽으로 섞는 정도. */
+private const val SHADE_LITE = 0.45f
 
 /**
  * 블록 외곽선.
@@ -96,7 +107,7 @@ private fun DrawScope.blockPath(
                 moveTo(0f, cap)
                 cubicTo(0f, cap * 0.1f, w * 0.3f, -cap * 0.5f, w * 0.5f, -cap * 0.2f)
                 cubicTo(w * 0.7f, cap * 0.1f, w, cap * 0.1f, w, cap)
-                lineTo(w, h - nd)
+                lineTo(w, h - nd - cr)
                 bottomEdge(w, h, nl, nw, nd, cr)
                 lineTo(0f, cap)
                 close()
@@ -115,7 +126,7 @@ private fun DrawScope.blockPath(
 
             BlockShape.STACK -> {
                 topEdge(w, nl, nw, nd, cr)
-                lineTo(w, h - nd)
+                lineTo(w, h - nd - cr)
                 bottomEdge(w, h, nl, nw, nd, cr)
                 close()
             }
@@ -141,7 +152,7 @@ private fun DrawScope.blockPath(
                 lineTo(wall + nl + nw, bot)
                 lineTo(w - cr, bot)
                 quadraticBezierTo(w, bot, w, bot + cr)
-                lineTo(w, h - nd)
+                lineTo(w, h - nd - cr)
                 bottomEdge(w, h, nl, nw, nd, cr)
                 close()
             }

@@ -54,15 +54,30 @@ fun stackSpan(children: List<Material>): Float {
 /**
  * C블록 입의 높이.
  *
- * 입천장은 y=innerTop-nd 에 있고 볼록이 innerTop 까지 내려온다. 바닥은 y=innerTop+innerHeight 에서
- * 오목이 nd 만큼 파인다. 자식의 첫 오목(nd~2nd)이 천장 볼록을 물고, 마지막 볼록이 바닥 오목에
- * 앉으려면 입 높이는 스택 길이에서 겹침 한 겹을 뺀 값이어야 한다. 이 관계가 어긋나면 틈이 생긴다.
+ * 입천장 아랫면은 y=C_MOUTH_TOP-nd 에 있고 천장 볼록이 C_MOUTH_TOP 까지 내려온다. 자식은
+ * [C_INNER_TOP] 에서 시작하므로 첫 자식 윗면(C_INNER_TOP+nd)이 천장 아랫면과 만난다.
+ * 바닥도 같은 기준으로 맞춰야 한다: 마지막 자식 아랫면은 C_INNER_TOP+stackSpan-nd 이고,
+ * 발 윗면이 바로 거기 와야 볼록이 발 오목에 앉는다. 그래서
+ *   C_MOUTH_TOP + innerHeight = C_INNER_TOP + stackSpan - nd
+ * 이고, C_INNER_TOP = C_MOUTH_TOP - 2nd 이므로 innerHeight = stackSpan - 3nd 가 된다.
+ * (예전엔 -nd 라서 발이 자식보다 2nd 만큼 아래로 떠 있었다.)
  */
 fun innerHeight(m: Material): Float = when {
     !isC(m) -> 0f
     m.children.isEmpty() -> MOUTH_MIN
-    else -> stackSpan(m.children) - NOTCH_DEPTH
+    else -> stackSpan(m.children) - NOTCH_DEPTH * 3f
 }
+
+/** C블록 입천장의 y(그리기 기준). 자식은 여기서 노치 두 겹 위에서 시작한다. */
+const val C_MOUTH_TOP = C_HEADER
+
+/**
+ * 그리기가 필요로 하는 입 기하. 자식을 놓는 쪽(이 파일)이 함께 내주므로,
+ * 화면 쪽에서 다시 계산하지 않는다 — 두 곳이 따로 계산하면 반드시 어긋난다.
+ */
+data class Mouth(val top: Float, val height: Float)
+
+fun mouthOf(m: Material): Mouth = Mouth(C_MOUTH_TOP, innerHeight(m))
 
 /** 자식이 C블록 안에서 시작하는 y. 천장 볼록과 물리려면 겹침 두 겹만큼 올라가야 한다. */
 const val C_INNER_TOP = C_HEADER - NOTCH_DEPTH * 2f
@@ -298,8 +313,16 @@ fun allIds(blocks: List<Material>): Set<String> {
 
 // ---- 배경 ----
 
-fun DrawScope.drawGrid(color: Color, offsetX: Float, offsetY: Float) {
-    val gap = 74f
+/**
+ * 배경 모눈.
+ *
+ * 화면 좌표에 그린다 — 월드 변환 안에서 그리면 격자 천이 화면 크기만큼만 있어서, 밀다 보면
+ * 천 끝이 드러난다. 대신 카메라 이동을 간격으로 나눈 나머지만큼 위상을 밀고 줌만큼 간격을
+ * 늘리면, 같은 무늬가 화면 어디서나 끊기지 않는다.
+ */
+fun DrawScope.drawGrid(color: Color, offsetX: Float, offsetY: Float, zoom: Float = 1f) {
+    val gap = 74f * zoom
+    if (gap <= 1f) return
     var gx = offsetX % gap
     if (gx < 0) gx += gap
     while (gx < size.width) {
