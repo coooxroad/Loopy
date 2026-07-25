@@ -266,10 +266,33 @@ private fun insertInto(root: Material, parentId: String?, index: Int, blocks: Li
     return root.copy(children = root.children.map { insertInto(it, parentId, index, blocks) })
 }
 
+/**
+ * [hostId] 블록의 [key] 홈에 [block] 을 꽂는다. 이미 있으면 갈아 끼운다.
+ *
+ * children(세로 흐름)과 달리 홈은 "값 하나"라 순서가 없다. 그래서 삽입이 아니라 교체다.
+ */
+fun putInSlot(root: Material, hostId: String, key: String, block: Material): Material {
+    if (root.id == hostId) return root.copy(slots = root.slots + (key to block))
+    return root.copy(
+        children = root.children.map { putInSlot(it, hostId, key, block) },
+        slots = root.slots.mapValues { (_, v) -> putInSlot(v, hostId, key, block) },
+    )
+}
+
+/** [hostId] 블록의 [key] 홈을 비운다. */
+fun clearSlot(root: Material, hostId: String, key: String): Material {
+    if (root.id == hostId) return root.copy(slots = root.slots - key)
+    return root.copy(
+        children = root.children.map { clearSlot(it, hostId, key) },
+        slots = root.slots.mapValues { (_, v) -> clearSlot(v, hostId, key) },
+    )
+}
+
 /** id 블록을 새 값으로 교체(파라미터 편집). 캔버스 전체를 훑는다. */
 fun updateBlock(root: Material, block: Material): Material {
     val kids = root.children.map { if (it.id == block.id) block else updateBlock(it, block) }
-    return root.copy(children = kids)
+    val slots = root.slots.mapValues { (_, v) -> if (v.id == block.id) block else updateBlock(v, block) }
+    return root.copy(children = kids, slots = slots)
 }
 
 /** id 블록과 그 하위를 삭제. 뒤 형제는 남고, 빈 덩어리는 사라진다. */
@@ -282,13 +305,16 @@ fun removeBlock(canvas: Material, id: String): Material {
 
 private fun removeInside(root: Material, id: String): Material {
     val kids = root.children.filter { it.id != id }.map { removeInside(it, id) }
-    return root.copy(children = kids)
+    // 홈에 꽂힌 블록을 지우면 그 홈은 다시 빈 자리가 된다.
+    val slots = root.slots.filterValues { it.id != id }.mapValues { (_, v) -> removeInside(v, id) }
+    return root.copy(children = kids, slots = slots)
 }
 
-/** 트리에서 id 로 블록 찾기. */
+/** 트리에서 id 로 블록 찾기. 홈(slots)에 꽂힌 것도 트리의 일부다. */
 fun findBlock(root: Material, id: String): Material? {
     if (root.id == id) return root
     for (c in root.children) findBlock(c, id)?.let { return it }
+    for (v in root.slots.values) findBlock(v, id)?.let { return it }
     return null
 }
 
@@ -306,7 +332,7 @@ fun tailOf(root: Material, id: String): List<Material> {
 /** blocks 와 그 하위 전부의 id 집합. 자기 안에 드롭하는 걸 막을 때 쓴다. */
 fun allIds(blocks: List<Material>): Set<String> {
     val s = HashSet<String>()
-    fun rec(m: Material) { s.add(m.id); m.children.forEach(::rec) }
+    fun rec(m: Material) { s.add(m.id); m.children.forEach(::rec); m.slots.values.forEach(::rec) }
     blocks.forEach(::rec)
     return s
 }

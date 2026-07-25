@@ -24,7 +24,11 @@ data class EditorUi(
     val drag: Drag? = null,             // 드래그 중이 아니면 null
     val picking: Boolean = false,       // 팔레트 열림
     val editing: Material? = null,      // 파라미터 시트 대상
+    val socketPick: SocketPick? = null, // 홈 고르기 열림(어느 홈을 채우는 중인지)
 )
+
+/** 어느 블록의 어느 홈을 채우는 중인가. accepts 가 고를 수 있는 블록을 좁힌다. */
+data class SocketPick(val hostId: String, val key: String, val accepts: SlotKind)
 
 /** 드래그 한 판의 상태. null 이면 드래그 아님 — "드래그 중"이 타입으로 명확해진다. */
 @Immutable
@@ -50,6 +54,15 @@ sealed interface EditorEvent {
     data class SaveParams(val updated: Material) : EditorEvent
     data class Delete(val id: String) : EditorEvent
     data class AddFork(val parentId: String) : EditorEvent
+    /** 빈 홈을 눌렀다 — 무엇을 꽂을지 고르는 중. */
+    data class OpenSocket(val hostId: String, val key: String, val accepts: SlotKind) : EditorEvent
+
+    /** 고른 블록을 홈에 꽂는다. */
+    data class FillSocket(val def: BlockDef) : EditorEvent
+
+    /** 홈을 비운다. */
+    data class ClearSocketAt(val hostId: String, val key: String) : EditorEvent
+
     object Dismiss : EditorEvent
 }
 
@@ -128,7 +141,21 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         s.copy(canvas = addChild(s.canvas, e.parentId, branch), editing = null)
     }
 
-    is EditorEvent.Dismiss -> s.copy(picking = false, editing = null)
+    is EditorEvent.OpenSocket -> s.copy(socketPick = SocketPick(e.hostId, e.key, e.accepts))
+
+    is EditorEvent.FillSocket -> s.socketPick?.let { pick ->
+        val block = Material(
+            id = UUID.randomUUID().toString(),
+            typeId = e.def.id,
+            params = e.def.defaultParams(),
+            meta = Meta(),
+        )
+        s.copy(canvas = putInSlot(s.canvas, pick.hostId, pick.key, block), socketPick = null)
+    } ?: s
+
+    is EditorEvent.ClearSocketAt -> s.copy(canvas = clearSlot(s.canvas, e.hostId, e.key), editing = null)
+
+    is EditorEvent.Dismiss -> s.copy(picking = false, editing = null, socketPick = null)
 }
 
 /** 드래그를 놓았을 때: 휴지통이면 삭제, 스냅 대상이 있으면 삽입, 없으면 자유 배치. */

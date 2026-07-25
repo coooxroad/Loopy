@@ -146,6 +146,29 @@ object StopExecutor : Executor {
     }
 }
 
+/**
+ * 비교 블록. 두 값을 견줘 참/거짓을 낸다.
+ *
+ * 실제 비교는 [Conditions] 가 이미 하던 일을 그대로 쓴다 — 문법이 두 벌이 되지 않게 한다.
+ * 홈(slots)에 값 블록이 꽂혀 있으면 그 값을, 없으면 적어 넣은 글자를 쓴다.
+ */
+object CompareEvaluator : ValueExecutor {
+    override val typeId = "compare"
+    override suspend fun eval(material: Material, ctx: ExecContext): String {
+        val l = operand(material, "left", ctx)
+        val r = operand(material, "right", ctx)
+        val op = material.params.str("op").ifEmpty { "==" }
+        return Conditions.eval("$l $op $r", ctx).toString()
+    }
+
+    private suspend fun operand(m: Material, key: String, ctx: ExecContext): String =
+        m.slots[key]?.let { Evaluator.text(it, ctx) } ?: m.params.str(key)
+}
+
+fun registerBuiltinEvaluators() {
+    EvaluatorRegistry.register(CompareEvaluator)
+}
+
 fun registerBuiltinExecutors() {
     ExecutorRegistry.register(WaitExecutor)
     ExecutorRegistry.register(LoopExecutor)

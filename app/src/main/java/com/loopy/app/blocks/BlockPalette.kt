@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import com.loopy.app.core.material.Field
+import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.ui.components.LoopyIcon
 import com.loopy.app.ui.components.NeuButton
@@ -54,9 +55,20 @@ import com.loopy.app.ui.theme.palette
  * 기억하기 쉽고, 새 블록이 추가되어도 자리가 정해져 있다.
  */
 @Composable
-fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockDef) -> Unit) {
+fun BlockPalette(
+    onDismiss: () -> Unit,
+    onPick: (BlockDef) -> Unit,
+    /** 홈을 채우는 중이면 그 홈이 받는 종류. 지정되면 맞는 블록만 보이고 탭은 감춘다. */
+    accepts: SlotKind? = null,
+) {
     val p = palette
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
+    // 모양이 문법이다 — 둥근 홈에는 값(REPORTER), 육각 홈에는 참/거짓(BOOLEAN) 만 보여준다.
+    val wanted = when (accepts) {
+        SlotKind.VALUE -> Kind.REPORTER
+        SlotKind.BOOLEAN -> Kind.BOOLEAN
+        else -> null
+    }
 
     Box(
         Modifier
@@ -73,14 +85,14 @@ fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockDef) -> Unit) {
                 .padding(Space.lg),
         ) {
             Text(
-                "블록 추가",
+                if (accepts != null) "\uD648\uC5D0 \uAF42\uAE30" else "\uBE14\uB85D \uCD94\uAC00",
                 color = p.textStrong,
                 fontSize = Type.heading,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(Space.md))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
+            if (wanted == null) Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                 BlockCategory.entries.forEach { c ->
                     Box(Modifier.weight(1f)) {
                         if (c == tab) {
@@ -100,7 +112,9 @@ fun BlockPalette(onDismiss: () -> Unit, onPick: (BlockDef) -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(Space.sm),
             ) {
                 // 팔레트는 이제 BlockRegistry(정의)에서 자동으로 채워진다. 블록 추가 = 정의 하나.
-                BlockRegistry.all().filter { it.category == tab }.forEach { def ->
+                BlockRegistry.all()
+                    .filter { if (wanted != null) it.kind == wanted else it.category == tab }
+                    .forEach { def ->
                     Row(
                         Modifier
                             .fillMaxWidth()

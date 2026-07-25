@@ -181,10 +181,26 @@ val LoopyBlocks: List<BlockDef> = listOf(
         fields = listOf(Field.TextField("cmd", "명령", hint = "예: input keyevent 26"))),
 
     Block("var.set", Kind.ACTION, BlockCategory.DATA, BlockShape.STACK, Icon.EDIT,
-        "변수 정하기", "값을 저장합니다", sentence = "변수를 {name}로 정하기",
+        "변수 정하기", "값을 저장합니다", sentence = "변수 {name} 을 {value} 로 정하기",
         fields = listOf(
             Field.TextField("name", "변수", hint = "이름"),
             Field.TextField("value", "값"),
+        )),
+
+    // 값을 내는 블록. 육각이므로 조건 홈에만 들어간다 — 모양이 문법을 강제한다.
+    Block("compare", Kind.BOOLEAN, BlockCategory.DATA, BlockShape.HEXAGON, Icon.SPLIT,
+        "비교", "두 값을 비교해 참/거짓을 냅니다", sentence = "{left} {op} {right}",
+        fields = listOf(
+            Field.TextField("left", "왼쪽", hint = "값 또는 {변수}"),
+            Field.Choice(
+                "op", "비교",
+                options = listOf(
+                    Field.Opt("==", "="), Field.Opt("!=", "≠"),
+                    Field.Opt(">", ">"), Field.Opt("<", "<"),
+                ),
+                default = "==",
+            ),
+            Field.TextField("right", "오른쪽", hint = "값 또는 {변수}"),
         )),
 )
 

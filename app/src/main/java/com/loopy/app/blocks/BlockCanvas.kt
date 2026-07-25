@@ -2,6 +2,7 @@ package com.loopy.app.blocks
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -189,6 +190,9 @@ fun BlockCanvas(
                             if (pl.block.typeId == "touch") onOpenTouch(pl.block)
                             else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
+                        onSocket = { key, accepts ->
+                            editor.onEvent(EditorEvent.OpenSocket(pl.block.id, key, accepts))
+                        },
                     )
                 }
             }
@@ -231,6 +235,14 @@ fun BlockCanvas(
             )
         }
 
+        ui.socketPick?.let { pick ->
+            BlockPalette(
+                onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
+                onPick = { def -> editor.onEvent(EditorEvent.FillSocket(def)) },
+                accepts = pick.accepts,
+            )
+        }
+
         ui.editing?.let { m ->
             BlockParamSheet(
                 material = m,
@@ -260,6 +272,7 @@ private fun BlockView(
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
+    onSocket: (String, SlotKind) -> Unit,
 ) {
     val def = defOf(material.typeId)
     val curStart by rememberUpdatedState(onDragStart)
@@ -300,10 +313,35 @@ private fun BlockView(
         ) {
             LoopyIcon(def.icon, Color.White, size = 15.dp)
             Spacer(Modifier.width(Space.sm))
-            BlockSentence(def, material)
+            BlockSentence(def, material, onSocket)
         }
     }
 }
+
+/**
+ * 홈에 꽂힌 블록.
+ *
+ * 자기 모양(둥근/육각)으로 그리고, 그 안의 문장도 같은 규칙으로 그린다 — 재귀이므로
+ * 홈 안의 홈도 저절로 된다. 크기는 Compose 가 내용에 맞춰 재므로 따로 계산하지 않는다.
+ */
+@Composable
+private fun NestedBlock(m: Material, onSocket: (String, SlotKind) -> Unit) {
+    val def = defOf(m.typeId)
+    Box(
+        Modifier
+            .height(NESTED_H.dp)
+            .blockShape(def.shape, def.color)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BlockSentence(def, m, onSocket)
+        }
+    }
+}
+
+/** 홈에 꽂힌 블록의 높이. 문장 한 줄이 들어갈 만큼만. */
+private const val NESTED_H = 28
 
 @Composable
 private fun SlotChip(text: String, rounded: Boolean) {
@@ -333,7 +371,7 @@ private val SENTENCE_SLOT = Regex("\\{([A-Za-z_][\\w.]*)\\}")
  * 타입별 분기를 두지 않으므로 새 블록이 늘어도 이 함수는 그대로다.
  */
 @Composable
-private fun BlockSentence(def: BlockDef, m: Material) {
+private fun BlockSentence(def: BlockDef, m: Material, onSocket: (String, SlotKind) -> Unit) {
     val text = def.template
     var cursor = 0
     for (hit in SENTENCE_SLOT.findAll(text)) {
@@ -344,8 +382,18 @@ private fun BlockSentence(def: BlockDef, m: Material) {
         }
         val key = hit.groupValues[1]
         // 참/거짓 홈은 육각으로 그린다 — 모양이 무엇을 넣을 수 있는지 말한다.
-        val boolean = def.slots.any { it.key == key && it.accepts == SlotKind.BOOLEAN }
-        SlotChip(slotValue(def, m, key), rounded = !boolean)
+        val slot = def.slots.firstOrNull { it.key == key }
+        val boolean = slot?.accepts == SlotKind.BOOLEAN
+        val filled = m.slots[key]
+        when {
+            // 홈에 블록이 꽂혀 있으면 그 블록을 그 자리에 그린다(중첩).
+            filled != null -> NestedBlock(filled, onSocket)
+            // 빈 홈이면 눌러서 꽂을 수 있다.
+            slot != null -> Box(Modifier.clickable { onSocket(key, slot.accepts) }) {
+                SlotChip(slotValue(def, m, key), rounded = !boolean)
+            }
+            else -> SlotChip(slotValue(def, m, key), rounded = !boolean)
+        }
         Spacer(Modifier.width(4.dp))
         cursor = hit.range.last + 1
     }

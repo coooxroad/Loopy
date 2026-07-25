@@ -2,6 +2,7 @@ package com.loopy.app
 
 import android.app.Application
 import com.loopy.app.core.exec.TouchExecutor
+import com.loopy.app.core.exec.registerBuiltinEvaluators
 import com.loopy.app.core.exec.registerBuiltinExecutors
 import com.loopy.app.core.exec.ExecutorRegistry
 import com.loopy.app.core.exec.registerSystemExecutors
@@ -20,6 +21,7 @@ class LoopyApp : Application() {
         super.onCreate()
         registerBlockDefs()
         registerBuiltinExecutors()
+        registerBuiltinEvaluators()
         registerSystemExecutors()
         ExecutorRegistry.register(TouchExecutor(this))
     }
