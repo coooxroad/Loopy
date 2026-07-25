@@ -38,34 +38,28 @@ fun Modifier.blockShape(
         val off = (if (lifted) 10.dp else 5.dp).toPx()
         val blur = (if (lifted) 24.dp else 13.dp).toPx()
 
-        // 명암은 배경이 아니라 **블록 자기 색**에서 뽑는다. 배경 기준 그림자를 유색 면에 씌우면
-        // 색이 탁해지고 공중에 뜬 스티커처럼 보인다. 자기 색의 어두운/밝은 쪽을 쓰면 같은 재질이
-        // 접힌 것처럼 읽힌다. (SHADE_DEEP/LITE 만 만지면 깊이감을 조절할 수 있다.)
-        val deep = lerp(color, Color.Black, SHADE_DEEP)
+        // 어두운 그림자는 쓰지 않는다. 유색 면에 검은 그림자를 씌우면 색이 탁해지고 스티커처럼
+        // 무겁게 얹힌다. 대신 자기 색과 그보다 밝은 색만으로, 넓고 묽게 번지게 한다 — 물감이
+        // 배어 나오듯. 세기는 아래 상수 네 개만 만지면 조절된다.
         val lite = lerp(color, Color.White, SHADE_LITE)
 
         drawIntoCanvas { canvas ->
             val fw = canvas.nativeCanvas
             val native = path.asAndroidPath()
 
-            val bloom = android.graphics.Paint().apply {
+            // 넓고 옅은 자기 색 번짐
+            val halo = android.graphics.Paint().apply {
                 isAntiAlias = true
                 this.color = color.toArgb()
-                setShadowLayer(blur * 1.9f, 0f, off * 0.5f, color.copy(alpha = 0.6f).toArgb())
+                setShadowLayer(blur * BLOOM_SPREAD, 0f, off * 0.35f, color.copy(alpha = BLOOM_ALPHA).toArgb())
             }
-            fw.drawPath(native, bloom)
+            fw.drawPath(native, halo)
 
-            val dark = android.graphics.Paint().apply {
-                isAntiAlias = true
-                this.color = color.toArgb()
-                setShadowLayer(blur, off, off, deep.copy(alpha = 0.65f).toArgb())
-            }
-            fw.drawPath(native, dark)
-
+            // 위에서 드는 옅은 빛
             val light = android.graphics.Paint().apply {
                 isAntiAlias = true
                 this.color = color.toArgb()
-                setShadowLayer(blur * 0.8f, -off * 0.7f, -off * 0.7f, lite.copy(alpha = 0.5f).toArgb())
+                setShadowLayer(blur * 1.2f, -off * 0.6f, -off * 0.6f, lite.copy(alpha = LIGHT_ALPHA).toArgb())
             }
             fw.drawPath(native, light)
         }
@@ -74,11 +68,17 @@ fun Modifier.blockShape(
     }
 }
 
-/** 그림자를 만들 때 블록 색을 검정 쪽으로 섞는 정도. */
-private const val SHADE_DEEP = 0.55f
-
 /** 하이라이트를 만들 때 블록 색을 흰색 쪽으로 섞는 정도. */
 private const val SHADE_LITE = 0.45f
+
+/** 색 번짐이 퍼지는 넓이(블러 배수). 클수록 묽게 퍼진다. */
+private const val BLOOM_SPREAD = 2.6f
+
+/** 색 번짐의 진하기. 낮을수록 묽다. */
+private const val BLOOM_ALPHA = 0.38f
+
+/** 위에서 드는 빛의 진하기. */
+private const val LIGHT_ALPHA = 0.35f
 
 /**
  * 블록 외곽선.
@@ -98,7 +98,9 @@ private fun DrawScope.blockPath(
     // 그려지는 노치 깊이와 스냅이 계산하는 겹침이 같은 값을 봐야 블록이 맞물린다.
     val nd = NOTCH_DEPTH.dp.toPx()
     val nl = 18.dp.toPx()
-    val wall = 14.dp.toPx()
+    // 입 왼쪽 벽은 자식이 들어가는 자리와 같아야 한다. 레이아웃이 자식을 x+INDENT 에 놓으므로
+    // 벽도 거기서 파생한다 — 따로 적으면 벽과 자식(그리고 노치)이 어긋난다.
+    val wall = INDENT.dp.toPx()
 
     return Path().apply {
         when (shape) {
