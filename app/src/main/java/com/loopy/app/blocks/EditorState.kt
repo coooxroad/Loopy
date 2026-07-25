@@ -112,7 +112,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     is EditorEvent.Zoom -> s.copy(zoom = (s.zoom * e.factor).coerceIn(0.5f, 2.5f))
 
     is EditorEvent.OpenPalette -> s.copy(picking = true)
-    is EditorEvent.Pick -> {
+    // 값 블록은 홈에만 들어간다. 스택에 끼우면 문법이 깨지므로 막는다(팔레트에서도 감춰 둔다).
+    is EditorEvent.Pick -> if (isValueBlock(e.def)) {
+        s.copy(picking = false)
+    } else {
         val block = Material(
             id = UUID.randomUUID().toString(),
             typeId = e.def.id,

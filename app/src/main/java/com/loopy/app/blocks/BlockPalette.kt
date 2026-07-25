@@ -113,7 +113,11 @@ fun BlockPalette(
             ) {
                 // 팔레트는 이제 BlockRegistry(정의)에서 자동으로 채워진다. 블록 추가 = 정의 하나.
                 BlockRegistry.all()
-                    .filter { if (wanted != null) it.kind == wanted else it.category == tab }
+                    .filter {
+                        // 홈 고르기면 그 홈이 받는 종류만. 일반 팔레트면 카테고리별로 하되
+                        // 값 블록은 감춘다(홀로 설 수 없으므로 스택에 끼면 문법이 깨진다).
+                        if (wanted != null) it.kind == wanted else it.category == tab && !isValueBlock(it)
+                    }
                     .forEach { def ->
                     Row(
                         Modifier

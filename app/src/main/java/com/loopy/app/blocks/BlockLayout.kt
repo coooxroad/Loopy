@@ -38,6 +38,9 @@ fun isC(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.C_BLOCK
 /** 모자인지는 도메인이 아는 성격(kind)이다. 시간축(Timeline)도 같은 기준을 쓴다. */
 fun isHat(m: Material): Boolean = m.kind == Kind.HAT
 
+/** 마개(아래가 평평한 블록). 뒤에 아무것도 이어붙일 수 없다 — 모양이 곧 문법이다. */
+fun isCap(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.CAP
+
 /** 위 블록에서 아래 블록으로 내려갈 거리. 노치 두 겹만큼 겹쳐야 볼록이 오목에 딱 든다. */
 fun meshStep(m: Material): Float = blockHeight(m) - NOTCH_DEPTH * 2f
 
@@ -127,8 +130,11 @@ private fun layoutStack(
 ): Float {
     var y = startY
     for ((i, c) in children.withIndex()) {
-        // c 앞에 끼우는 자리. 단, 모자 위에는 아무것도 못 붙이므로 모자 앞 자리는 만들지 않는다.
-        if (!(i == 0 && isHat(c))) out.slots.add(Slot(clumpId, parentId, i, x, y))
+        // c 앞에 끼우는 자리. 단 두 경우엔 만들지 않는다:
+        //  - 모자 위에는 아무것도 못 붙는다
+        //  - 바로 앞이 마개면 그 뒤로는 이어붙일 수 없다
+        val afterCap = i > 0 && isCap(children[i - 1])
+        if (!(i == 0 && isHat(c)) && !afterCap) out.slots.add(Slot(clumpId, parentId, i, x, y))
         out.placed.add(Placed(c, x, y, depth))
 
         if (isC(c)) {
@@ -137,8 +143,9 @@ private fun layoutStack(
         // parallel(동시) 는 지금은 평범한 블록으로 둔다. 노드+갈래 UI 는 다음 업데이트에서 복원.
         y += meshStep(c)
     }
-    // 맨 끝(마지막 블록 아래)에 붙이는 자리
-    out.slots.add(Slot(clumpId, parentId, children.size, x, y))
+    // 맨 끝(마지막 블록 아래)에 붙이는 자리. 마개로 끝났으면 그 아래는 없다.
+    val last = children.lastOrNull()
+    if (last == null || !isCap(last)) out.slots.add(Slot(clumpId, parentId, children.size, x, y))
     return y - startY
 }
 
@@ -240,8 +247,20 @@ fun detachTail(canvas: Material, id: String): Pair<Material, List<Material>> {
 /** [slot] 이 가리키는 덩어리의 자리에 blocks 를 끼운다. */
 fun insertAtSlot(canvas: Material, slot: Slot, blocks: List<Material>): Material {
     val newClumps = canvas.children.map { clump ->
-        if (clump.id == slot.clumpId) insertInto(clump, slot.parentId, slot.index, blocks)
-        else clump
+        if (clump.id != slot.clumpId) {
+            clump
+        } else {
+            val inserted = insertInto(clump, slot.parentId, slot.index, blocks)
+            // 덩어리 맨 위에 끼우는 경우, 덩어리는 **위로** 자라야 한다. 자리를 그대로 두면 기존
+            // 블록들이 통째로 한 칸 밀려 내려가 "위에 놓았는데 아래가 움직이는" 꼴이 된다.
+            // (C블록 입은 천장이 고정이라 아래로 자라는 게 맞으므로 최상위 줄기일 때만.)
+            if (slot.parentId == null && slot.index == 0 && clump.children.isNotEmpty()) {
+                val grow = blocks.fold(0f) { acc, b -> acc + meshStep(b) }
+                inserted.copy(meta = inserted.meta.copy(y = inserted.meta.y - grow))
+            } else {
+                inserted
+            }
+        }
     }
     return canvas.copy(children = newClumps)
 }

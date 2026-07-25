@@ -74,6 +74,14 @@ fun colorOf(category: BlockCategory): Color = when (category) {
     BlockCategory.DATA -> Color(0xFF9966FF)
 }
 
+/**
+ * 값을 내는 블록인가(둥근 리포터·육각 조건).
+ *
+ * 이런 블록은 홀로 설 수 없다 — 언제나 다른 블록의 홈에 들어간다. 그래서 일반 팔레트에는
+ * 보이지 않고, 홈을 눌렀을 때만 후보로 뜬다. 스택에 끼워 넣을 수 있으면 문법이 깨진다.
+ */
+fun isValueBlock(def: BlockDef): Boolean = def.kind == Kind.REPORTER || def.kind == Kind.BOOLEAN
+
 /** [BlockDef] 의 평범한 구현체. 대부분의 블록은 이걸로 선언한다. */
 data class Block(
     override val id: String,
