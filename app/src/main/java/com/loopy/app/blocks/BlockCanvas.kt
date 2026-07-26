@@ -23,6 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -35,6 +37,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -103,6 +107,10 @@ fun BlockCanvas(
     // 갈 자리에 반투명 고스트가 뜬다. 끌던 블록은 손가락을 따라간다.
     // 트레이가 닫혀도 남아 있어야 하므로 화면 쪽에 둔다.
     val recentIds = remember { mutableStateListOf<String>() }
+    // 트레이에서 끌고 나온 블록. 손끝을 따라다니다 놓으면 캔버스에 심긴다.
+    var carried by remember { mutableStateOf<CarriedBlock?>(null) }
+    // 이 화면이 루트 안에서 어디부터 시작하는지(상단 바 등을 감안).
+    var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
     val drag = ui.drag
     val curDrag = drag?.blockId
     val curTgt = drag?.target
@@ -120,6 +128,7 @@ fun BlockCanvas(
     Box(
         Modifier
             .fillMaxSize()
+            .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
             .background(p.surface)
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, gestureZoom, _ ->
@@ -234,6 +243,23 @@ fun BlockCanvas(
         val plusTurn by animateFloatAsState(if (ui.picking) 45f else 0f, label = "plus")
         val fabLift by animateDpAsState(if (ui.picking) trayH else 0.dp, label = "fab")
 
+        // 끌고 나온 블록 — 실제 크기로, 손끝을 따라.
+        carried?.let { c ->
+            val topLeft = c.at - c.grab
+            BlockFace(
+                material = Material(
+                    id = "carried",
+                    typeId = c.def.id,
+                    params = c.def.defaultParams(),
+                ),
+                density = density,
+                lifted = true,
+                modifier = Modifier
+                    .offset { IntOffset(topLeft.x.roundToInt(), topLeft.y.roundToInt()) }
+                    .zIndex(50f),
+            )
+        }
+
         NeuFab(
             onClick = { editor.onEvent(EditorEvent.OpenPalette) },
             modifier = Modifier
@@ -259,6 +285,21 @@ fun BlockCanvas(
                     editor.onEvent(EditorEvent.Pick(def))
                 },
                 recent = recentIds,
+                onDragStart = { def, root, grab -> carried = CarriedBlock(def, root - canvasOrigin, grab) },
+                onDragMove = { amount -> carried = carried?.let { it.copy(at = it.at + amount) } },
+                onDragEnd = {
+                    carried?.let { c ->
+                        // 블록 좌상단이 놓일 화면 좌표 → 월드 좌표(dp). 카메라/줌을 되돌린다.
+                        val topLeft = c.at - c.grab
+                        val wx = (topLeft.x - ui.camera.x) / ui.zoom / density
+                        val wy = (topLeft.y - ui.camera.y) / ui.zoom / density
+                        // 트레이 위에서 놓으면 취소로 본다(도로 넣는 셈).
+                        if (c.at.y < screenHpx - panelH.value * density) {
+                            editor.onEvent(EditorEvent.DropNew(c.def, wx, wy))
+                        }
+                    }
+                    carried = null
+                },
                 panelHeight = panelH,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -434,6 +475,9 @@ private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
         }
     }
 }
+
+/** 트레이에서 끌고 나온 블록. at 은 화면 좌표(이 화면 기준), grab 은 블록 안에서 잡은 지점. */
+private data class CarriedBlock(val def: BlockDef, val at: Offset, val grab: Offset)
 
 /** 최근 목록에 남길 개수. 길어지면 카테고리를 가린다. */
 private const val RECENT_MAX = 5

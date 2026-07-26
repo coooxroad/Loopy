@@ -63,6 +63,12 @@ sealed interface EditorEvent {
     /** 홈을 비운다. */
     data class ClearSocketAt(val hostId: String, val key: String) : EditorEvent
 
+    /**
+     * 트레이에서 끌어다 캔버스에 놓았다. [x],[y] 는 놓인 자리(월드 dp, 블록의 좌상단).
+     * 근처에 연결점이 있으면 거기 끼우고, 없으면 그 자리에 새 덩어리로 둔다.
+     */
+    data class DropNew(val def: BlockDef, val x: Float, val y: Float) : EditorEvent
+
     object Dismiss : EditorEvent
 }
 
@@ -163,6 +169,26 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         s.copy(canvas = addChild(s.canvas, e.parentId, branch), editing = null)
     }
 
+    is EditorEvent.DropNew -> if (isValueBlock(e.def)) {
+        s   // 값 블록은 캔버스에 홀로 설 수 없다(홈 전용)
+    } else {
+        val block = Material(
+            id = UUID.randomUUID().toString(),
+            typeId = e.def.id,
+            params = e.def.defaultParams(),
+            meta = Meta(),
+        )
+        // 손을 뗀 자리 근처에 붙을 곳이 있으면 붙인다. 끌어다 놓기의 값어치는 여기서 나온다.
+        val slots = layoutCanvas(s.canvas).slots.filter { canPlaceAt(block, it) }
+        val tgt = nearestSlot(slots, e.x, e.y, radius = DROP_SNAP)
+        val canvas = if (tgt != null) {
+            insertAtSlot(s.canvas, tgt, listOf(block))
+        } else {
+            addClump(s.canvas, listOf(block), e.x, e.y)
+        }
+        s.copy(canvas = canvas)
+    }
+
     is EditorEvent.OpenSocket -> s.copy(socketPick = SocketPick(e.hostId, e.key, e.accepts), editing = null)
 
     is EditorEvent.FillSocket -> s.socketPick?.let { pick ->
@@ -210,3 +236,6 @@ class EditorState(initial: Material, private val onPersist: (Material) -> Unit) 
         if (ui.canvas !== before) onPersist(ui.canvas)
     }
 }
+
+/** 트레이에서 놓았을 때 근처 연결점에 붙는 거리. 손끝은 정확하지 않으므로 넉넉히. */
+private const val DROP_SNAP = 44f

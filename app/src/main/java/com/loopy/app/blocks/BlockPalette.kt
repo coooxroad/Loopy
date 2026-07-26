@@ -2,6 +2,7 @@ package com.loopy.app.blocks
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +39,11 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -80,6 +85,10 @@ fun BlockTray(
     modifier: Modifier = Modifier,
     /** 최근 집은 블록의 typeId (새 것이 앞). 카테고리를 헤매지 않고 바로 다시 집으라고. */
     recent: List<String> = emptyList(),
+    /** 길게 눌러 집었다. 좌표는 루트 기준, grab 은 블록 안에서 잡은 지점(캔버스 크기 기준). */
+    onDragStart: (BlockDef, Offset, Offset) -> Unit = { _, _, _ -> },
+    onDragMove: (Offset) -> Unit = {},
+    onDragEnd: () -> Unit = {},
 ) {
     val p = palette
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
@@ -249,7 +258,14 @@ fun BlockTray(
                     // 잘려 부자연스럽다. 번짐이 **둥근 사각 경계에 닿을 때** 잘리도록 넉넉히 둔다.
                     .padding(BLOOM_ROOM),
             ) {
-                BlockChoices(defs = defs, onPick = onPick, modifier = Modifier.fillMaxSize())
+                BlockChoices(
+                    defs = defs,
+                    onPick = onPick,
+                    onDragStart = onDragStart,
+                    onDragMove = onDragMove,
+                    onDragEnd = onDragEnd,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }
@@ -297,6 +313,9 @@ private fun BlockChoices(
     defs: List<BlockDef>,
     onPick: (BlockDef) -> Unit,
     modifier: Modifier = Modifier,
+    onDragStart: (BlockDef, Offset, Offset) -> Unit = { _, _, _ -> },
+    onDragMove: (Offset) -> Unit = {},
+    onDragEnd: () -> Unit = {},
 ) {
     // 견본은 실제보다 조금 작게. LocalDensity 를 낮추면 크기·글자·그림자가 **함께** 줄어
     // 비율이 그대로 유지된다(따로 줄이면 모양이 망가진다).
@@ -311,11 +330,26 @@ private fun BlockChoices(
             verticalArrangement = Arrangement.spacedBy(Space.sm),
         ) {
             defs.forEach { def ->
+                var rootPos by remember(def.id) { mutableStateOf(Offset.Zero) }
                 BlockFace(
                     material = previewOf(def),
                     density = small.density,
                     onSocket = null, // 견본의 홈은 누르지 않는다
-                    gestures = Modifier.clickable { onPick(def) },
+                    gestures = Modifier
+                        .onGloballyPositioned { rootPos = it.positionInRoot() }
+                        // **길게 눌러야** 집힌다. 바로 집으면 목록을 스크롤할 수 없다.
+                        .pointerInput(def.id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { local ->
+                                    // 견본은 축소돼 있으므로, 잡은 지점을 캔버스 크기로 되돌린다.
+                                    onDragStart(def, rootPos + local, local / PREVIEW_SCALE)
+                                },
+                                onDrag = { change, amount -> change.consume(); onDragMove(amount) },
+                                onDragEnd = { onDragEnd() },
+                                onDragCancel = { onDragEnd() },
+                            )
+                        }
+                        .clickable { onPick(def) },
                 )
             }
         }
