@@ -144,9 +144,11 @@ fun BlockPalette(
 ) {
     val p = palette
     val density = LocalDensity.current.density
-    val wanted = when (accepts) {
+    // 홈이 받는 모양 → 그 모양을 내는 블록 종류. 아무것도 못 받는 홈이면 후보가 없다.
+    val wanted: Kind? = when (accepts) {
         SlotKind.VALUE -> Kind.REPORTER
         SlotKind.BOOLEAN -> Kind.BOOLEAN
+        SlotKind.NONE -> null
     }
 
     Box(
@@ -171,7 +173,7 @@ fun BlockPalette(
             )
             Spacer(Modifier.height(Space.md))
             BlockChoices(
-                defs = BlockRegistry.all().filter { it.kind == wanted },
+                defs = if (wanted == null) emptyList() else BlockRegistry.all().filter { it.kind == wanted },
                 density = density,
                 horizontal = false,
                 onPick = onPick,
