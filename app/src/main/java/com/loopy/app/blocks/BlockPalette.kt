@@ -32,7 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -57,7 +61,6 @@ import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
 import com.loopy.app.ui.theme.neu
 import com.loopy.app.ui.theme.Depth
-import com.loopy.app.ui.theme.neuColorSurface
 import com.loopy.app.ui.theme.palette
 
 /**
@@ -75,6 +78,8 @@ fun BlockTray(
     onPick: (BlockDef) -> Unit,
     panelHeight: Dp,
     modifier: Modifier = Modifier,
+    /** 최근 집은 블록의 typeId (새 것이 앞). 카테고리를 헤매지 않고 바로 다시 집으라고. */
+    recent: List<String> = emptyList(),
 ) {
     val p = palette
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
@@ -115,13 +120,16 @@ fun BlockTray(
                 )
             }
             Spacer(Modifier.width(Space.sm))
-            NeuIconButton(
-                onClick = { showFilter = !showFilter },
-                selected = showFilter,
-                size = 34.dp,
-            ) {
-                LoopyIcon(Icon.TUNE, if (showFilter) p.accent else p.textMuted, size = 16.dp)
-            }
+            // 버튼 껍데기 없이 아이콘만. 검색줄 옆에 조용히 붙어 있어야 한다.
+            LoopyIcon(
+                Icon.TUNE,
+                if (showFilter) p.accent else p.textMuted,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { showFilter = !showFilter }
+                    .padding(Space.xs),
+                size = 18.dp,
+            )
         }
 
         // 검색 설정 — 옵션은 계속 늘어날 자리다(가로로 밀린다).
@@ -164,7 +172,8 @@ fun BlockTray(
                                 .size(10.dp)
                                 .then(
                                     if (on) {
-                                        Modifier.neuColorSurface(colorOf(c), corner = 5.dp, depth = Depth.SM)
+                                        // 자기 색으로만 번진다. 팔레트 명암을 섞으면 색이 탁해진다.
+                                        Modifier.dotGlow(colorOf(c))
                                     } else {
                                         Modifier
                                             .clip(CircleShape)
@@ -179,6 +188,38 @@ fun BlockTray(
                             fontSize = Type.label,
                             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                         )
+                    }
+                }
+
+                // 아래 남는 자리는 "최근"이 채운다. 방금 쓴 블록을 또 쓰는 일이 가장 잦다.
+                val recentDefs = recent.mapNotNull { id -> BlockRegistry.find(id) }
+                if (recentDefs.isNotEmpty()) {
+                    Spacer(Modifier.height(Space.md))
+                    Text("\uCD5C\uADFC", color = p.textMuted, fontSize = Type.label)
+                    Spacer(Modifier.height(Space.xs))
+                    recentDefs.forEach { def ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(Radius.sm))
+                                .clickable { onPick(def) }
+                                .padding(horizontal = Space.sm, vertical = Space.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(colorOf(def.category)),
+                            )
+                            Spacer(Modifier.width(Space.sm))
+                            Text(
+                                def.label,
+                                color = p.textStrong,
+                                fontSize = Type.label,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
@@ -204,11 +245,34 @@ fun BlockTray(
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(Radius.sm))
                     .background(lerp(p.surface, p.shadowColor, 0.06f))
-                    .padding(Space.sm),
+                    // 블록의 색 번짐은 블록 밖으로 꽤 뻗는다. 여백이 좁으면 번짐이 시작하자마자
+                    // 잘려 부자연스럽다. 번짐이 **둥근 사각 경계에 닿을 때** 잘리도록 넉넉히 둔다.
+                    .padding(BLOOM_ROOM),
             ) {
                 BlockChoices(defs = defs, onPick = onPick, modifier = Modifier.fillMaxSize())
             }
         }
+    }
+}
+
+/** 블록의 색 번짐이 숨 쉴 여백. 번짐 반경(블러×퍼짐)에 맞춘 값. */
+private val BLOOM_ROOM = 14.dp
+
+/**
+ * 자기 색으로 번지는 점.
+ *
+ * 뉴모피즘 명암(팔레트의 밝음/어두움)을 섞지 않는다 — 작은 점에서는 그게 색을 덮어 회색으로
+ * 보인다. 자기 색 하나만 넓게 번지게 하면 "불이 켜진 점"으로 읽힌다.
+ */
+private fun Modifier.dotGlow(color: Color): Modifier = drawBehind {
+    drawIntoCanvas { canvas ->
+        val r = size.minDimension / 2f
+        val paint = android.graphics.Paint().apply {
+            isAntiAlias = true
+            this.color = color.toArgb()
+            setShadowLayer(r * 2.2f, 0f, 0f, color.copy(alpha = 0.75f).toArgb())
+        }
+        canvas.nativeCanvas.drawCircle(size.width / 2f, size.height / 2f, r, paint)
     }
 }
 

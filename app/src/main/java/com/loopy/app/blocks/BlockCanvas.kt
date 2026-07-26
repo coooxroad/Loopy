@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -100,6 +101,8 @@ fun BlockCanvas(
 
     // 렌더용 파생 — 상태(canvas·drag)로만 계산(상태홀더엔 안 둔다). 스냅 중이면 상대가 자리를 벌리고
     // 갈 자리에 반투명 고스트가 뜬다. 끌던 블록은 손가락을 따라간다.
+    // 트레이가 닫혀도 남아 있어야 하므로 화면 쪽에 둔다.
+    val recentIds = remember { mutableStateListOf<String>() }
     val drag = ui.drag
     val curDrag = drag?.blockId
     val curTgt = drag?.target
@@ -248,7 +251,14 @@ fun BlockCanvas(
         // 트레이는 화면을 덮지 않는다 — 캔버스를 보면서 블록을 집을 수 있어야 한다.
         if (traySlide < trayH) {
             BlockTray(
-                onPick = { def -> editor.onEvent(EditorEvent.Pick(def)) },
+                onPick = { def ->
+                    // 방금 쓴 것을 맨 앞으로. 목록은 짧게 유지한다.
+                    recentIds.remove(def.id)
+                    recentIds.add(0, def.id)
+                    while (recentIds.size > RECENT_MAX) recentIds.removeAt(recentIds.lastIndex)
+                    editor.onEvent(EditorEvent.Pick(def))
+                },
+                recent = recentIds,
                 panelHeight = panelH,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -424,6 +434,9 @@ private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
         }
     }
 }
+
+/** 최근 목록에 남길 개수. 길어지면 카테고리를 가린다. */
+private const val RECENT_MAX = 5
 
 /** 홈에 꽂힌 블록의 높이. 문장 한 줄이 들어갈 만큼만. */
 private const val NESTED_H = 28
