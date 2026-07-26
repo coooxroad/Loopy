@@ -2,6 +2,7 @@ package com.loopy.app.blocks
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -60,20 +62,91 @@ private fun previewOf(def: BlockDef): Material =
     Material(id = "preview-" + def.id, typeId = def.id, params = def.defaultParams())
 
 @Composable
+fun BlockTray(
+    onPick: (BlockDef) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val p = palette
+    val density = LocalDensity.current.density
+    var tab by remember { mutableStateOf(BlockCategory.ACTION) }
+
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
+            .background(p.surface)
+            .padding(Space.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 색 레일 — 고른 카테고리만 크고 진하게. 블록 색이 이미 카테고리를 말하므로 글자는 겹말이다.
+        Column(verticalArrangement = Arrangement.spacedBy(Space.sm)) {
+            BlockCategory.entries.forEach { c ->
+                val on = c == tab
+                Box(
+                    Modifier
+                        .size(if (on) 20.dp else 14.dp)
+                        .clip(CircleShape)
+                        .background(colorOf(c).copy(alpha = if (on) 1f else 0.4f))
+                        .clickable { tab = c },
+                )
+            }
+        }
+        Spacer(Modifier.width(Space.md))
+        BlockChoices(
+            defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
+            density = density,
+            horizontal = true,
+            onPick = onPick,
+        )
+    }
+}
+
+/** 트레이와 홈 고르기가 함께 쓰는 블록 줄. 견본은 캔버스와 같은 렌더러로 그린다. */
+@Composable
+private fun BlockChoices(
+    defs: List<BlockDef>,
+    density: Float,
+    horizontal: Boolean,
+    onPick: (BlockDef) -> Unit,
+) {
+    val items: @Composable () -> Unit = {
+        defs.forEach { def ->
+            BlockFace(
+                material = previewOf(def),
+                density = density,
+                onSocket = null, // 견본의 홈은 누르지 않는다
+                gestures = Modifier.clickable { onPick(def) },
+            )
+        }
+    }
+    if (horizontal) {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { items() }
+    } else {
+        Column(
+            Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(Space.sm),
+        ) { items() }
+    }
+}
+
+/**
+ * 홈에 꽂을 블록 고르기. 모양이 문법이므로 그 홈이 받는 종류만 보여준다.
+ */
+@Composable
 fun BlockPalette(
     onDismiss: () -> Unit,
     onPick: (BlockDef) -> Unit,
-    /** 홈을 채우는 중이면 그 홈이 받는 종류. 지정되면 맞는 블록만 보이고 탭은 감춘다. */
-    accepts: SlotKind? = null,
+    accepts: SlotKind,
 ) {
     val p = palette
-    var tab by remember { mutableStateOf(BlockCategory.ACTION) }
-    // 모양이 문법이다 — 둥근 홈에는 값(REPORTER), 육각 홈에는 참/거짓(BOOLEAN) 만 보여준다.
     val density = LocalDensity.current.density
     val wanted = when (accepts) {
         SlotKind.VALUE -> Kind.REPORTER
         SlotKind.BOOLEAN -> Kind.BOOLEAN
-        else -> null
     }
 
     Box(
@@ -91,60 +164,22 @@ fun BlockPalette(
                 .padding(Space.lg),
         ) {
             Text(
-                if (accepts != null) "\uD648\uC5D0 \uAF42\uAE30" else "\uBE14\uB85D \uCD94\uAC00",
+                "\uD648\uC5D0 \uAF42\uAE30",
                 color = p.textStrong,
                 fontSize = Type.heading,
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(Space.md))
-
-            if (wanted == null) Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
-                BlockCategory.entries.forEach { c ->
-                    Box(Modifier.weight(1f)) {
-                        if (c == tab) {
-                            NeuButton(c.label, onClick = { tab = c }, modifier = Modifier.fillMaxWidth())
-                        } else {
-                            NeuOutlineButton(c.label, onClick = { tab = c }, modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                }
-            }
-            Spacer(Modifier.height(Space.md))
-
-            Column(
-                Modifier
-                    .heightIn(max = 320.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(Space.sm),
-            ) {
-                // 팔레트는 이제 BlockRegistry(정의)에서 자동으로 채워진다. 블록 추가 = 정의 하나.
-                BlockRegistry.all()
-                    .filter {
-                        // 홈 고르기면 그 홈이 받는 종류만. 일반 팔레트면 카테고리별로 하되
-                        // 값 블록은 감춘다(홀로 설 수 없으므로 스택에 끼면 문법이 깨진다).
-                        if (wanted != null) it.kind == wanted else it.category == tab && !isValueBlock(it)
-                    }
-                    .forEach { def ->
-                    // 견본은 캔버스와 **같은 렌더러**로 그린다. 모양(육각·둥근·C·모자)과 색,
-                    // 문장이 그대로 보이므로 무엇인지 따로 설명할 글이 필요 없다.
-                    BlockFace(
-                        material = previewOf(def),
-                        density = density,
-                        onSocket = null, // 견본의 홈은 누르지 않는다
-                        gestures = Modifier.clickable { onPick(def) },
-                    )
-                }
-            }
-            Spacer(Modifier.height(Space.lg))
+            BlockChoices(
+                defs = BlockRegistry.all().filter { it.kind == wanted },
+                density = density,
+                horizontal = false,
+                onPick = onPick,
+            )
         }
     }
 }
 
-/**
- * 블록 설정 — 이제 BlockDef 의 Field 스키마에서 자동 생성된다.
- * 타입마다 손으로 짜던 시트/변환(applyParam·fieldLabel)이 사라졌다. 값은 ParamBag(Map)로 다룬다.
- * Field 하나를 더하면 편집 위젯이 저절로 생긴다.
- */
 @Composable
 fun BlockParamSheet(
     material: Material,

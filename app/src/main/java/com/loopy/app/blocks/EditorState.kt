@@ -120,10 +120,11 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     is EditorEvent.Pan -> s.copy(camera = s.camera + e.amountPx)
     is EditorEvent.Zoom -> s.copy(zoom = (s.zoom * e.factor).coerceIn(0.5f, 2.5f))
 
-    is EditorEvent.OpenPalette -> s.copy(picking = true)
+    // 트레이는 여닫는 것이다 — 같은 버튼으로 닫는다.
+    is EditorEvent.OpenPalette -> s.copy(picking = !s.picking)
     // 값 블록은 홈에만 들어간다. 스택에 끼우면 문법이 깨지므로 막는다(팔레트에서도 감춰 둔다).
     is EditorEvent.Pick -> if (isValueBlock(e.def)) {
-        s.copy(picking = false)
+        s   // 값 블록은 아무 일도 하지 않는다(트레이는 열어 둔다)
     } else {
         val block = Material(
             id = UUID.randomUUID().toString(),
@@ -146,7 +147,7 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         } else {
             insertAtSlot(s.canvas, end, listOf(block))
         }
-        s.copy(canvas = canvas, picking = false)
+        s.copy(canvas = canvas)   // 트레이는 닫지 않는다 — 이어서 더 집을 수 있게
     }
 
     is EditorEvent.OpenSheet -> s.copy(editing = e.material)

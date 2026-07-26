@@ -222,7 +222,11 @@ fun BlockCanvas(
 
         NeuFab(
             onClick = { editor.onEvent(EditorEvent.OpenPalette) },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(Space.lg),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(Space.lg)
+                // 트레이가 열려 있으면 그 위로 비켜선다(겹쳐 가리지 않게).
+                .padding(bottom = if (ui.picking) TRAY_H.dp else 0.dp),
         ) {
             if (curDrag != null) {
                 LoopyIcon(Icon.DELETE, if (overTrash) Color(0xFFFF5A5F) else Color.White, size = if (overTrash) 26.dp else 22.dp)
@@ -231,10 +235,11 @@ fun BlockCanvas(
             }
         }
 
+        // 트레이는 화면을 덮지 않는다 — 캔버스를 보면서 블록을 집을 수 있어야 한다.
         if (ui.picking) {
-            BlockPalette(
-                onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
+            BlockTray(
                 onPick = { def -> editor.onEvent(EditorEvent.Pick(def)) },
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 
@@ -406,6 +411,9 @@ private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
         }
     }
 }
+
+/** 트레이가 차지하는 대략 높이. FAB 을 그 위로 밀어 올릴 때 쓴다. */
+private const val TRAY_H = 96
 
 /** 홈에 꽂힌 블록의 높이. 문장 한 줄이 들어갈 만큼만. */
 private const val NESTED_H = 28
