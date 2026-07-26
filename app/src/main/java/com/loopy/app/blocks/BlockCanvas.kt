@@ -1,5 +1,7 @@
 package com.loopy.app.blocks
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -220,26 +222,36 @@ fun BlockCanvas(
             }
         }
 
+        // 트레이는 화면 절반을 살짝 안 넘는다 — 캔버스가 계속 절반 넘게 보여야 한다.
+        val trayH = LocalConfiguration.current.screenHeightDp.dp * 0.46f
+        // 열고 닫힘은 미끄러져 들어오고 나간다(툭 나타나면 어디서 왔는지 읽히지 않는다).
+        val traySlide by animateDpAsState(if (ui.picking) 0.dp else trayH, label = "tray")
+        // + 가 그대로 돌아 x 가 된다 — 같은 버튼이 여닫이라는 뜻이 형태로 이어진다.
+        val plusTurn by animateFloatAsState(if (ui.picking) 45f else 0f, label = "plus")
+        val fabLift by animateDpAsState(if (ui.picking) trayH else 0.dp, label = "fab")
+
         NeuFab(
             onClick = { editor.onEvent(EditorEvent.OpenPalette) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(Space.lg)
-                // 트레이가 열려 있으면 그 위로 비켜선다(겹쳐 가리지 않게).
-                .padding(bottom = if (ui.picking) TRAY_HEIGHT.dp else 0.dp),
+                .padding(bottom = fabLift),
         ) {
             if (curDrag != null) {
                 LoopyIcon(Icon.DELETE, if (overTrash) Color(0xFFFF5A5F) else Color.White, size = if (overTrash) 26.dp else 22.dp)
             } else {
-                LoopyIcon(Icon.ADD, Color.White, size = 22.dp)
+                LoopyIcon(Icon.ADD, Color.White, size = 22.dp, modifier = Modifier.graphicsLayer { rotationZ = plusTurn })
             }
         }
 
         // 트레이는 화면을 덮지 않는다 — 캔버스를 보면서 블록을 집을 수 있어야 한다.
-        if (ui.picking) {
+        if (traySlide < trayH) {
             BlockTray(
                 onPick = { def -> editor.onEvent(EditorEvent.Pick(def)) },
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .height(trayH)
+                    .offset(y = traySlide),
             )
         }
 

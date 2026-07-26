@@ -48,6 +48,10 @@ import com.loopy.app.ui.components.NeuWell
 import com.loopy.app.ui.theme.Radius
 import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
+import com.loopy.app.ui.theme.neu
+import com.loopy.app.ui.theme.neuSurface
+import com.loopy.app.ui.theme.neuColorSurface
+import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.palette
 
 /**
@@ -69,15 +73,26 @@ fun BlockTray(
     val density = LocalDensity.current.density
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
 
+    // 바깥 판은 **솟은** 면이다. 캔버스에서 한 겹 떠올라 있다는 뜻.
     Column(
         modifier
             .fillMaxWidth()
-            .height(TRAY_HEIGHT.dp)
-            .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
+            .neuSurface(corner = Radius.lg, depth = Depth.LG)
             .background(p.surface)
             .padding(horizontal = Space.lg, vertical = Space.md),
     ) {
-        // 카테고리는 **이름과 색을 함께** 보인다. 색만으로는 이미 아는 사람만 알아본다.
+        // 손잡이 — 여기가 끌어올린 판이라는 신호.
+        Box(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .width(36.dp)
+                .height(4.dp)
+                .neu(corner = 2.dp, depth = Depth.SM, pressed = true),
+        )
+        Spacer(Modifier.height(Space.md))
+
+        // 카테고리: 고른 것은 **색을 채운 채 안으로 파이고**, 나머지는 솟아 있다.
+        // (색만 다르게 하는 플랫 칩과 달리, 눌린 상태가 형태로 보인다.)
         Row(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(Space.sm),
@@ -86,14 +101,19 @@ fun BlockTray(
                 val on = c == tab
                 Box(
                     Modifier
-                        .clip(RoundedCornerShape(Radius.sm))
-                        .background(if (on) colorOf(c) else colorOf(c).copy(alpha = 0.16f))
+                        .then(
+                            if (on) {
+                                Modifier.neuColorSurface(colorOf(c), corner = Radius.sm, depth = Depth.SM, pressed = true)
+                            } else {
+                                Modifier.neuSurface(corner = Radius.sm, depth = Depth.SM)
+                            },
+                        )
                         .clickable { tab = c }
                         .padding(horizontal = Space.md, vertical = Space.sm),
                 ) {
                     Text(
                         c.label,
-                        color = if (on) Color.White else p.textStrong,
+                        color = if (on) Color.White else p.textMuted,
                         fontSize = Type.label,
                         fontWeight = FontWeight.Medium,
                     )
@@ -102,18 +122,24 @@ fun BlockTray(
         }
         Spacer(Modifier.height(Space.md))
 
-        // 문장 블록은 폭이 넓다 — 세로로 쌓아야 한눈에 여러 개가 들어온다.
-        BlockChoices(
-            defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
-            density = density,
-            onPick = onPick,
-            modifier = Modifier.weight(1f),
-        )
+        // 블록이 놓이는 곳은 **파인** 면이다 — 안에 물건이 담긴 서랍처럼 읽힌다.
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .neu(corner = Radius.md, depth = Depth.SM, pressed = true)
+                .padding(Space.md),
+        ) {
+            // 문장 블록은 폭이 넓다 — 세로로 쌓아야 한눈에 여러 개가 들어온다.
+            BlockChoices(
+                defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
+                density = density,
+                onPick = onPick,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
-
-/** 트레이 높이. 세로 목록이 넉넉히 보이도록. 캔버스 쪽 FAB 도 이만큼 비켜선다. */
-const val TRAY_HEIGHT = 300
 
 /** 트레이와 홈 고르기가 함께 쓰는 블록 줄. 견본은 캔버스와 같은 렌더러로 그린다. */
 @Composable
