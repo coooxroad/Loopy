@@ -222,8 +222,11 @@ fun BlockCanvas(
             }
         }
 
-        // 트레이는 화면 절반을 살짝 안 넘는다 — 캔버스가 계속 절반 넘게 보여야 한다.
-        val trayH = LocalConfiguration.current.screenHeightDp.dp * 0.46f
+        // 판 높이는 **블록이 놓이는 자리**만 센다. 탭은 판 위에 얹히므로 이 높이를 먹지 않는다.
+        val panelH = LocalConfiguration.current.screenHeightDp.dp * 0.52f
+        // 탭 줄이 판 위로 더 차지하는 높이(대략). 슬라이드·FAB 계산에만 쓴다.
+        val tabsH = 40.dp
+        val trayH = panelH + tabsH
         // 열고 닫힘은 미끄러져 들어오고 나간다(툭 나타나면 어디서 왔는지 읽히지 않는다).
         val traySlide by animateDpAsState(if (ui.picking) 0.dp else trayH, label = "tray")
         // + 가 그대로 돌아 x 가 된다 — 같은 버튼이 여닫이라는 뜻이 형태로 이어진다.
@@ -248,9 +251,9 @@ fun BlockCanvas(
         if (traySlide < trayH) {
             BlockTray(
                 onPick = { def -> editor.onEvent(EditorEvent.Pick(def)) },
+                panelHeight = panelH,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .height(trayH)
                     .offset(y = traySlide),
             )
         }

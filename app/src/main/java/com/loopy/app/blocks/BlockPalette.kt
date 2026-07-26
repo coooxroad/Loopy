@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import com.loopy.app.core.material.Field
@@ -49,8 +50,6 @@ import com.loopy.app.ui.theme.Radius
 import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
 import com.loopy.app.ui.theme.neu
-import com.loopy.app.ui.theme.neuSurface
-import com.loopy.app.ui.theme.neuColorSurface
 import com.loopy.app.ui.theme.Depth
 import com.loopy.app.ui.theme.palette
 
@@ -67,49 +66,34 @@ private fun previewOf(def: BlockDef): Material =
 @Composable
 fun BlockTray(
     onPick: (BlockDef) -> Unit,
+    panelHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
     val p = palette
     val density = LocalDensity.current.density
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
 
-    // 바깥 판은 **솟은** 면이다. 캔버스에서 한 겹 떠올라 있다는 뜻.
-    Column(
-        modifier
-            .fillMaxWidth()
-            .neuSurface(corner = Radius.lg, depth = Depth.LG)
-            .background(p.surface)
-            .padding(horizontal = Space.lg, vertical = Space.md),
-    ) {
-        // 손잡이 — 여기가 끌어올린 판이라는 신호.
-        Box(
-            Modifier
-                .align(Alignment.CenterHorizontally)
-                .width(36.dp)
-                .height(4.dp)
-                .neu(corner = 2.dp, depth = Depth.SM, pressed = true),
-        )
-        Spacer(Modifier.height(Space.md))
-
-        // 카테고리: 고른 것은 **색을 채운 채 안으로 파이고**, 나머지는 솟아 있다.
-        // (색만 다르게 하는 플랫 칩과 달리, 눌린 상태가 형태로 보인다.)
+    Column(modifier.fillMaxWidth()) {
+        // 탭은 판 **위에 얹혀** 있다. 판 높이를 먹지 않으므로 블록 자리를 뺏지 않는다.
+        // 고른 탭은 아래가 판으로 이어지고, 나머지는 판 색으로 한 단 물러난다 — 폴더 탭처럼.
         Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = Space.lg),
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            verticalAlignment = Alignment.Bottom,
         ) {
             BlockCategory.entries.forEach { c ->
                 val on = c == tab
                 Box(
                     Modifier
-                        .then(
-                            if (on) {
-                                Modifier.neuColorSurface(colorOf(c), corner = Radius.sm, depth = Depth.SM, pressed = true)
-                            } else {
-                                Modifier.neuSurface(corner = Radius.sm, depth = Depth.SM)
-                            },
-                        )
+                        .clip(RoundedCornerShape(topStart = Radius.sm, topEnd = Radius.sm))
+                        .background(if (on) colorOf(c) else p.surface)
                         .clickable { tab = c }
-                        .padding(horizontal = Space.md, vertical = Space.sm),
+                        .padding(
+                            horizontal = Space.md,
+                            vertical = if (on) Space.sm else Space.xs,
+                        ),
                 ) {
                     Text(
                         c.label,
@@ -120,17 +104,17 @@ fun BlockTray(
                 }
             }
         }
-        Spacer(Modifier.height(Space.md))
 
-        // 블록이 놓이는 곳은 **파인** 면이다 — 안에 물건이 담긴 서랍처럼 읽힌다.
-        Box(
+        // 판은 한 겹만 솟는다. 안에 또 파인 면을 두면 층이 겹쳐 지저분해지고 자리도 좁아진다.
+        Column(
             Modifier
-                .weight(1f)
                 .fillMaxWidth()
-                .neu(corner = Radius.md, depth = Depth.SM, pressed = true)
-                .padding(Space.md),
+                .height(panelHeight)
+                .neu(corner = Radius.lg, depth = Depth.LG)
+                .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
+                .background(p.surface)
+                .padding(horizontal = Space.lg, vertical = Space.md),
         ) {
-            // 문장 블록은 폭이 넓다 — 세로로 쌓아야 한눈에 여러 개가 들어온다.
             BlockChoices(
                 defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
                 density = density,
