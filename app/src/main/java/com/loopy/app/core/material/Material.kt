@@ -63,8 +63,64 @@ enum class Kind { HAT, ACTION, CONTROL, REPORTER, BOOLEAN }
  * 가지므로, 도메인은 이 최소 정보만 둔다. BlockDef 등록 시 함께 채워진다.
  * (구 MaterialType/MaterialRegistry 를 흡수한 자리 — 타입 정의는 이제 BlockDef 하나뿐이다.)
  */
+/**
+ * 시간축에서 이 블록이 무엇인가.
+ *
+ * 타임라인이 블록 이름을 나열해 알아보던 것을 대신한다. 기본이 [NONE] 이므로 새 블록은
+ * "시간축이 표현할 수 없는 것"으로 안전하게 취급된다 — 모르는 채로 열었다가 저장할 때
+ * 표현 못 한 블록이 사라지는 사고를 막는다.
+ */
+enum class TimelineRole {
+    /** 시간축에 표현할 수 없음(조건·반복 등). 이게 섞이면 그 빌드는 시간축으로 열지 않는다. */
+    NONE,
+
+    /** 시간만 흐르게 한다. 길이는 [TimelineKeys.DURATION_MS] 파라미터. */
+    DELAY,
+
+    /** 녹화된 궤적 하나를 놓는다. 궤적은 [TimelineKeys.STROKE_ID] 파라미터. */
+    STROKE,
+
+    /** 자식을 차례로. */
+    SEQUENCE,
+
+    /** 자식이 같은 시각에 함께 출발. 가장 늦게 끝나는 갈래가 다음 시작을 정한다. */
+    CONCURRENT,
+}
+
+/**
+ * 캔버스의 **덩어리**(블록 줄기 하나를 담는 그릇).
+ *
+ * 지금은 "빌드 실행" 블록과 같은 typeId 를 쓴다 — 담는 그릇이라는 성격이 같아서다. 다만
+ * 팔레트 블록이자 구조 컨테이너인 이중 사용이라 언젠가 갈라야 한다. 그때 고칠 곳이
+ * 한 군데뿐이도록 이름을 붙여 여기 모아 둔다.
+ */
+object Clump {
+    const val TYPE_ID = "build"
+    fun isClump(m: Material): Boolean = m.typeId == TYPE_ID
+}
+
+/** 시간축이 읽는 파라미터 키 약속. 역할을 선언한 블록은 이 키를 쓴다. */
+object TimelineKeys {
+    const val DURATION_MS = "ms"
+    const val STROKE_ID = "strokeId"
+}
+
+/**
+ * 도메인이 아는 블록의 성격.
+ *
+ * 도메인은 모양·색을 몰라야 하므로, 정의(BlockDef)에서 실행·시간축에 필요한 것만 넘겨받는다.
+ */
 object TypeKinds {
-    private val map = HashMap<String, Kind>()
-    fun register(id: String, kind: Kind) { map[id] = kind }
-    fun kindOf(id: String): Kind = map[id] ?: Kind.ACTION
+    private val kinds = HashMap<String, Kind>()
+    private val roles = HashMap<String, TimelineRole>()
+
+    fun register(id: String, kind: Kind, timeline: TimelineRole = TimelineRole.NONE) {
+        kinds[id] = kind
+        roles[id] = timeline
+    }
+
+    fun kindOf(id: String): Kind = kinds[id] ?: Kind.ACTION
+
+    /** 등록되지 않은(또는 선언하지 않은) 블록은 시간축이 모르는 것으로 본다. */
+    fun timelineOf(id: String): TimelineRole = roles[id] ?: TimelineRole.NONE
 }

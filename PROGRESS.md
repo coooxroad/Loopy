@@ -24,21 +24,24 @@
 블록을 **모양 그대로 보고, 끌어다 조립**하게 만든다. Material 다량 추가의 선행 조건.
 
 - [x] **A. 공용 블록 렌더러** — `BlockFace` 추출. 팔레트가 캔버스와 같은 그림(육각·둥근·C·모자)으로 표시. 설명 글줄 제거
-- [ ] **B. 하드코딩 걷어내기** — `typeId == "..."` 분기를 BlockDef 선언으로. 다량 추가 전에 반드시
+- [x] **B. 하드코딩 걷어내기** — `typeId == "..."` 분기 제거. 전용 편집기(`opensEditor`)·갈래(`parallel`)·시간축(`TimelineRole`) 선언화, 덩어리 개념에 이름(`Clump`)
 - [ ] **C. 팔레트를 트레이로** — 접히는 하단 트레이, 카테고리 색 레일, 끌어서 꺼내기
 - [ ] **D. 소켓 드롭 + 팝오버** — 조건도 블록 조립으로. 홈 고르기 시트 제거
 
-### B 에서 걷어낼 것 (조사 완료)
+### B 결과
 
-| 위치 | 지금 | 옮길 곳 |
+| 위치 | 전 | 후 |
 |---|---|---|
-| `BlockCanvas` | `typeId == "touch"` → 전용 편집기 | BlockDef 에 "전용 편집기" 선언 |
-| `BlockCanvas` | `typeId == "parallel"` → 갈래 추가 버튼 | BlockDef 에 "갈래를 가진다" 선언 |
-| `Timeline` / `EditableTimeline` | `wait`/`touch`/`parallel`/`build` 이름 나열 | BlockDef 에 "시간축에서 무엇인가" 선언 |
-| `Builtins` | typeId 나열로 실행 특수처리 | 정의 기반으로 |
+| `BlockCanvas` | `typeId == "touch"` → 전용 편집기 | `def.opensEditor` (축만 알려주고 화면은 밖에서 결정) |
+| `BlockCanvas` | `typeId == "parallel"` → 갈래 버튼 | `def.parallel` (선언은 이미 있었는데 아무도 안 읽었음) |
+| `Timeline` | `wait`/`touch`/`parallel`/`build` 나열 | `TimelineRole` 5종. 기본이 NONE 이라 새 블록은 안전하게 "표현 못 함" |
+| 여러 곳 | `typeId == "build"` (덩어리) | `Clump.isClump` / `Clump.TYPE_ID` 한 곳 |
 
-→ 안 걷으면 **블록을 추가할 때마다 캔버스·타임라인에 if 가 하나씩 붙는다.**
-특히 타임라인은 모르는 블록이 섞이면 그 매크로를 아예 못 연다.
+이제 **새 블록을 더해도 캔버스·타임라인을 고칠 일이 없다.** 시간축에 나타내고 싶으면
+정의에 `timeline = ...` 한 줄만 붙이면 된다.
+
+남겨 둔 것: `Builtins` 의 멀티터치 최적화(`simpleStroke`)는 실행 성능 관련이라 이번엔 두었다.
+새 블록이 안 맞으면 일반 병렬 실행으로 안전하게 빠지므로 급하지 않다.
 
 ## 다음에 볼 것
 

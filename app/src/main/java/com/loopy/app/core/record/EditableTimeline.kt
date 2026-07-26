@@ -1,6 +1,7 @@
 package com.loopy.app.core.record
 
 import android.content.Context
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.TypeKinds
@@ -58,7 +59,7 @@ class EditableTimeline(
 
         /** 캔버스에서 시간축으로 열 덩어리를 고른다. 모자로 시작하는 첫 덩어리(=녹화본). 레거시면 빌드 자신. */
         private fun targetClump(build: Material): Material {
-            val clumps = build.children.filter { it.typeId == "build" }
+            val clumps = build.children.filter { Clump.isClump(it) }
             if (clumps.isEmpty()) return build
             return clumps.firstOrNull { c ->
                 c.children.firstOrNull()?.let { TypeKinds.kindOf(it.typeId) == Kind.HAT } == true

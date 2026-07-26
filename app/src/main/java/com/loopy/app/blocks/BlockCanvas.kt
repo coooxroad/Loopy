@@ -70,7 +70,8 @@ fun BlockCanvas(
     build: Material,
     onBack: () -> Unit,
     onRun: (Material) -> Unit,
-    onOpenTouch: (Material) -> Unit,
+    /** 전용 편집기를 여는 요청. 어느 축인지는 정의가 정하고, 무엇을 열지는 화면 밖이 정한다. */
+    onOpenEditor: (EditorAxis, Material) -> Unit,
     builds: List<Material> = emptyList(),
 ) {
     val ctx = LocalContext.current
@@ -187,7 +188,9 @@ fun BlockCanvas(
                         },
                         onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                         onClick = {
-                            if (pl.block.typeId == "touch") onOpenTouch(pl.block)
+                            // 어떤 블록이 전용 화면을 갖는지는 정의가 말한다(화면은 이름을 모른다).
+                            val opens = defOf(pl.block.typeId).opensEditor
+                            if (opens != null) onOpenEditor(opens, pl.block)
                             else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
                         onSocket = { key, accepts ->
@@ -252,7 +255,7 @@ fun BlockCanvas(
                 onDismiss = { editor.onEvent(EditorEvent.Dismiss) },
                 onSave = { updated -> editor.onEvent(EditorEvent.SaveParams(updated)) },
                 onDelete = { editor.onEvent(EditorEvent.Delete(m.id)) },
-                onAddFork = if (m.typeId == "parallel") {
+                onAddFork = if (defOf(m.typeId).parallel) {
                     { editor.onEvent(EditorEvent.AddFork(m.id)) }
                 } else {
                     null

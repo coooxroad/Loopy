@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.loopy.app.core.material.Field
 import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.ParamBag
+import com.loopy.app.core.material.TimelineRole
 import com.loopy.app.core.material.TypeKinds
 import com.loopy.app.core.material.defaults
 import com.loopy.app.ui.components.Icon
@@ -45,6 +46,17 @@ interface BlockDef {
 
     /** 자식을 순서가 아니라 동시에 실행하는가. '동시에' 블록이 켠다. */
     val parallel: Boolean get() = false
+
+    /**
+     * 탭했을 때 **전용 편집기**로 여는가. null 이면 파라미터 시트를 연다.
+     *
+     * [container] 와 다르다: container 는 "블록을 품는다"는 성격이고, 이건 "열면 다른 화면으로
+     * 간다"는 뜻이다. 화면 쪽이 typeId 를 보고 분기하지 않게 하려고 정의에 둔다.
+     */
+    val opensEditor: EditorAxis? get() = null
+
+    /** 시간축에서 무엇인가. 선언하지 않으면 시간축이 표현할 수 없는 블록으로 본다. */
+    val timeline: TimelineRole get() = TimelineRole.NONE
 
     /** 리터럴 파라미터 스키마. 편집 시트의 위젯과 기본값이 여기서 자동으로 나온다. */
     val fields: List<Field> get() = emptyList()
@@ -94,6 +106,8 @@ data class Block(
     val sentence: String? = null,
     override val container: EditorAxis? = null,
     override val parallel: Boolean = false,
+    override val opensEditor: EditorAxis? = null,
+    override val timeline: TimelineRole = TimelineRole.NONE,
     override val fields: List<Field> = emptyList(),
     override val slots: List<SlotDef> = emptyList(),
     /** 카테고리 규칙에서 벗어나는 색(동시에=초록, 멈추기=빨강)만 지정. */
@@ -150,14 +164,17 @@ val LoopyBlocks: List<BlockDef> = listOf(
         "실행하면", "재생 버튼을 누를 때 시작합니다"),
 
     Block("touch", Kind.ACTION, BlockCategory.ACTION, BlockShape.STACK, Icon.RECORD,
-        "터치", "녹화된 궤적을 재생합니다"),
+        "터치", "녹화된 궤적을 재생합니다",
+        opensEditor = EditorAxis.TIMELINE, timeline = TimelineRole.STROKE),
     Block("build", Kind.CONTROL, BlockCategory.ACTION, BlockShape.STACK, Icon.FOLDER,
         "빌드 실행", "다른 빌드를 실행합니다", container = EditorAxis.BLOCKS,
+        timeline = TimelineRole.SEQUENCE,
         // 대상을 지정하지 않으면(빈 값) 자기 몸을 실행 = 기존 동작. 지정하면 그 빌드를 불러온다.
         fields = listOf(Field.BuildPick("buildId", "빌드"))),
 
     Block("wait", Kind.ACTION, BlockCategory.CONTROL, BlockShape.STACK, Icon.PAUSE,
         "기다리기", "정해진 시간만큼 멈춥니다", sentence = "{ms}초 기다리기",
+        timeline = TimelineRole.DELAY,
         fields = listOf(Field.Seconds("ms", "시간(초)"))),
     Block("loop", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.C_BLOCK, Icon.REDO,
         "반복하기", "안의 블록을 여러 번 실행합니다", sentence = "{count}번 반복하기",
@@ -170,7 +187,8 @@ val LoopyBlocks: List<BlockDef> = listOf(
         fields = listOf(Field.TextField("condition", "조건", hint = "예: {점수} > 10")),
         slots = listOf(SlotDef("condition", SlotKind.BOOLEAN, "조건"))),
     Block("parallel", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.STACK, Icon.LIST,
-        "동시에", "연결된 갈래들을 함께 실행합니다", parallel = true, colorOverride = ForkGreen),
+        "동시에", "연결된 갈래들을 함께 실행합니다", parallel = true,
+        timeline = TimelineRole.CONCURRENT, colorOverride = ForkGreen),
     Block("stop", Kind.ACTION, BlockCategory.CONTROL, BlockShape.CAP, Icon.STOP,
         "멈추기", "실행을 즉시 끝냅니다", colorOverride = StopRed),
 
@@ -218,5 +236,5 @@ val LoopyBlocks: List<BlockDef> = listOf(
  */
 fun registerBlockDefs() {
     BlockRegistry.register(LoopyBlocks)
-    LoopyBlocks.forEach { TypeKinds.register(it.id, it.kind) }
+    LoopyBlocks.forEach { TypeKinds.register(it.id, it.kind, it.timeline) }
 }

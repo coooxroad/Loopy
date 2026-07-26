@@ -3,6 +3,9 @@ package com.loopy.app.core.record
 import android.content.Context
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Kind
+import com.loopy.app.core.material.Clump
+import com.loopy.app.core.material.TimelineKeys
+import com.loopy.app.core.material.TimelineRole
 import com.loopy.app.core.material.TypeKinds
 
 /**
@@ -36,11 +39,12 @@ object Timeline {
         var cursor = from
         for (b in blocks) {
             if (!b.enabled) continue
-            when (b.typeId) {
-                "wait" -> cursor += b.params.long("ms")
+            // 블록 이름이 아니라 **선언된 역할**을 본다. 새 블록이 늘어도 여기를 고칠 일이 없다.
+            when (TypeKinds.timelineOf(b.typeId)) {
+                TimelineRole.DELAY -> cursor += b.params.long(TimelineKeys.DURATION_MS)
 
-                "touch" -> {
-                    val id = b.params.str("strokeId")
+                TimelineRole.STROKE -> {
+                    val id = b.params.str(TimelineKeys.STROKE_ID)
                     val stroke = StrokeStore.get(ctx, id)
                     if (stroke != null) {
                         out.add(PlacedStroke(b.id, id, cursor, stroke))
@@ -48,7 +52,7 @@ object Timeline {
                     }
                 }
 
-                "parallel" -> {
+                TimelineRole.CONCURRENT -> {
                     // 갈래들은 같은 시각에 출발한다. 끝나는 시각은 제각각이고,
                     // 가장 늦게 끝나는 갈래가 다음 블록의 시작을 정한다.
                     var latest = cursor
@@ -59,11 +63,10 @@ object Timeline {
                     cursor = latest
                 }
 
-                // 갈래를 감싼 작은 순서 컨테이너이거나, 중첩된 빌드.
-                "build" -> cursor = walk(ctx, b.children, cursor, out)
+                TimelineRole.SEQUENCE -> cursor = walk(ctx, b.children, cursor, out)
 
                 // 조건·반복은 시각을 확정할 수 없다. 편집기는 이런 빌드를 시간축으로 열지 않는다.
-                else -> Unit
+                TimelineRole.NONE -> Unit
             }
         }
         return cursor
@@ -79,9 +82,12 @@ object Timeline {
 
     private fun linear(m: Material): Boolean = when {
         TypeKinds.kindOf(m.typeId) == Kind.HAT -> true   // 모자는 발동 조건, 시간축엔 영향 없음
-        m.typeId == "wait" || m.typeId == "touch" -> true
-        m.typeId == "parallel" || m.typeId == "build" -> m.children.all { linear(it) }
-        else -> false
+        else -> when (TypeKinds.timelineOf(m.typeId)) {
+            TimelineRole.NONE -> false
+            TimelineRole.DELAY, TimelineRole.STROKE -> true
+            // 컨테이너는 속까지 전부 표현 가능해야 시간축에 그릴 수 있다.
+            TimelineRole.SEQUENCE, TimelineRole.CONCURRENT -> m.children.all { linear(it) }
+        }
     }
 
     private fun isHat(m: Material): Boolean = TypeKinds.kindOf(m.typeId) == Kind.HAT
@@ -93,7 +99,7 @@ object Timeline {
      * (억지로 열면 저장 때 표현 못 하는 블록이 사라진다.)
      */
     fun canOpenAsTimeline(build: Material): Boolean {
-        val clumps = build.children.filter { it.typeId == "build" }
+        val clumps = build.children.filter { Clump.isClump(it) }
         if (clumps.isEmpty()) return build.children.all { linear(it) }   // 레거시 평평
         val hatClumps = clumps.filter { c -> c.children.firstOrNull()?.let { isHat(it) } == true }
         if (hatClumps.size != 1) return false

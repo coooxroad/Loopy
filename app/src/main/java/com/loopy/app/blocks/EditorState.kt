@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
@@ -154,7 +155,7 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     is EditorEvent.AddFork -> {
         val branch = Material(
             id = UUID.randomUUID().toString(),
-            typeId = "build",
+            typeId = Clump.TYPE_ID,
             params = ParamBag.EMPTY,
             meta = Meta(),
         )

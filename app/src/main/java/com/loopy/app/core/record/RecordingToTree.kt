@@ -1,6 +1,7 @@
 package com.loopy.app.core.record
 
 import android.content.Context
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
@@ -51,7 +52,7 @@ object RecordingToTree {
 
         return Material(
             id = UUID.randomUUID().toString(),
-            typeId = "build",
+            typeId = Clump.TYPE_ID,
             params = ParamBag(mapOf("recordingId" to recordingId)),
             children = children,
             meta = Meta(name = name, createdAt = System.currentTimeMillis()),
@@ -97,7 +98,7 @@ object RecordingToTree {
                 // 갈래 자체가 순서축이므로, 대기와 터치를 담은 작은 순서 컨테이너로 감싼다.
                 Material(
                     id = UUID.randomUUID().toString(),
-                    typeId = "build",
+                    typeId = Clump.TYPE_ID,
                     params = ParamBag.EMPTY,
                     children = listOf(wait(lead), touch),
                 )

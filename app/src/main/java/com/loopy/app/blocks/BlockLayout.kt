@@ -3,6 +3,7 @@ package com.loopy.app.blocks
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.ParamBag
@@ -195,7 +196,7 @@ private fun freshHat(): Material =
 
 /** 위치를 가진 새 덩어리(build). */
 fun newClump(children: List<Material>, x: Float, y: Float): Material =
-    Material(UUID.randomUUID().toString(), "build", ParamBag.EMPTY, children, Meta(x = x, y = y))
+    Material(UUID.randomUUID().toString(), Clump.TYPE_ID, ParamBag.EMPTY, children, Meta(x = x, y = y))
 
 /**
  * 레거시 빌드(자식=블록 스택)를 캔버스 모양(덩어리들)으로 바꾼다. 멱등:
@@ -204,7 +205,7 @@ fun newClump(children: List<Material>, x: Float, y: Float): Material =
  */
 fun migrate(build: Material): Material {
     val kids = build.children
-    val alreadyCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
+    val alreadyCanvas = kids.isNotEmpty() && kids.all { Clump.isClump(it) }
     if (alreadyCanvas) return build.copy(children = kids.map { dedupeHats(it) })
     val stack = if (kids.firstOrNull()?.let { isHat(it) } == true) kids else listOf(freshHat()) + kids
     return build.copy(children = listOf(dedupeHats(newClump(stack, 24f, 24f))))

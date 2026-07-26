@@ -26,6 +26,7 @@ import android.widget.TextView
 import com.loopy.app.R
 import com.loopy.app.core.geom.Coords
 import com.loopy.app.core.io.ShizukuIo
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.record.RecordingToTree
 import com.loopy.app.data.MaterialStore
@@ -504,7 +505,7 @@ class OverlayService : Service() {
     // ── 저장 목록 (드롭다운: 플레이리스트 + 매크로) ──
     private fun toggleList() {
         listPanel?.let { listHolder.removeView(it); listPanel = null; return }
-        val builds = MaterialStore.load(this).filter { it.typeId == "build" }
+        val builds = MaterialStore.load(this).filter { Clump.isClump(it) }
         val lp = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(10), dp(12), dp(10))

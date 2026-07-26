@@ -5,6 +5,7 @@ import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
@@ -96,7 +97,7 @@ class AppState(shizuku: ShizukuState, canOverlay: Boolean, builds: List<Material
     fun newBuild(ctx: Context) {
         val fresh = Material(
             id = MaterialStore.newId(),
-            typeId = "build",
+            typeId = Clump.TYPE_ID,
             params = ParamBag.EMPTY,
             meta = Meta(name = "새 빌드", createdAt = System.currentTimeMillis()),
         )
@@ -127,6 +128,6 @@ class AppState(shizuku: ShizukuState, canOverlay: Boolean, builds: List<Material
 
     companion object {
         fun loadBuilds(ctx: Context): List<Material> =
-            MaterialStore.load(ctx).filter { it.typeId == "build" }
+            MaterialStore.load(ctx).filter { Clump.isClump(it) }
     }
 }

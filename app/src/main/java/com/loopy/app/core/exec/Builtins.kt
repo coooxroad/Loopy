@@ -1,5 +1,6 @@
 package com.loopy.app.core.exec
 
+import com.loopy.app.core.material.Clump
 import com.loopy.app.core.material.Material
 import kotlinx.coroutines.delay
 
@@ -83,7 +84,7 @@ object ParallelExecutor : Executor {
         if (branch.typeId == "touch") {
             return 0L to branch.params.str("strokeId")
         }
-        if (branch.typeId == "build" && branch.children.size == 2) {
+        if (Clump.isClump(branch) && branch.children.size == 2) {
             val a = branch.children[0]
             val b = branch.children[1]
             if (a.typeId == "wait" && b.typeId == "touch") {
@@ -120,7 +121,7 @@ object BuildExecutor : Executor {
         val kids = material.children
         // 캔버스: 자식이 전부 덩어리(build)면, 모자로 시작하는 덩어리만 실행한다.
         // 모자 없는 덩어리(조각)는 저장만 되고 돌지 않는다. (스크래치와 같은 최적화)
-        val isCanvas = kids.isNotEmpty() && kids.all { it.typeId == "build" }
+        val isCanvas = kids.isNotEmpty() && kids.all { Clump.isClump(it) }
         if (isCanvas) {
             for (clump in kids) {
                 if (clump.children.firstOrNull()?.kind != com.loopy.app.core.material.Kind.HAT) continue

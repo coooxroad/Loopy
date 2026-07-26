@@ -44,6 +44,7 @@ import com.loopy.app.shizuku.ShizukuState
 import com.loopy.app.ui.theme.Accent
 import com.loopy.app.ui.theme.LineIcon
 import com.loopy.app.ui.theme.LoopyCard
+import com.loopy.app.blocks.EditorAxis
 import com.loopy.app.blocks.BlockCanvas
 import com.loopy.app.ui.theme.palette
 import com.loopy.app.ui.theme.ThemeMode
@@ -147,7 +148,13 @@ private fun RootScreen(
             builds = app.builds,
             onBack = { app.closeEditors(context) },
             onRun = { m -> OverlayService.runBuild(context, m.id) },
-            onOpenTouch = { app.openTouchTimeline() },
+            // 어느 축을 여는지는 정의가 말해 주고, 그 축이 어떤 화면인지는 여기서 정한다.
+            onOpenEditor = { axis, _ ->
+                when (axis) {
+                    EditorAxis.TIMELINE -> app.openTouchTimeline()
+                    EditorAxis.BLOCKS -> Unit // 중첩 블록 편집기는 아직 없다(캔버스에서 그대로 편집).
+                }
+            },
         )
         return
     }
