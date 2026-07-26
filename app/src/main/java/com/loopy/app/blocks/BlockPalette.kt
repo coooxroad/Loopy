@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,10 @@ import com.loopy.app.ui.theme.palette
  * 종류가 늘어날수록 한 목록에 다 담을 수 없다. 기능별 탭으로 나누면 무엇이 어디 있는지
  * 기억하기 쉽고, 새 블록이 추가되어도 자리가 정해져 있다.
  */
+/** 팔레트에 보여줄 견본 블록. 기본값만 채운 빈 껍데기라 실제 블록과 같은 모양이 나온다. */
+private fun previewOf(def: BlockDef): Material =
+    Material(id = "preview-" + def.id, typeId = def.id, params = def.defaultParams())
+
 @Composable
 fun BlockPalette(
     onDismiss: () -> Unit,
@@ -64,6 +69,7 @@ fun BlockPalette(
     val p = palette
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
     // 모양이 문법이다 — 둥근 홈에는 값(REPORTER), 육각 홈에는 참/거짓(BOOLEAN) 만 보여준다.
+    val density = LocalDensity.current.density
     val wanted = when (accepts) {
         SlotKind.VALUE -> Kind.REPORTER
         SlotKind.BOOLEAN -> Kind.BOOLEAN
@@ -119,35 +125,14 @@ fun BlockPalette(
                         if (wanted != null) it.kind == wanted else it.category == tab && !isValueBlock(it)
                     }
                     .forEach { def ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(Radius.sm))
-                            .clickable { onPick(def) }
-                            .background(def.color.copy(alpha = 0.12f))
-                            .padding(Space.md),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(Radius.sm))
-                                .background(def.color),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            LoopyIcon(def.icon, Color.White, size = 16.dp)
-                        }
-                        Spacer(Modifier.width(Space.md))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                def.label,
-                                color = p.textStrong,
-                                fontSize = Type.body,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(def.hint, color = p.textMuted, fontSize = Type.label)
-                        }
-                    }
+                    // 견본은 캔버스와 **같은 렌더러**로 그린다. 모양(육각·둥근·C·모자)과 색,
+                    // 문장이 그대로 보이므로 무엇인지 따로 설명할 글이 필요 없다.
+                    BlockFace(
+                        material = previewOf(def),
+                        density = density,
+                        onSocket = null, // 견본의 홈은 누르지 않는다
+                        gestures = Modifier.clickable { onPick(def) },
+                    )
                 }
             }
             Spacer(Modifier.height(Space.lg))

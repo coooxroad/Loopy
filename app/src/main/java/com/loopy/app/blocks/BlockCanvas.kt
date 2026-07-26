@@ -284,19 +284,15 @@ private fun BlockView(
     val px = (xDp * density).roundToInt()
     val py = (yDp * density).roundToInt()
 
-    Box(
-        Modifier
+    BlockFace(
+        material = material,
+        density = density,
+        lifted = lifted,
+        onSocket = onSocket,
+        modifier = Modifier
             .offset { IntOffset(px, py) }
-            .zIndex(if (lifted) 10f else 0f)
-            .height(blockHeight(material).dp)
-            .widthIn(min = 132.dp)
-            .blockShape(
-                shape = def.shape,
-                color = def.color,
-                innerTop = mouthOf(material).top * density,
-                innerHeight = mouthOf(material).height * density,
-                lifted = lifted,
-            )
+            .zIndex(if (lifted) 10f else 0f),
+        gestures = Modifier
             .pointerInput(material.id) {
                 detectTapGestures(onTap = { curClick() })
             }
@@ -308,6 +304,41 @@ private fun BlockView(
                     onDragCancel = { curEnd() },
                 )
             },
+    )
+}
+
+/**
+ * 블록의 **생김새**. 위치도 몸짓도 모른다 — 모양·색·아이콘·문장만 그린다.
+ *
+ * 캔버스와 팔레트가 이걸 함께 쓴다. 같은 블록을 두 곳에서 따로 그리면 반드시 어긋나고,
+ * 새 블록을 더할 때마다 두 곳을 손봐야 한다. 한 벌로 두면 정의 하나만 늘리면 된다.
+ *
+ * [modifier] 는 바깥(자리잡기), [gestures] 는 안쪽(손짓)에 붙는다 — 크기·모양이 정해진
+ * 뒤에 손짓이 걸려야 눌리는 범위가 블록과 정확히 같아진다.
+ */
+@Composable
+fun BlockFace(
+    material: Material,
+    density: Float,
+    modifier: Modifier = Modifier,
+    gestures: Modifier = Modifier,
+    lifted: Boolean = false,
+    /** 홈을 눌렀을 때. null 이면 홈이 눌리지 않는다(팔레트의 견본 등). */
+    onSocket: ((String, SlotKind) -> Unit)? = null,
+) {
+    val def = defOf(material.typeId)
+    Box(
+        modifier
+            .height(blockHeight(material).dp)
+            .widthIn(min = 132.dp)
+            .blockShape(
+                shape = def.shape,
+                color = def.color,
+                innerTop = mouthOf(material).top * density,
+                innerHeight = mouthOf(material).height * density,
+                lifted = lifted,
+            )
+            .then(gestures),
     ) {
         Row(
             Modifier.height(C_HEADER.dp).padding(start = Space.md, end = Space.lg),
@@ -358,7 +389,7 @@ private fun SocketHole(text: String, boolean: Boolean, onClick: () -> Unit) {
  * 홈 안의 홈도 저절로 된다. 크기는 Compose 가 내용에 맞춰 재므로 따로 계산하지 않는다.
  */
 @Composable
-private fun NestedBlock(m: Material, onSocket: (String, SlotKind) -> Unit) {
+private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
     val def = defOf(m.typeId)
     Box(
         Modifier
@@ -404,7 +435,7 @@ private val SENTENCE_SLOT = Regex("\\{([A-Za-z_][\\w.]*)\\}")
  * 타입별 분기를 두지 않으므로 새 블록이 늘어도 이 함수는 그대로다.
  */
 @Composable
-private fun BlockSentence(def: BlockDef, m: Material, onSocket: (String, SlotKind) -> Unit) {
+private fun BlockSentence(def: BlockDef, m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
     val text = def.template
     var cursor = 0
     for (hit in SENTENCE_SLOT.findAll(text)) {
@@ -422,7 +453,8 @@ private fun BlockSentence(def: BlockDef, m: Material, onSocket: (String, SlotKin
             // 홈에 블록이 꽂혀 있으면 그 블록을 그 자리에 그린다(중첩).
             filled != null -> NestedBlock(filled, onSocket)
             // 빈 홈이면 눌러서 꽂을 수 있다.
-            slot != null -> SocketHole(slotValue(def, m, key), boolean) { onSocket(key, slot.accepts) }
+            slot != null && onSocket != null ->
+                SocketHole(slotValue(def, m, key), boolean) { onSocket(key, slot.accepts) }
             else -> SlotChip(slotValue(def, m, key), rounded = !boolean)
         }
         Spacer(Modifier.width(4.dp))
