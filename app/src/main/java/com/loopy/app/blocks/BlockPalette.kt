@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -32,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.SolidColor
@@ -55,6 +57,7 @@ import com.loopy.app.ui.theme.Space
 import com.loopy.app.ui.theme.Type
 import com.loopy.app.ui.theme.neu
 import com.loopy.app.ui.theme.Depth
+import com.loopy.app.ui.theme.neuColorSurface
 import com.loopy.app.ui.theme.palette
 
 /**
@@ -79,7 +82,7 @@ fun BlockTray(
     var showFilter by remember { mutableStateOf(false) }
     var kindFilter by remember { mutableStateOf<Kind?>(null) }
 
-    // 판은 한 겹만 솟는다. 안에 또 파인 면을 두면 층이 겹쳐 지저분해지고 자리도 좁아진다.
+    // 판만 솟는다. 안쪽은 평평하게 두고, 영역 구분은 색조 차이로만 준다.
     Column(
         modifier
             .fillMaxWidth()
@@ -89,22 +92,39 @@ fun BlockTray(
             .background(p.surface)
             .padding(Space.md),
     ) {
-        // ── 맨 위 가로줄: 검색 + 검색 설정 ──
+        // ── 맨 위: 검색 + 조율(검색 설정) ──
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                ParamText(query, "\uAC80\uC0C9") { query = it }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .neu(corner = Radius.sm, depth = Depth.SM, pressed = true)
+                    .clip(RoundedCornerShape(Radius.sm))
+                    // 위아래로 얇게 — 검색줄이 두꺼우면 블록 자리를 잡아먹는다.
+                    .padding(horizontal = Space.md, vertical = Space.xs),
+            ) {
+                if (query.isEmpty()) {
+                    Text("\uAC80\uC0C9", color = p.textMuted, fontSize = Type.label)
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = p.textStrong, fontSize = Type.label),
+                    cursorBrush = SolidColor(p.accent),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             Spacer(Modifier.width(Space.sm))
             NeuIconButton(
                 onClick = { showFilter = !showFilter },
                 selected = showFilter,
-                size = 40.dp,
+                size = 34.dp,
             ) {
-                LoopyIcon(Icon.SETTINGS, if (showFilter) p.accent else p.textMuted, size = 18.dp)
+                LoopyIcon(Icon.TUNE, if (showFilter) p.accent else p.textMuted, size = 16.dp)
             }
         }
 
-        // 검색 설정 — 블록의 성격으로 좁힌다. 카테고리와 축이 달라 함께 걸 수 있다.
+        // 검색 설정 — 옵션은 계속 늘어날 자리다(가로로 밀린다).
         if (showFilter) {
             Spacer(Modifier.height(Space.sm))
             Row(
@@ -118,9 +138,9 @@ fun BlockTray(
             }
         }
 
-        Spacer(Modifier.height(Space.md))
+        Spacer(Modifier.height(Space.sm))
 
-        // ── 아래: 왼쪽 카테고리(절반 미만) / 오른쪽 블록(절반 초과) ──
+        // ── 아래: 왼쪽 카테고리 / 오른쪽 블록 ──
         Row(Modifier.weight(1f)) {
             Column(
                 Modifier
@@ -130,24 +150,39 @@ fun BlockTray(
             ) {
                 BlockCategory.entries.forEach { c ->
                     val on = c == tab
-                    Box(
+                    Row(
                         Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(Radius.sm))
-                            .background(if (on) colorOf(c) else colorOf(c).copy(alpha = 0.14f))
                             .clickable { tab = c }
-                            .padding(horizontal = Space.md, vertical = Space.sm),
+                            .padding(horizontal = Space.sm, vertical = Space.sm),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // 고른 것만 색이 살아나며 **번진다**. 나머지는 판 쪽으로 섞여 가라앉는다.
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .then(
+                                    if (on) {
+                                        Modifier.neuColorSurface(colorOf(c), corner = 5.dp, depth = Depth.SM)
+                                    } else {
+                                        Modifier
+                                            .clip(CircleShape)
+                                            .background(lerp(colorOf(c), p.surface, 0.55f))
+                                    },
+                                ),
+                        )
+                        Spacer(Modifier.width(Space.sm))
                         Text(
                             c.label,
-                            color = if (on) Color.White else p.textStrong,
+                            color = if (on) p.textStrong else p.textMuted,
                             fontSize = Type.label,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                         )
                     }
                 }
             }
-            Spacer(Modifier.width(Space.md))
+            Spacer(Modifier.width(Space.sm))
 
             // 검색어가 있으면 카테고리를 넘어 전체에서 찾는다 — 찾는 사람은 분류를 모른다.
             val searching = query.isNotBlank()
@@ -162,11 +197,17 @@ fun BlockTray(
                         }
                         )
             }
-            BlockChoices(
-                defs = defs,
-                onPick = onPick,
-                modifier = Modifier.weight(0.62f).fillMaxHeight(),
-            )
+            // 블록 자리는 평평한 한 톤으로 구분한다(그림자를 또 쓰면 층이 겹친다).
+            Box(
+                Modifier
+                    .weight(0.62f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(Radius.sm))
+                    .background(lerp(p.surface, p.shadowColor, 0.06f))
+                    .padding(Space.sm),
+            ) {
+                BlockChoices(defs = defs, onPick = onPick, modifier = Modifier.fillMaxSize())
+            }
         }
     }
 }

@@ -51,6 +51,7 @@ enum class Icon {
     TRIM_LEFT,
     TRIM_RIGHT,
     CHECK,
+    TUNE,
 }
 
 @Composable
@@ -206,6 +207,14 @@ private fun DrawScope.drawIcon(icon: Icon, c: Color, sw: Float) {
                 },
                 c,
             )
+        }
+
+        // 조율: 가로 막대 위에 손잡이가 놓인 모양. 설정보다 "값을 조절한다"는 뜻이 분명하다.
+        Icon.TUNE -> {
+            line(0.18f, 0.34f, 0.82f, 0.34f)
+            circle(0.62f, 0.34f, 0.11f, filled = true)
+            line(0.18f, 0.66f, 0.82f, 0.66f)
+            circle(0.36f, 0.66f, 0.11f, filled = true)
         }
 
         Icon.LIST -> {
