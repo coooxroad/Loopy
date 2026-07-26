@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +24,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,12 +37,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import com.loopy.app.core.material.Field
 import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
+import com.loopy.app.ui.components.Icon
 import com.loopy.app.ui.components.LoopyIcon
 import com.loopy.app.ui.components.NeuButton
 import com.loopy.app.ui.components.NeuIconButton
@@ -70,58 +74,115 @@ fun BlockTray(
     modifier: Modifier = Modifier,
 ) {
     val p = palette
-    val density = LocalDensity.current.density
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
+    var query by remember { mutableStateOf("") }
+    var showFilter by remember { mutableStateOf(false) }
+    var kindFilter by remember { mutableStateOf<Kind?>(null) }
 
-    Column(modifier.fillMaxWidth()) {
-        // 탭은 판 **위에 얹혀** 있다. 판 높이를 먹지 않으므로 블록 자리를 뺏지 않는다.
-        // 고른 탭은 아래가 판으로 이어지고, 나머지는 판 색으로 한 단 물러난다 — 폴더 탭처럼.
-        Row(
-            Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = Space.lg),
-            horizontalArrangement = Arrangement.spacedBy(Space.xs),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            BlockCategory.entries.forEach { c ->
-                val on = c == tab
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(topStart = Radius.sm, topEnd = Radius.sm))
-                        .background(if (on) colorOf(c) else p.surface)
-                        .clickable { tab = c }
-                        .padding(
-                            horizontal = Space.md,
-                            vertical = if (on) Space.sm else Space.xs,
-                        ),
-                ) {
-                    Text(
-                        c.label,
-                        color = if (on) Color.White else p.textMuted,
-                        fontSize = Type.label,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
+    // 판은 한 겹만 솟는다. 안에 또 파인 면을 두면 층이 겹쳐 지저분해지고 자리도 좁아진다.
+    Column(
+        modifier
+            .fillMaxWidth()
+            .height(panelHeight)
+            .neu(corner = Radius.lg, depth = Depth.LG)
+            .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
+            .background(p.surface)
+            .padding(Space.md),
+    ) {
+        // ── 맨 위 가로줄: 검색 + 검색 설정 ──
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                ParamText(query, "\uAC80\uC0C9") { query = it }
+            }
+            Spacer(Modifier.width(Space.sm))
+            NeuIconButton(
+                onClick = { showFilter = !showFilter },
+                selected = showFilter,
+                size = 40.dp,
+            ) {
+                LoopyIcon(Icon.SETTINGS, if (showFilter) p.accent else p.textMuted, size = 18.dp)
             }
         }
 
-        // 판은 한 겹만 솟는다. 안에 또 파인 면을 두면 층이 겹쳐 지저분해지고 자리도 좁아진다.
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .height(panelHeight)
-                .neu(corner = Radius.lg, depth = Depth.LG)
-                .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
-                .background(p.surface)
-                .padding(horizontal = Space.lg, vertical = Space.md),
-        ) {
+        // 검색 설정 — 블록의 성격으로 좁힌다. 카테고리와 축이 달라 함께 걸 수 있다.
+        if (showFilter) {
+            Spacer(Modifier.height(Space.sm))
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                KindChip("\uC804\uCCB4", kindFilter == null) { kindFilter = null }
+                KindChip("\uD2B8\uB9AC\uAC70", kindFilter == Kind.HAT) { kindFilter = Kind.HAT }
+                KindChip("\uD589\uB3D9", kindFilter == Kind.ACTION) { kindFilter = Kind.ACTION }
+                KindChip("\uC81C\uC5B4", kindFilter == Kind.CONTROL) { kindFilter = Kind.CONTROL }
+            }
+        }
+
+        Spacer(Modifier.height(Space.md))
+
+        // ── 아래: 왼쪽 카테고리(절반 미만) / 오른쪽 블록(절반 초과) ──
+        Row(Modifier.weight(1f)) {
+            Column(
+                Modifier
+                    .weight(0.38f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                BlockCategory.entries.forEach { c ->
+                    val on = c == tab
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.sm))
+                            .background(if (on) colorOf(c) else colorOf(c).copy(alpha = 0.14f))
+                            .clickable { tab = c }
+                            .padding(horizontal = Space.md, vertical = Space.sm),
+                    ) {
+                        Text(
+                            c.label,
+                            color = if (on) Color.White else p.textStrong,
+                            fontSize = Type.label,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(Space.md))
+
+            // 검색어가 있으면 카테고리를 넘어 전체에서 찾는다 — 찾는 사람은 분류를 모른다.
+            val searching = query.isNotBlank()
+            val defs = BlockRegistry.all().filter { d ->
+                !isValueBlock(d) &&
+                    (kindFilter == null || d.kind == kindFilter) &&
+                    (
+                        if (searching) {
+                            d.label.contains(query, true) || d.template.contains(query, true)
+                        } else {
+                            d.category == tab
+                        }
+                        )
+            }
             BlockChoices(
-                defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
-                density = density,
+                defs = defs,
                 onPick = onPick,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(0.62f).fillMaxHeight(),
             )
         }
+    }
+}
+
+/** 검색 설정의 작은 칩. */
+@Composable
+private fun KindChip(label: String, on: Boolean, onClick: () -> Unit) {
+    val p = palette
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(Radius.sm))
+            .background(if (on) p.accent else p.surface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = Space.sm, vertical = Space.xs),
+    ) {
+        Text(label, color = if (on) Color.White else p.textMuted, fontSize = Type.label)
     }
 }
 
@@ -129,25 +190,35 @@ fun BlockTray(
 @Composable
 private fun BlockChoices(
     defs: List<BlockDef>,
-    density: Float,
     onPick: (BlockDef) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 문장 블록은 폭이 넓어 가로로 늘어놓으면 화면에 두어 개밖에 안 들어온다. 세로가 맞다.
-    Column(
-        modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(Space.sm),
-    ) {
-        defs.forEach { def ->
-            BlockFace(
-                material = previewOf(def),
-                density = density,
-                onSocket = null, // 견본의 홈은 누르지 않는다
-                gestures = Modifier.clickable { onPick(def) },
-            )
+    // 견본은 실제보다 조금 작게. LocalDensity 를 낮추면 크기·글자·그림자가 **함께** 줄어
+    // 비율이 그대로 유지된다(따로 줄이면 모양이 망가진다).
+    val base = LocalDensity.current
+    val small = Density(base.density * PREVIEW_SCALE, base.fontScale)
+
+    CompositionLocalProvider(LocalDensity provides small) {
+        Column(
+            modifier
+                .verticalScroll(rememberScrollState())
+                .horizontalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(Space.sm),
+        ) {
+            defs.forEach { def ->
+                BlockFace(
+                    material = previewOf(def),
+                    density = small.density,
+                    onSocket = null, // 견본의 홈은 누르지 않는다
+                    gestures = Modifier.clickable { onPick(def) },
+                )
+            }
         }
     }
 }
+
+/** 팔레트 견본의 크기 비율. 1 이면 캔버스와 같은 크기. */
+private const val PREVIEW_SCALE = 0.8f
 
 /**
  * 홈에 꽂을 블록 고르기. 모양이 문법이므로 그 홈이 받는 종류만 보여준다.
@@ -190,7 +261,6 @@ fun BlockPalette(
             Spacer(Modifier.height(Space.md))
             BlockChoices(
                 defs = if (wanted == null) emptyList() else BlockRegistry.all().filter { it.kind == wanted },
-                density = density,
                 onPick = onPick,
                 modifier = Modifier.heightIn(max = 320.dp),
             )
