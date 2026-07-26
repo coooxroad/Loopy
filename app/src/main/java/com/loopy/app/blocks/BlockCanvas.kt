@@ -226,7 +226,7 @@ fun BlockCanvas(
                 .align(Alignment.BottomEnd)
                 .padding(Space.lg)
                 // 트레이가 열려 있으면 그 위로 비켜선다(겹쳐 가리지 않게).
-                .padding(bottom = if (ui.picking) TRAY_H.dp else 0.dp),
+                .padding(bottom = if (ui.picking) TRAY_HEIGHT.dp else 0.dp),
         ) {
             if (curDrag != null) {
                 LoopyIcon(Icon.DELETE, if (overTrash) Color(0xFFFF5A5F) else Color.White, size = if (overTrash) 26.dp else 22.dp)
@@ -411,9 +411,6 @@ private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
         }
     }
 }
-
-/** 트레이가 차지하는 대략 높이. FAB 을 그 위로 밀어 올릴 때 쓴다. */
-private const val TRAY_H = 96
 
 /** 홈에 꽂힌 블록의 높이. 문장 한 줄이 들어갈 만큼만. */
 private const val NESTED_H = 28

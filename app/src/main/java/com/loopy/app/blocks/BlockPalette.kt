@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
@@ -70,46 +69,65 @@ fun BlockTray(
     val density = LocalDensity.current.density
     var tab by remember { mutableStateOf(BlockCategory.ACTION) }
 
-    Row(
+    Column(
         modifier
             .fillMaxWidth()
+            .height(TRAY_HEIGHT.dp)
             .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
             .background(p.surface)
-            .padding(Space.md),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(horizontal = Space.lg, vertical = Space.md),
     ) {
-        // 색 레일 — 고른 카테고리만 크고 진하게. 블록 색이 이미 카테고리를 말하므로 글자는 겹말이다.
-        Column(verticalArrangement = Arrangement.spacedBy(Space.sm)) {
+        // 카테고리는 **이름과 색을 함께** 보인다. 색만으로는 이미 아는 사람만 알아본다.
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(Space.sm),
+        ) {
             BlockCategory.entries.forEach { c ->
                 val on = c == tab
                 Box(
                     Modifier
-                        .size(if (on) 20.dp else 14.dp)
-                        .clip(CircleShape)
-                        .background(colorOf(c).copy(alpha = if (on) 1f else 0.4f))
-                        .clickable { tab = c },
-                )
+                        .clip(RoundedCornerShape(Radius.sm))
+                        .background(if (on) colorOf(c) else colorOf(c).copy(alpha = 0.16f))
+                        .clickable { tab = c }
+                        .padding(horizontal = Space.md, vertical = Space.sm),
+                ) {
+                    Text(
+                        c.label,
+                        color = if (on) Color.White else p.textStrong,
+                        fontSize = Type.label,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
             }
         }
-        Spacer(Modifier.width(Space.md))
+        Spacer(Modifier.height(Space.md))
+
+        // 문장 블록은 폭이 넓다 — 세로로 쌓아야 한눈에 여러 개가 들어온다.
         BlockChoices(
             defs = BlockRegistry.all().filter { it.category == tab && !isValueBlock(it) },
             density = density,
-            horizontal = true,
             onPick = onPick,
+            modifier = Modifier.weight(1f),
         )
     }
 }
+
+/** 트레이 높이. 세로 목록이 넉넉히 보이도록. 캔버스 쪽 FAB 도 이만큼 비켜선다. */
+const val TRAY_HEIGHT = 300
 
 /** 트레이와 홈 고르기가 함께 쓰는 블록 줄. 견본은 캔버스와 같은 렌더러로 그린다. */
 @Composable
 private fun BlockChoices(
     defs: List<BlockDef>,
     density: Float,
-    horizontal: Boolean,
     onPick: (BlockDef) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val items: @Composable () -> Unit = {
+    // 문장 블록은 폭이 넓어 가로로 늘어놓으면 화면에 두어 개밖에 안 들어온다. 세로가 맞다.
+    Column(
+        modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(Space.sm),
+    ) {
         defs.forEach { def ->
             BlockFace(
                 material = previewOf(def),
@@ -118,18 +136,6 @@ private fun BlockChoices(
                 gestures = Modifier.clickable { onPick(def) },
             )
         }
-    }
-    if (horizontal) {
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(Space.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) { items() }
-    } else {
-        Column(
-            Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(Space.sm),
-        ) { items() }
     }
 }
 
@@ -175,8 +181,8 @@ fun BlockPalette(
             BlockChoices(
                 defs = if (wanted == null) emptyList() else BlockRegistry.all().filter { it.kind == wanted },
                 density = density,
-                horizontal = false,
                 onPick = onPick,
+                modifier = Modifier.heightIn(max = 320.dp),
             )
         }
     }
