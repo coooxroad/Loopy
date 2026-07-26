@@ -2,7 +2,7 @@ package com.loopy.app.blocks
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -337,9 +337,10 @@ private fun BlockChoices(
                     onSocket = null, // 견본의 홈은 누르지 않는다
                     gestures = Modifier
                         .onGloballyPositioned { rootPos = it.positionInRoot() }
-                        // **길게 눌러야** 집힌다. 바로 집으면 목록을 스크롤할 수 없다.
+                        // 집으면 곧바로 끌린다. 끌어다 놓는 것이 유일한 방법이므로
+                        // 잘못 눌러 엉뚱한 곳에 블록이 생기는 일이 없다.
                         .pointerInput(def.id) {
-                            detectDragGesturesAfterLongPress(
+                            detectDragGestures(
                                 onDragStart = { local ->
                                     // 견본은 축소돼 있으므로, 잡은 지점을 캔버스 크기로 되돌린다.
                                     onDragStart(def, rootPos + local, local / PREVIEW_SCALE)
@@ -348,8 +349,7 @@ private fun BlockChoices(
                                 onDragEnd = { onDragEnd() },
                                 onDragCancel = { onDragEnd() },
                             )
-                        }
-                        .clickable { onPick(def) },
+                        },
                 )
             }
         }
