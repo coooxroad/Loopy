@@ -114,6 +114,11 @@ fun BlockCanvas(
     var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
     // 홈의 화면상 자리. 글자 길이에 따라 달라지므로 레이아웃이 아니라 화면이 알려준다.
     val socketBoxes = remember { mutableStateMapOf<String, SocketBox>() }
+    // 판 안에 검색줄·카테고리·블록이 모두 들어가므로 넉넉히 잡는다.
+    val panelH = LocalConfiguration.current.screenHeightDp.dp * 0.58f
+    val trayH = panelH
+    // 끌고 있는 동안에는 접어 둔다(놓을 자리가 보여야 하므로). 손을 떼면 다시 올라온다.
+    val trayShown = ui.picking && ui.drag == null
     val drag = ui.drag
     val curDrag = drag?.blockId
     val curTgt = drag?.target
@@ -123,7 +128,16 @@ fun BlockCanvas(
     else ui.canvas
     val origLayout = layoutCanvas(ui.canvas)
     val previewLayout = layoutCanvas(previewCanvas)
-    val ghostAt = if (previewing) previewLayout.placed.firstOrNull { it.block.id == curDrag } else null
+    // 고스트는 **실제로 이어지는 블록**을 보여준다. 아래에 붙일 땐 끌고 온 줄기의 맨 위가,
+    // 맨 위에 꽂을 땐 맨 아래가 상대와 맞물린다 — 그 블록을 보여야 어디가 붙는지 읽힌다.
+    val ghostId = if (curDrag == null) {
+        null
+    } else if (curTgt != null && curTgt.parentId == null && curTgt.index == 0) {
+        tailOf(ui.canvas, curDrag).lastOrNull()?.id ?: curDrag
+    } else {
+        curDrag
+    }
+    val ghostAt = if (previewing) previewLayout.placed.firstOrNull { it.block.id == ghostId } else null
     val dragGroup = drag?.group ?: emptySet()
     val dragDelta = drag?.delta ?: Offset.Zero
     val overTrash = drag?.overTrash ?: false
@@ -134,9 +148,14 @@ fun BlockCanvas(
             .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
             .background(p.surface)
             .pointerInput(Unit) {
-                detectTransformGestures { _, pan, gestureZoom, _ ->
-                    editor.onEvent(EditorEvent.Zoom(gestureZoom))
-                    editor.onEvent(EditorEvent.Pan(pan))
+                detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                    // 트레이 위에서 시작한 손가락은 캔버스를 움직이지 않는다. 트레이 자신의
+                    // 제스처를 건드리지 않으려고, 막는 일을 캔버스 쪽에서 한다.
+                    val trayTop = if (trayShown) screenHpx - trayH.value * density else Float.MAX_VALUE
+                    if (centroid.y < trayTop) {
+                        editor.onEvent(EditorEvent.Zoom(gestureZoom))
+                        editor.onEvent(EditorEvent.Pan(pan))
+                    }
                 }
             },
     ) {
@@ -248,12 +267,7 @@ fun BlockCanvas(
             }
         }
 
-        // 판 안에 검색줄·카테고리·블록이 모두 들어가므로 넉넉히 잡는다.
-        val panelH = LocalConfiguration.current.screenHeightDp.dp * 0.58f
-        val trayH = panelH
         // 열고 닫힘은 미끄러져 들어오고 나간다(툭 나타나면 어디서 왔는지 읽히지 않는다).
-        // 끌고 있는 동안에는 접어 둔다(놓을 자리가 보여야 하므로). 손을 떼면 다시 올라온다.
-        val trayShown = ui.picking && ui.drag == null
         val traySlide by animateDpAsState(if (trayShown) 0.dp else trayH, label = "tray")
         // + 가 그대로 돌아 x 가 된다 — 같은 버튼이 여닫이라는 뜻이 형태로 이어진다.
         val plusTurn by animateFloatAsState(if (ui.picking) 45f else 0f, label = "plus")
