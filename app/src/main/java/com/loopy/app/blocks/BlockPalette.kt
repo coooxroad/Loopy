@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -336,7 +335,6 @@ private fun BlockChoices(
                 BlockFace(
                     material = previewOf(def),
                     density = small.density,
-                    onSocket = null, // 견본의 홈은 누르지 않는다
                     gestures = Modifier
                         .onGloballyPositioned { rootPos = it.positionInRoot() }
                         // 집으면 곧바로 끌린다. 끌어다 놓는 것이 유일한 방법이므로
@@ -361,54 +359,6 @@ private fun BlockChoices(
 /** 팔레트 견본의 크기 비율. 1 이면 캔버스와 같은 크기. */
 private const val PREVIEW_SCALE = 0.8f
 
-/**
- * 홈에 꽂을 블록 고르기. 모양이 문법이므로 그 홈이 받는 종류만 보여준다.
- */
-@Composable
-fun BlockPalette(
-    onDismiss: () -> Unit,
-    onPick: (BlockDef) -> Unit,
-    accepts: SlotKind,
-) {
-    val p = palette
-    val density = LocalDensity.current.density
-    // 홈이 받는 모양 → 그 모양을 내는 블록 종류. 아무것도 못 받는 홈이면 후보가 없다.
-    val wanted: Kind? = when (accepts) {
-        SlotKind.VALUE -> Kind.REPORTER
-        SlotKind.BOOLEAN -> Kind.BOOLEAN
-        SlotKind.NONE -> null
-    }
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color(0x99101218))
-            .clickable(onClick = onDismiss),
-        contentAlignment = Alignment.BottomCenter,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
-                .background(p.surface)
-                .padding(Space.lg),
-        ) {
-            Text(
-                "\uD648\uC5D0 \uAF42\uAE30",
-                color = p.textStrong,
-                fontSize = Type.heading,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(Space.md))
-            BlockChoices(
-                defs = if (wanted == null) emptyList() else BlockRegistry.all().filter { it.kind == wanted },
-                onPick = onPick,
-                modifier = Modifier.heightIn(max = 320.dp),
-            )
-        }
-    }
-}
-
 @Composable
 fun BlockParamSheet(
     material: Material,
@@ -418,8 +368,6 @@ fun BlockParamSheet(
     onAddFork: (() -> Unit)? = null,
     /** "빌드 실행"의 대상 후보. 저장된 빌드 목록을 화면에서 넘겨준다(자기 자신은 빼고). */
     builds: List<Material> = emptyList(),
-    /** 홈에 꽂을 블록 고르기 열기. */
-    onPickSocket: ((String, SlotKind) -> Unit)? = null,
     /** 홈 비우기. */
     onClearSocket: ((String) -> Unit)? = null,
 ) {
@@ -474,9 +422,11 @@ fun BlockParamSheet(
                 Spacer(Modifier.height(Space.xs))
                 val filled = material.slots[sd.key]
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    NeuButton(
-                        filled?.let { BlockRegistry.find(it.typeId)?.label ?: it.typeId } ?: "\uBE14\uB85D \uAF42\uAE30",
-                        onClick = { onPickSocket?.invoke(sd.key, sd.accepts) },
+                    Text(
+                        filled?.let { BlockRegistry.find(it.typeId)?.label ?: it.typeId }
+                            ?: "\uD314\uB808\uD2B8\uC5D0\uC11C \uB04C\uC5B4\uB2E4 \uAF42\uC73C\uC138\uC694",
+                        color = if (filled != null) p.textStrong else p.textMuted,
+                        fontSize = Type.body,
                         modifier = Modifier.weight(1f),
                     )
                     if (filled != null) {

@@ -26,11 +26,8 @@ data class EditorUi(
     val drag: Drag? = null,             // 드래그 중이 아니면 null
     val picking: Boolean = false,       // 팔레트 열림
     val editing: Material? = null,      // 파라미터 시트 대상
-    val socketPick: SocketPick? = null, // 홈 고르기 열림(어느 홈을 채우는 중인지)
 )
 
-/** 어느 블록의 어느 홈을 채우는 중인가. accepts 가 고를 수 있는 블록을 좁힌다. */
-data class SocketPick(val hostId: String, val key: String, val accepts: SlotKind)
 
 /** 드래그 한 판의 상태. null 이면 드래그 아님 — "드래그 중"이 타입으로 명확해진다. */
 @Immutable
@@ -76,11 +73,6 @@ sealed interface EditorEvent {
     data class SaveParams(val updated: Material) : EditorEvent
     data class Delete(val id: String) : EditorEvent
     data class AddFork(val parentId: String) : EditorEvent
-    /** 빈 홈을 눌렀다 — 무엇을 꽂을지 고르는 중. */
-    data class OpenSocket(val hostId: String, val key: String, val accepts: SlotKind) : EditorEvent
-
-    /** 고른 블록을 홈에 꽂는다. */
-    data class FillSocket(val def: BlockDef) : EditorEvent
 
     /** 홈을 비운다. */
     data class ClearSocketAt(val hostId: String, val key: String) : EditorEvent
@@ -147,7 +139,11 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                         SlotKind.BOOLEAN -> grabbed.kind == Kind.BOOLEAN
                         SlotKind.NONE -> false
                     }
-                    kindOk && sx >= b.left && sx <= b.right && sy >= b.top && sy <= b.bottom
+                    // 홈은 작다. 좌상단이 정확히 안에 들어와야 하면 사실상 못 꽂는다.
+                    // 넉넉한 여유를 두르고, 그 안에 들어오면 잡는다.
+                    val m = SOCKET_REACH * e.density
+                    kindOk && sx >= b.left - m && sx <= b.right + m &&
+                        sy >= b.top - m && sy <= b.bottom + m
                 }?.let { SocketRef(it.hostId, it.key) }
             }
             // 맨 위 자리는 끌고 온 줄기 전체를 위로 올려야 닿으므로 더 멀리서도 잡히게 한다.
@@ -222,21 +218,9 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         )
     }
 
-    is EditorEvent.OpenSocket -> s.copy(socketPick = SocketPick(e.hostId, e.key, e.accepts), editing = null)
-
-    is EditorEvent.FillSocket -> s.socketPick?.let { pick ->
-        val block = Material(
-            id = UUID.randomUUID().toString(),
-            typeId = e.def.id,
-            params = e.def.defaultParams(),
-            meta = Meta(),
-        )
-        s.copy(canvas = putInSlot(s.canvas, pick.hostId, pick.key, block), socketPick = null)
-    } ?: s
-
     is EditorEvent.ClearSocketAt -> s.copy(canvas = clearSlot(s.canvas, e.hostId, e.key), editing = null)
 
-    is EditorEvent.Dismiss -> s.copy(picking = false, editing = null, socketPick = null)
+    is EditorEvent.Dismiss -> s.copy(picking = false, editing = null)
 }
 
 /** 드래그를 놓았을 때: 휴지통이면 삭제, 스냅 대상이 있으면 삽입, 없으면 자유 배치. */
@@ -276,3 +260,6 @@ class EditorState(initial: Material, private val onPersist: (Material) -> Unit) 
 
 /** 연결점에 붙는 거리(dp). 손끝은 정확하지 않으므로 기본값보다 넉넉히 둔다. */
 private const val SNAP = 34f
+
+/** 홈에 꽂힐 때 인정하는 여유(dp). 홈 자체가 작으므로 둘레를 넉넉히 넓힌다. */
+private const val SOCKET_REACH = 28f
