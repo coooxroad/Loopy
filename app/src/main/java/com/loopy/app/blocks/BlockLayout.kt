@@ -49,8 +49,15 @@ fun isHat(m: Material): Boolean = m.kind == Kind.HAT
  *  - 그 밖: 만들어진 자리면 어디든.
  * 마개 뒤·모자 앞처럼 "자리 자체가 없어야 하는" 규칙은 자리를 만들 때(layoutStack) 건다.
  */
-fun canPlaceAt(block: Material, slot: Slot): Boolean =
-    if (isHat(block)) slot.parentId == null && slot.index == 0 else true
+/** 값을 내는 블록(둥근·육각). 줄기에 끼지 못하고 홈에만 들어간다. */
+fun isValue(m: Material): Boolean = m.kind == Kind.REPORTER || m.kind == Kind.BOOLEAN
+
+fun canPlaceAt(block: Material, slot: Slot): Boolean = when {
+    // 값 블록은 줄기의 어떤 자리에도 들어가지 않는다 — 갈 곳은 홈뿐이다.
+    isValue(block) -> false
+    isHat(block) -> slot.parentId == null && slot.index == 0
+    else -> true
+}
 
 /** 마개(아래가 평평한 블록). 뒤에 아무것도 이어붙일 수 없다 — 모양이 곧 문법이다. */
 fun isCap(m: Material): Boolean = defOf(m.typeId).shape == BlockShape.CAP

@@ -24,6 +24,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -32,11 +33,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalConfiguration
@@ -109,6 +112,8 @@ fun BlockCanvas(
     val recentIds = remember { mutableStateListOf<String>() }
     // 이 화면이 루트 안에서 어디부터 시작하는지(상단 바 등을 감안).
     var canvasOrigin by remember { mutableStateOf(Offset.Zero) }
+    // 홈의 화면상 자리. 글자 길이에 따라 달라지므로 레이아웃이 아니라 화면이 알려준다.
+    val socketBoxes = remember { mutableStateMapOf<String, SocketBox>() }
     val drag = ui.drag
     val curDrag = drag?.blockId
     val curTgt = drag?.target
@@ -196,7 +201,7 @@ fun BlockCanvas(
                         lifted = inDrag,
                         onDragStart = { editor.onEvent(EditorEvent.DragStart(pl.block.id)) },
                         onDrag = { amount ->
-                            editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx)))
+                            editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx), socketBoxes.values.toList()))
                         },
                         onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                         onClick = {
@@ -207,6 +212,17 @@ fun BlockCanvas(
                         },
                         onSocket = { key, accepts ->
                             editor.onEvent(EditorEvent.OpenSocket(pl.block.id, key, accepts))
+                        },
+                        onSocketBounds = { key, accepts, box ->
+                            socketBoxes["${pl.block.id}/$key"] = SocketBox(
+                                hostId = pl.block.id,
+                                key = key,
+                                accepts = accepts,
+                                left = box.left - canvasOrigin.x,
+                                top = box.top - canvasOrigin.y,
+                                right = box.right - canvasOrigin.x,
+                                bottom = box.bottom - canvasOrigin.y,
+                            )
                         },
                     )
                 }
@@ -280,7 +296,7 @@ fun BlockCanvas(
                 },
                 // 이후는 캔버스에서 끌 때와 완전히 같은 길을 탄다 — 고스트·스냅·휴지통이 그대로 붙는다.
                 onDragMove = { amount ->
-                    editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx)))
+                    editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx), socketBoxes.values.toList()))
                 },
                 onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                 panelHeight = panelH,
@@ -329,6 +345,7 @@ private fun BlockView(
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
     onSocket: (String, SlotKind) -> Unit,
+    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
     val curStart by rememberUpdatedState(onDragStart)
@@ -343,6 +360,7 @@ private fun BlockView(
         density = density,
         lifted = lifted,
         onSocket = onSocket,
+        onSocketBounds = onSocketBounds,
         modifier = Modifier
             .offset { IntOffset(px, py) }
             .zIndex(if (lifted) 10f else 0f),
@@ -379,6 +397,8 @@ fun BlockFace(
     lifted: Boolean = false,
     /** 홈을 눌렀을 때. null 이면 홈이 눌리지 않는다(팔레트의 견본 등). */
     onSocket: ((String, SlotKind) -> Unit)? = null,
+    /** 홈이 화면에서 차지한 자리를 알린다. 끌어다 꽂을 때 목표로 쓰인다. */
+    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
     Box(
@@ -400,7 +420,7 @@ fun BlockFace(
         ) {
             LoopyIcon(def.icon, Color.White, size = 15.dp)
             Spacer(Modifier.width(Space.sm))
-            BlockSentence(def, material, onSocket)
+            BlockSentence(def, material, onSocket, onSocketBounds)
         }
     }
 }
@@ -412,7 +432,12 @@ fun BlockFace(
  * 뜻이 모양에서 읽히게. 눌러서 꽂을 블록을 고른다.
  */
 @Composable
-private fun SocketHole(text: String, boolean: Boolean, onClick: () -> Unit) {
+private fun SocketHole(
+    text: String,
+    boolean: Boolean,
+    onClick: () -> Unit,
+    onBounds: (Rect) -> Unit = {},
+) {
     val shape = if (boolean) {
         androidx.compose.foundation.shape.CutCornerShape(percent = 50)
     } else {
@@ -420,6 +445,7 @@ private fun SocketHole(text: String, boolean: Boolean, onClick: () -> Unit) {
     }
     Box(
         Modifier
+            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
             .clip(shape)
             .background(Color.Black.copy(alpha = 0.22f))
             .clickable(onClick = onClick)
@@ -443,7 +469,11 @@ private fun SocketHole(text: String, boolean: Boolean, onClick: () -> Unit) {
  * 홈 안의 홈도 저절로 된다. 크기는 Compose 가 내용에 맞춰 재므로 따로 계산하지 않는다.
  */
 @Composable
-private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
+private fun NestedBlock(
+    m: Material,
+    onSocket: ((String, SlotKind) -> Unit)?,
+    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+) {
     val def = defOf(m.typeId)
     Box(
         Modifier
@@ -453,7 +483,7 @@ private fun NestedBlock(m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BlockSentence(def, m, onSocket)
+            BlockSentence(def, m, onSocket, onSocketBounds)
         }
     }
 }
@@ -492,7 +522,12 @@ private val SENTENCE_SLOT = Regex("\\{([A-Za-z_][\\w.]*)\\}")
  * 타입별 분기를 두지 않으므로 새 블록이 늘어도 이 함수는 그대로다.
  */
 @Composable
-private fun BlockSentence(def: BlockDef, m: Material, onSocket: ((String, SlotKind) -> Unit)?) {
+private fun BlockSentence(
+    def: BlockDef,
+    m: Material,
+    onSocket: ((String, SlotKind) -> Unit)?,
+    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+) {
     val text = def.template
     var cursor = 0
     for (hit in SENTENCE_SLOT.findAll(text)) {
@@ -508,10 +543,15 @@ private fun BlockSentence(def: BlockDef, m: Material, onSocket: ((String, SlotKi
         val filled = m.slots[key]
         when {
             // 홈에 블록이 꽂혀 있으면 그 블록을 그 자리에 그린다(중첩).
-            filled != null -> NestedBlock(filled, onSocket)
+            filled != null -> NestedBlock(filled, onSocket, onSocketBounds)
             // 빈 홈이면 눌러서 꽂을 수 있다.
             slot != null && onSocket != null ->
-                SocketHole(slotValue(def, m, key), boolean) { onSocket(key, slot.accepts) }
+                SocketHole(
+                    text = slotValue(def, m, key),
+                    boolean = boolean,
+                    onBounds = { r -> onSocketBounds(key, slot.accepts, r) },
+                    onClick = { onSocket(key, slot.accepts) },
+                )
             else -> SlotChip(slotValue(def, m, key), rounded = !boolean)
         }
         Spacer(Modifier.width(4.dp))

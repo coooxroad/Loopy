@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import com.loopy.app.core.material.Clump
+import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
@@ -38,13 +39,34 @@ data class Drag(
     val group: Set<String>,             // 딸려오는 꼬리 id들
     val delta: Offset = Offset.Zero,    // dp
     val target: Slot? = null,           // 스냅 대상(있으면 미리보기)
+    val socket: SocketRef? = null,      // 홈 위에 있으면 그 홈(값 블록일 때만)
     val overTrash: Boolean = false,
 )
+
+/** 화면이 알려준 홈의 자리. 홈 위치는 글자 길이에 달려 있어 레이아웃이 알 수 없다. */
+data class SocketBox(
+    val hostId: String,
+    val key: String,
+    val accepts: SlotKind,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+)
+
+/** 어느 블록의 어느 홈인지. */
+data class SocketRef(val hostId: String, val key: String)
 
 /** 사용자가 하는 일. 화면은 제스처·탭을 이 이벤트로만 올려보낸다(계산은 안 함). */
 sealed interface EditorEvent {
     data class DragStart(val blockId: String) : EditorEvent
-    data class DragMove(val amountPx: Offset, val density: Float, val screen: Size) : EditorEvent
+    data class DragMove(
+        val amountPx: Offset,
+        val density: Float,
+        val screen: Size,
+        /** 화면 좌표(px)로 잰 홈들. 값 블록을 끌 때만 쓰인다. */
+        val sockets: List<SocketBox> = emptyList(),
+    ) : EditorEvent
     object DragEnd : EditorEvent
     data class Pan(val amountPx: Offset) : EditorEvent
     data class Zoom(val factor: Float) : EditorEvent
@@ -115,8 +137,22 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                 .map { sl ->
                     if (sl.parentId == null && sl.index == 0) sl.copy(y = sl.y - grabbedH) else sl
                 }
-            val target = if (overTrash) null else nearestSlot(slots, cx, cy)
-            s.copy(drag = d.copy(delta = delta, overTrash = overTrash, target = target))
+            // 값 블록은 줄기 연결점 후보가 비므로(canPlaceAt=false) 대신 홈을 찾는다.
+            val socket = if (overTrash || grabbed == null || !isValue(grabbed)) {
+                null
+            } else {
+                e.sockets.firstOrNull { b ->
+                    val kindOk = when (b.accepts) {
+                        SlotKind.VALUE -> grabbed.kind == Kind.REPORTER
+                        SlotKind.BOOLEAN -> grabbed.kind == Kind.BOOLEAN
+                        SlotKind.NONE -> false
+                    }
+                    kindOk && sx >= b.left && sx <= b.right && sy >= b.top && sy <= b.bottom
+                }?.let { SocketRef(it.hostId, it.key) }
+            }
+            // 맨 위 자리는 끌고 온 줄기 전체를 위로 올려야 닿으므로 더 멀리서도 잡히게 한다.
+            val target = if (overTrash) null else nearestSlot(slots, cx, cy, radius = SNAP)
+            s.copy(drag = d.copy(delta = delta, overTrash = overTrash, target = target, socket = socket))
         }
     } ?: s
 
@@ -171,9 +207,7 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         s.copy(canvas = addChild(s.canvas, e.parentId, branch), editing = null)
     }
 
-    is EditorEvent.SpawnDrag -> if (isValueBlock(e.def)) {
-        s   // 값 블록은 캔버스에 홀로 설 수 없다(홈 전용)
-    } else {
+    is EditorEvent.SpawnDrag -> run {
         val block = Material(
             id = UUID.randomUUID().toString(),
             typeId = e.def.id,
@@ -212,6 +246,10 @@ private fun commitDrag(canvas: Material, d: Drag): Material {
     val g = layoutCanvas(canvas).placed.firstOrNull { it.block.id == id } ?: return canvas
     val (newCanvas, tail) = detachTail(canvas, id)
     if (tail.isEmpty()) return canvas
+    // 홈 위에서 놓았으면 그 홈에 꽂는다. 값 블록이 갈 수 있는 유일한 자리다.
+    d.socket?.let { sk ->
+        return putInSlot(newCanvas, sk.hostId, sk.key, tail.first())
+    }
     val tgt = d.target
     // 넣을 수 있는 자리인지는 자리를 고를 때 이미 걸렀다. 여기서 종류를 또 따지지 않는다.
     return if (tgt != null) {
@@ -235,3 +273,6 @@ class EditorState(initial: Material, private val onPersist: (Material) -> Unit) 
         if (ui.canvas !== before) onPersist(ui.canvas)
     }
 }
+
+/** 연결점에 붙는 거리(dp). 손끝은 정확하지 않으므로 기본값보다 넉넉히 둔다. */
+private const val SNAP = 34f

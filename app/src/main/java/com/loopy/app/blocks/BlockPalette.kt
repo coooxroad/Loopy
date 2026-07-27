@@ -104,6 +104,15 @@ fun BlockTray(
             .neu(corner = Radius.lg, depth = Depth.LG)
             .clip(RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg))
             .background(p.surface)
+            // 판의 빈 곳에 닿은 손가락이 뒤 캔버스로 새면 원치 않은 확대·이동이 일어난다.
+            // 자식이 먼저 받고, 남은 것은 여기서 삼킨다.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            }
             .padding(Space.md),
     ) {
         // ── 맨 위: 검색 + 조율(검색 설정) ──
