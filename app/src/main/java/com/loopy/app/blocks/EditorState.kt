@@ -104,7 +104,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     }
 
     is EditorEvent.DragMove -> s.drag?.let { d ->
-        val delta = d.delta + Offset(e.amountPx.x / e.density, e.amountPx.y / e.density)
+        // 블록은 확대된 세계 안에 있다. 화면에서 움직인 픽셀을 밀도뿐 아니라 **배율로도**
+        // 나눠야 손끝과 같은 속도로 따라온다(빠뜨리면 확대 시 더 빨리, 축소 시 더 느리게 간다).
+        val scale = e.density * s.zoom
+        val delta = d.delta + Offset(e.amountPx.x / scale, e.amountPx.y / scale)
         // 잡은 블록의 "현재 레이아웃상 실제 위치"로 커넥터를 만든다(저장값 X — 프레임마다 조회).
         val g = layoutCanvas(s.canvas).placed.firstOrNull { it.block.id == d.blockId }
         if (g == null) {

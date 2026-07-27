@@ -106,10 +106,10 @@ fun mouthOf(m: Material): Mouth = Mouth(headerOf(m), innerHeight(m))
 
 /** 블록 한 칸의 높이. C블록은 자식에 따라 커진다. */
 /** 값 블록의 기본 높이. 문장 안에 들어가는 조각이므로 줄 높이보다 낮고 날씬하다. */
-const val VALUE_H = 30f
+const val VALUE_H = 26f
 
 /** 홈에 꽂힌 블록 위아래로 두는 여백. */
-const val SLOT_PAD = 5f
+const val SLOT_PAD = 6f
 
 /** 홈에 꽂힌 것 중 가장 키 큰 블록의 높이(없으면 0). */
 private fun tallestInSlot(m: Material): Float =
@@ -171,11 +171,15 @@ private fun layoutStack(
 ): Float {
     var y = startY
     for ((i, c) in children.withIndex()) {
-        // c 앞에 끼우는 자리. 단 두 경우엔 만들지 않는다:
+        // c 앞에 끼우는 자리. 다음 경우엔 만들지 않는다:
         //  - 모자 위에는 아무것도 못 붙는다
         //  - 바로 앞이 마개면 그 뒤로는 이어붙일 수 없다
-        val afterCap = i > 0 && isCap(children[i - 1])
-        if (!(i == 0 && isHat(c)) && !afterCap) out.slots.add(Slot(clumpId, parentId, i, x, y))
+        //  - 값 블록(둥근·육각)은 위아래 연결부가 없다. 문장 안 조각이지 줄기의 한 칸이 아니다.
+        val prev = children.getOrNull(i - 1)
+        val blocked = (i == 0 && isHat(c)) ||
+            (prev != null && isCap(prev)) ||
+            isValue(c) || (prev != null && isValue(prev))
+        if (!blocked) out.slots.add(Slot(clumpId, parentId, i, x, y))
         out.placed.add(Placed(c, x, y, depth))
 
         if (isC(c)) {
@@ -184,9 +188,11 @@ private fun layoutStack(
         // parallel(동시) 는 지금은 평범한 블록으로 둔다. 노드+갈래 UI 는 다음 업데이트에서 복원.
         y += meshStep(c)
     }
-    // 맨 끝(마지막 블록 아래)에 붙이는 자리. 마개로 끝났으면 그 아래는 없다.
+    // 맨 끝(마지막 블록 아래)에 붙이는 자리. 마개·값 블록으로 끝났으면 그 아래는 없다.
     val last = children.lastOrNull()
-    if (last == null || !isCap(last)) out.slots.add(Slot(clumpId, parentId, children.size, x, y))
+    if (last == null || (!isCap(last) && !isValue(last))) {
+        out.slots.add(Slot(clumpId, parentId, children.size, x, y))
+    }
     return y - startY
 }
 

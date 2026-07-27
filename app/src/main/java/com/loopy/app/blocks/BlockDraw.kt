@@ -34,7 +34,9 @@ fun Modifier.blockShape(
     lifted: Boolean = false,
 ): Modifier = composed {
     drawBehind {
-        val path = blockPath(shape, size.width, size.height, innerTop, innerHeight)
+        // 블록끼리는 채워진 면이 **정확히 맞닿기만** 한다. 픽셀 반올림이 1 만 어긋나도
+        // 실선 같은 틈이 보이므로, 아래쪽으로 아주 살짝 늘려 이음매를 덮는다.
+        val path = blockPath(shape, size.width, size.height + SEAM_OVERLAP, innerTop, innerHeight)
         val off = (if (lifted) 10.dp else 5.dp).toPx()
         val blur = (if (lifted) 24.dp else 13.dp).toPx()
 
@@ -67,6 +69,9 @@ fun Modifier.blockShape(
         drawPath(path, color)
     }
 }
+
+/** 이음매를 덮으려고 아래로 더 그리는 양(px). 반올림 오차보다 크고 눈에 띄지 않을 만큼. */
+private const val SEAM_OVERLAP = 1.5f
 
 /** 하이라이트를 만들 때 블록 색을 흰색 쪽으로 섞는 정도. */
 private const val SHADE_LITE = 0.45f
