@@ -7,7 +7,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import com.loopy.app.core.material.Clump
-import com.loopy.app.core.material.Kind
 import com.loopy.app.core.material.Material
 import com.loopy.app.core.material.Meta
 import com.loopy.app.core.material.ParamBag
@@ -137,11 +136,8 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                 null
             } else {
                 e.sockets.firstOrNull { b ->
-                    val kindOk = when (b.accepts) {
-                        SlotKind.VALUE -> grabbed.kind == Kind.REPORTER
-                        SlotKind.BOOLEAN -> grabbed.kind == Kind.BOOLEAN
-                        SlotKind.NONE -> false
-                    }
+                    // 호환은 정의 층의 규칙 하나를 쓴다(불리언은 값 자리에도 들어간다).
+                    val kindOk = accepts(b.accepts, grabbed.kind)
                     // 홈은 작다. 좌상단이 정확히 안에 들어와야 하면 사실상 못 꽂는다.
                     // 넉넉한 여유를 두르고, 그 안에 들어오면 잡는다.
                     val m = SOCKET_REACH * e.density

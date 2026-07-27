@@ -21,6 +21,15 @@ sealed interface Field {
      */
     fun display(params: ParamBag): String = params.str(key)
 
+    /**
+     * 이 자리에 블록을 꽂을 수 있는가.
+     *
+     * 블록 코딩은 두 가지를 구분한다: **입력 자리**(값을 적거나 리포터를 꽂는 곳)와
+     * **선택칸**(블록에 붙박인 드롭다운). 연산자나 앱 목록처럼 정해진 것 중 고르는 자리에
+     * 리포터를 꽂으면 문법이 무너지므로, 그런 필드는 이 값을 끈다.
+     */
+    val acceptsBlock: Boolean get() = true
+
     /** 정수 슬라이더. 예: 밝기 0~100. */
     data class IntSlider(
         override val key: String,
@@ -85,6 +94,7 @@ sealed interface Field {
         val default: String,
     ) : Field {
         override val defaultValue: Any get() = default
+        override val acceptsBlock: Boolean get() = false
     }
 
     /** 앱 선택 피커. 값은 패키지명. 피커 UI 는 플랫폼 쪽에서(나중). */
@@ -94,6 +104,7 @@ sealed interface Field {
         val default: String = "",
     ) : Field {
         override val defaultValue: Any get() = default
+        override val acceptsBlock: Boolean get() = false
     }
 
     /** 접근성 요소(버튼) 피커. 값은 요소 식별자. 피커 UI 는 플랫폼 쪽에서(나중). */
@@ -103,6 +114,7 @@ sealed interface Field {
         val default: String = "",
     ) : Field {
         override val defaultValue: Any get() = default
+        override val acceptsBlock: Boolean get() = false
     }
 
     /** 저장된 빌드 선택 피커. 값은 빌드(Material) id. 피커 UI 는 플랫폼 쪽에서(나중). */
@@ -112,6 +124,7 @@ sealed interface Field {
         val default: String = "",
     ) : Field {
         override val defaultValue: Any get() = default
+        override val acceptsBlock: Boolean get() = false
     }
 
     /** 선택지 한 개. */

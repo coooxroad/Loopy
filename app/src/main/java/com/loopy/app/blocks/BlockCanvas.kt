@@ -465,11 +465,7 @@ fun BlockFace(
  * 뜻이 모양에서 읽히게. 눌러서 꽂을 블록을 고른다.
  */
 @Composable
-private fun SocketHole(
-    text: String,
-    boolean: Boolean,
-    onBounds: (Rect) -> Unit = {},
-) {
+private fun SocketHole(text: String, boolean: Boolean) {
     val shape = if (boolean) {
         androidx.compose.foundation.shape.CutCornerShape(percent = 50)
     } else {
@@ -477,7 +473,6 @@ private fun SocketHole(
     }
     Box(
         Modifier
-            .onGloballyPositioned { onBounds(it.boundsInRoot()) }
             .clip(shape)
             .background(Color.Black.copy(alpha = 0.22f))
             .padding(horizontal = 10.dp, vertical = 3.dp),
@@ -564,21 +559,24 @@ private fun BlockSentence(
             Spacer(Modifier.width(4.dp))
         }
         val key = hit.groupValues[1]
-        // 참/거짓 홈은 육각으로 그린다 — 모양이 무엇을 넣을 수 있는지 말한다.
-        val slot = def.slots.firstOrNull { it.key == key }
-        val boolean = slot?.accepts == SlotKind.BOOLEAN
+        // 모든 자리는 입력 자리다. 그림자(타이핑 칸)를 품거나, 빈 육각 구멍이거나,
+        // 블록이 꽂혀 그림자를 덮고 있거나 — 셋 중 하나일 뿐 성격은 같다.
+        val input = inputsOf(def).firstOrNull { it.key == key }
+        val boolean = input?.accepts == SlotKind.BOOLEAN
         val filled = m.slots[key]
-        when {
-            // 홈에 블록이 꽂혀 있으면 그 블록을 그 자리에 그린다(중첩).
-            filled != null -> NestedBlock(filled, onSocketBounds)
-            // 빈 홈이면 눌러서 꽂을 수 있다.
-            slot != null ->
-                SocketHole(
-                    text = slotValue(def, m, key),
-                    boolean = boolean,
-                    onBounds = { r -> onSocketBounds(key, slot.accepts, r) },
-                )
-            else -> SlotChip(slotValue(def, m, key), rounded = !boolean)
+        Box(
+            Modifier.onGloballyPositioned { c ->
+                if (input != null) onSocketBounds(key, input.accepts, c.boundsInRoot())
+            },
+        ) {
+            when {
+                // 꽂힌 블록이 그림자를 덮는다.
+                filled != null -> NestedBlock(filled, onSocketBounds)
+                // 참/거짓 자리는 타이핑할 게 없으니 빈 구멍으로 둔다.
+                boolean -> SocketHole(text = "", boolean = true)
+                // 값 자리의 그림자 — 기본값을 보여주고 바로 고칠 수 있는 칸.
+                else -> SlotChip(slotValue(def, m, key), rounded = true)
+            }
         }
         Spacer(Modifier.width(4.dp))
         cursor = hit.range.last + 1

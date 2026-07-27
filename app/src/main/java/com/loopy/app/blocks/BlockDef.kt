@@ -77,6 +77,53 @@ enum class EditorAxis { BLOCKS, TIMELINE }
 /** 값/조건 홈. accepts 가 무엇이 꽂힐 수 있는지 정한다(모양 = 문법). */
 data class SlotDef(val key: String, val accepts: SlotKind, val label: String = "")
 
+/**
+ * 블록의 **입력 자리** 하나.
+ *
+ * 블록 코딩에서 "필드"와 "홈"은 다른 개념이 아니다 — 둘 다 값이 들어가는 한 자리이고,
+ * 다만 기본 상태가 다르다. 값 자리는 바로 타이핑할 수 있는 **그림자**(기본 편집기)를 품고,
+ * 참/거짓 자리는 그림자 없이 빈 육각 구멍으로 남는다. 리포터를 꽂으면 그림자를 덮는다.
+ *
+ * 이 둘을 갈라 두면 "어떤 자리에는 블록을 꽂을 수 있고 어떤 자리에는 못 꽂는" 이상한
+ * 문법이 되므로, 정의 층에서 하나로 본다.
+ */
+data class InputDef(val key: String, val accepts: SlotKind, val shadow: Field?)
+
+/**
+ * 정의에서 입력 자리 목록을 뽑는다.
+ *
+ * - 선언된 필드 → 값 자리(그림자 있음)
+ * - 참/거짓으로 선언된 자리 → 그림자 없는 육각 구멍
+ * 새 블록은 필드만 적으면 저절로 리포터를 받을 수 있는 자리가 된다.
+ */
+fun inputsOf(def: BlockDef): List<InputDef> {
+    val declared = def.slots.associateBy { it.key }
+    val fromFields = def.fields.map { f ->
+        // 선택칸(드롭다운)은 블록을 받지 않는다 — 자리이긴 하나 꽂을 수는 없다.
+        val kind = when {
+            !f.acceptsBlock -> SlotKind.NONE
+            else -> declared[f.key]?.accepts ?: SlotKind.VALUE
+        }
+        // 참/거짓 자리는 타이핑하는 곳이 아니다 — 그림자를 두지 않는다.
+        InputDef(f.key, kind, if (kind == SlotKind.BOOLEAN) null else f)
+    }
+    val onlySlots = def.slots
+        .filter { sd -> def.fields.none { it.key == sd.key } }
+        .map { InputDef(it.key, it.accepts, null) }
+    return fromFields + onlySlots
+}
+
+/** 이 자리에 저 종류의 블록을 꽂을 수 있는가.
+ *
+ * 비대칭이다: 불리언은 값 자리에도 들어가지만(참/거짓도 하나의 값이므로),
+ * 값 리포터는 참/거짓 자리에 들어가지 못한다.
+ */
+fun accepts(input: SlotKind, block: Kind): Boolean = when (input) {
+    SlotKind.BOOLEAN -> block == Kind.BOOLEAN
+    SlotKind.VALUE -> block == Kind.REPORTER || block == Kind.BOOLEAN
+    SlotKind.NONE -> false
+}
+
 /** 카테고리 → 색. 스크래치의 색 체계를 따른다. 같은 색 = 같은 종류의 일. */
 fun colorOf(category: BlockCategory): Color = when (category) {
     BlockCategory.EVENT -> Color(0xFFFFBF00)
@@ -183,8 +230,6 @@ val LoopyBlocks: List<BlockDef> = listOf(
     Block("if", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.C_BLOCK, Icon.SPLIT,
         "만약", "조건이 맞을 때만 안의 블록을 실행합니다", sentence = "만약 {condition} 이라면",
         container = EditorAxis.BLOCKS,
-        // 조건은 원래 육각 블록을 꽂을 자리다. 그 편집이 생기기 전까지는 글로 적어 넣는다.
-        fields = listOf(Field.TextField("condition", "조건", hint = "예: {점수} > 10")),
         slots = listOf(SlotDef("condition", SlotKind.BOOLEAN, "조건"))),
     Block("parallel", Kind.CONTROL, BlockCategory.CONTROL, BlockShape.STACK, Icon.LIST,
         "동시에", "연결된 갈래들을 함께 실행합니다", parallel = true,
@@ -212,6 +257,11 @@ val LoopyBlocks: List<BlockDef> = listOf(
             Field.TextField("name", "변수", hint = "이름"),
             Field.TextField("value", "값"),
         )),
+
+    // 둥근 리포터. 값 자리 어디에나 들어간다.
+    Block("var.get", Kind.REPORTER, BlockCategory.DATA, BlockShape.REPORTER, Icon.LIST,
+        "변수 값", "변수에 담긴 값을 냅니다", sentence = "{name}",
+        fields = listOf(Field.TextField("name", "변수", hint = "이름"))),
 
     // 값을 내는 블록. 육각이므로 조건 홈에만 들어간다 — 모양이 문법을 강제한다.
     Block("compare", Kind.BOOLEAN, BlockCategory.DATA, BlockShape.HEXAGON, Icon.SPLIT,

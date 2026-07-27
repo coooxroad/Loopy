@@ -166,8 +166,16 @@ object CompareEvaluator : ValueExecutor {
         m.slots[key]?.let { Evaluator.text(it, ctx) } ?: m.params.str(key)
 }
 
+/** 변수 값을 내는 리포터. 홈에 꽂혀 다른 블록의 입력이 된다. */
+object VarGetEvaluator : ValueExecutor {
+    override val typeId = "var.get"
+    override suspend fun eval(material: Material, ctx: ExecContext): String =
+        ctx.scope[material.params.str("name")].orEmpty()
+}
+
 fun registerBuiltinEvaluators() {
     EvaluatorRegistry.register(CompareEvaluator)
+    EvaluatorRegistry.register(VarGetEvaluator)
 }
 
 fun registerBuiltinExecutors() {
