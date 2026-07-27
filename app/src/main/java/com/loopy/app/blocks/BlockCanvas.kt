@@ -122,13 +122,10 @@ fun BlockCanvas(
     val curDrag = drag?.blockId
     val curTgt = drag?.target
     val curSocket = drag?.socket
-    val previewing = curDrag != null && (curTgt != null || curSocket != null)
+    val previewing = curDrag != null && curTgt != null
     val previewCanvas = when {
         curDrag == null -> ui.canvas
         // 홈에 꽂히는 미리보기 — 꽂힌 만큼 상대 블록이 넓어진 모습까지 보인다.
-        curSocket != null -> detachTail(ui.canvas, curDrag).let { (rest, tail) ->
-            if (tail.isEmpty()) ui.canvas else putInSlot(rest, curSocket.hostId, curSocket.key, tail.first())
-        }
         curTgt != null -> insertAtSlot(detachTail(ui.canvas, curDrag).first, curTgt, tailOf(ui.canvas, curDrag))
         else -> ui.canvas
     }
@@ -153,21 +150,22 @@ fun BlockCanvas(
             .fillMaxSize()
             .onGloballyPositioned { canvasOrigin = it.positionInRoot() }
             .background(p.surface)
-            .pointerInput(Unit) {
-                detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                    // 트레이 위에서 시작한 손가락은 캔버스를 움직이지 않는다. 트레이 자신의
-                    // 제스처를 건드리지 않으려고, 막는 일을 캔버스 쪽에서 한다.
-                    val trayTop = if (trayShown) screenHpx - trayH.value * density else Float.MAX_VALUE
-                    if (centroid.y < trayTop) {
-                        editor.onEvent(EditorEvent.Zoom(gestureZoom))
-                        editor.onEvent(EditorEvent.Pan(pan))
-                    }
-                }
-            },
+            ,
     ) {
         // 배경 모눈은 월드 변환 밖(화면 좌표)에 그린다. 안쪽에 두면 격자 천이 화면 크기로 잘려
         // 밀었을 때 끝이 보인다. 카메라/줌만 넘겨 같은 무늬가 무한히 이어지게 한다.
-        Canvas(Modifier.fillMaxSize()) {
+        // 화면을 옮기고 확대하는 것은 **배경**의 일이다. 트레이나 블록을 만진 손가락은
+        // 여기까지 내려오지 않으므로, 따로 막을 필요가 없다.
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                        editor.onEvent(EditorEvent.Zoom(gestureZoom, centroid))
+                        editor.onEvent(EditorEvent.Pan(pan))
+                    }
+                },
+        ) {
             drawGrid(p.shadowColor.copy(alpha = 0.10f), ui.camera.x, ui.camera.y, ui.zoom)
         }
 
@@ -183,6 +181,27 @@ fun BlockCanvas(
                     transformOrigin = TransformOrigin(0f, 0f),
                 ),
         ) {
+            // 홈에 꽂힐 자리 — 반투명한 같은 색·같은 모양으로만 보여준다.
+            if (curSocket != null && curDrag != null) {
+                val box = socketBoxes["${curSocket.hostId}/${curSocket.key}"]
+                val db = findBlock(ui.canvas, curDrag)
+                if (box != null && db != null) {
+                    val gx = (box.left - ui.camera.x) / ui.zoom
+                    val gy = (box.top - ui.camera.y) / ui.zoom
+                    Box(
+                        Modifier
+                            .offset { IntOffset(gx.roundToInt(), gy.roundToInt()) }
+                            .graphicsLayer(alpha = 0.4f)
+                            .height(blockHeight(db).dp)
+                            .widthIn(min = 60.dp)
+                            .blockShape(
+                                shape = defOf(db.typeId).shape,
+                                color = defOf(db.typeId).color,
+                            ),
+                    ) {}
+                }
+            }
+
             // 갈 자리 반투명 고스트 (스냅 중)
             ghostAt?.let { gp ->
                 val gb = gp.block
@@ -202,8 +221,6 @@ fun BlockCanvas(
             }
 
             origLayout.placed.forEach { pl ->
-                // 미리보기 중에는 그 판의 모습으로 그린다 — 홈이 채워지면 그 블록이 넓어진다.
-                val shown = if (previewing) findBlock(previewCanvas, pl.block.id) ?: pl.block else pl.block
                 val inDrag = pl.block.id in dragGroup
                 // 끌던 블록은 손가락 따라(원위치+delta). 나머지는 스냅 중이면 자리 벌린 미리보기 위치로.
                 val bx: Float
@@ -221,7 +238,7 @@ fun BlockCanvas(
                 }
                 key(pl.block.id) {
                     BlockView(
-                        material = shown,
+                        material = pl.block,
                         xDp = bx,
                         yDp = by,
                         density = density,
@@ -304,10 +321,11 @@ fun BlockCanvas(
                 },
                 recent = recentIds,
                 onDragStart = { def, root, grab ->
-                    // 손끝(이 화면 기준) 에서 잡은 지점을 빼면 블록 좌상단. 카메라·줌을 되돌려 월드 dp로.
-                    val local = root - canvasOrigin - grab
-                    val wx = (local.x - ui.camera.x) / ui.zoom / density
-                    val wy = (local.y - ui.camera.y) / ui.zoom / density
+                    // 손끝을 월드 dp 로 옮긴 뒤, 블록 안에서 잡은 만큼(이미 월드 dp) 빼면 좌상단.
+                    // px 단계에서 빼면 줌이 걸린 만큼 어긋난다.
+                    val finger = root - canvasOrigin
+                    val wx = (finger.x - ui.camera.x) / ui.zoom / density - grab.x
+                    val wy = (finger.y - ui.camera.y) / ui.zoom / density - grab.y
                     recentIds.remove(def.id)
                     recentIds.add(0, def.id)
                     while (recentIds.size > RECENT_MAX) recentIds.removeAt(recentIds.lastIndex)
@@ -422,7 +440,7 @@ fun BlockFace(
             .then(gestures),
     ) {
         Row(
-            Modifier.height(C_HEADER.dp).padding(start = Space.md, end = Space.lg),
+            Modifier.height(rowHeight(material).dp).padding(start = Space.md, end = Space.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LoopyIcon(def.icon, Color.White, size = 15.dp)
@@ -481,7 +499,7 @@ private fun NestedBlock(
     val def = defOf(m.typeId)
     Box(
         Modifier
-            .height(NESTED_H.dp)
+            .height(blockHeight(m).dp)
             .blockShape(def.shape, def.color)
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
@@ -495,8 +513,6 @@ private fun NestedBlock(
 /** 최근 목록에 남길 개수. 길어지면 카테고리를 가린다. */
 private const val RECENT_MAX = 5
 
-/** 홈에 꽂힌 블록의 높이. 문장 한 줄이 들어갈 만큼만. */
-private const val NESTED_H = 28
 
 @Composable
 private fun SlotChip(text: String, rounded: Boolean) {

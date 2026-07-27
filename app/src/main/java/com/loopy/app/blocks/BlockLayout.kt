@@ -78,12 +78,12 @@ fun stackSpan(children: List<Material>): Float {
 /**
  * C블록 입의 높이.
  *
- * 입천장 아랫면은 y=C_MOUTH_TOP-nd 에 있고 천장 볼록이 C_MOUTH_TOP 까지 내려온다. 자식은
- * [C_INNER_TOP] 에서 시작하므로 첫 자식 윗면(C_INNER_TOP+nd)이 천장 아랫면과 만난다.
- * 바닥도 같은 기준으로 맞춰야 한다: 마지막 자식 아랫면은 C_INNER_TOP+stackSpan-nd 이고,
+ * 입천장 아랫면은 y=머리높이-nd 에 있고 천장 볼록이 머리높이까지 내려온다. 자식은
+ * 머리높이-2nd 에서 시작하므로 첫 자식 윗면이 천장 아랫면과 만난다.
+ * 바닥도 같은 기준으로 맞춘다: 마지막 자식 아랫면은 (머리높이-2nd)+stackSpan-nd 이고,
  * 발 윗면이 바로 거기 와야 볼록이 발 오목에 앉는다. 그래서
- *   C_MOUTH_TOP + innerHeight = C_INNER_TOP + stackSpan - nd
- * 이고, C_INNER_TOP = C_MOUTH_TOP - 2nd 이므로 innerHeight = stackSpan - 3nd 가 된다.
+ *   머리높이 + innerHeight = (머리높이-2nd) + stackSpan - nd
+ * 이므로 innerHeight = stackSpan - 3nd 가 된다.
  * (예전엔 -nd 라서 발이 자식보다 2nd 만큼 아래로 떠 있었다.)
  */
 fun innerHeight(m: Material): Float = when {
@@ -92,8 +92,7 @@ fun innerHeight(m: Material): Float = when {
     else -> stackSpan(m.children) - NOTCH_DEPTH * 3f
 }
 
-/** C블록 입천장의 y(그리기 기준). 자식은 여기서 노치 두 겹 위에서 시작한다. */
-const val C_MOUTH_TOP = C_HEADER
+
 
 /**
  * 그리기가 필요로 하는 입 기하. 자식을 놓는 쪽(이 파일)이 함께 내주므로,
@@ -101,16 +100,37 @@ const val C_MOUTH_TOP = C_HEADER
  */
 data class Mouth(val top: Float, val height: Float)
 
-fun mouthOf(m: Material): Mouth = Mouth(C_MOUTH_TOP, innerHeight(m))
+fun mouthOf(m: Material): Mouth = Mouth(headerOf(m), innerHeight(m))
 
 /** 자식이 C블록 안에서 시작하는 y. 천장 볼록과 물리려면 겹침 두 겹만큼 올라가야 한다. */
-const val C_INNER_TOP = C_HEADER - NOTCH_DEPTH * 2f
 
 /** 블록 한 칸의 높이. C블록은 자식에 따라 커진다. */
+/** 값 블록의 기본 높이. 문장 안에 들어가는 조각이므로 줄 높이보다 낮고 날씬하다. */
+const val VALUE_H = 30f
+
+/** 홈에 꽂힌 블록 위아래로 두는 여백. */
+const val SLOT_PAD = 5f
+
+/** 홈에 꽂힌 것 중 가장 키 큰 블록의 높이(없으면 0). */
+private fun tallestInSlot(m: Material): Float =
+    m.slots.values.maxOfOrNull { blockHeight(it) } ?: 0f
+
+/**
+ * 블록 한 줄의 높이.
+ *
+ * 홈에 키 큰 블록이 꽂히면 그만큼 줄도 높아진다 — 안 그러면 꽂힌 블록이 밖으로 삐져나온다.
+ * C블록의 머리도 같은 값을 쓰므로, 조건이 들어가면 C도 위아래로 자란다.
+ */
+fun rowHeight(m: Material): Float = maxOf(ROW, tallestInSlot(m) + SLOT_PAD * 2f)
+
+/** C블록 머리(입천장까지)의 높이. */
+fun headerOf(m: Material): Float = rowHeight(m)
+
 fun blockHeight(m: Material): Float = when {
-    isC(m) -> C_HEADER + innerHeight(m) + C_FOOT
+    isC(m) -> headerOf(m) + innerHeight(m) + C_FOOT
     isHat(m) -> HAT_H
-    else -> ROW
+    isValue(m) -> maxOf(VALUE_H, tallestInSlot(m) + SLOT_PAD * 2f)
+    else -> rowHeight(m)
 }
 
 /** 화면에 놓인 블록 하나. */
@@ -159,7 +179,7 @@ private fun layoutStack(
         out.placed.add(Placed(c, x, y, depth))
 
         if (isC(c)) {
-            layoutStack(clumpId, c.id, c.children, x + INDENT, y + C_INNER_TOP, depth + 1, out)
+            layoutStack(clumpId, c.id, c.children, x + INDENT, y + headerOf(c) - NOTCH_DEPTH * 2f, depth + 1, out)
         }
         // parallel(동시) 는 지금은 평범한 블록으로 둔다. 노드+갈래 UI 는 다음 업데이트에서 복원.
         y += meshStep(c)

@@ -84,7 +84,7 @@ fun BlockTray(
     modifier: Modifier = Modifier,
     /** 최근 집은 블록의 typeId (새 것이 앞). 카테고리를 헤매지 않고 바로 다시 집으라고. */
     recent: List<String> = emptyList(),
-    /** 길게 눌러 집었다. 좌표는 루트 기준, grab 은 블록 안에서 잡은 지점(캔버스 크기 기준). */
+    /** 집었다. 좌표는 루트 기준 px, grab 은 블록 안에서 잡은 지점(월드 dp). */
     onDragStart: (BlockDef, Offset, Offset) -> Unit = { _, _, _ -> },
     onDragMove: (Offset) -> Unit = {},
     onDragEnd: () -> Unit = {},
@@ -342,8 +342,9 @@ private fun BlockChoices(
                         .pointerInput(def.id) {
                             detectDragGestures(
                                 onDragStart = { local ->
-                                    // 견본은 축소돼 있으므로, 잡은 지점을 캔버스 크기로 되돌린다.
-                                    onDragStart(def, rootPos + local, local / PREVIEW_SCALE)
+                                    // 잡은 지점을 **월드 dp** 로 바꿔 넘긴다. 견본 축소(0.8)와
+                                    // 화면 밀도를 여기서 한 번에 되돌려야 줌 상태에서도 안 어긋난다.
+                                    onDragStart(def, rootPos + local, local / (PREVIEW_SCALE * base.density))
                                 },
                                 onDrag = { change, amount -> change.consume(); onDragMove(amount) },
                                 onDragEnd = { onDragEnd() },

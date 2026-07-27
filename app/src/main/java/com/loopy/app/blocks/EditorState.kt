@@ -66,7 +66,7 @@ sealed interface EditorEvent {
     ) : EditorEvent
     object DragEnd : EditorEvent
     data class Pan(val amountPx: Offset) : EditorEvent
-    data class Zoom(val factor: Float) : EditorEvent
+    data class Zoom(val factor: Float, val focus: Offset) : EditorEvent
     object OpenPalette : EditorEvent
     data class Pick(val def: BlockDef) : EditorEvent
     data class OpenSheet(val material: Material) : EditorEvent
@@ -158,7 +158,12 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     }
 
     is EditorEvent.Pan -> s.copy(camera = s.camera + e.amountPx)
-    is EditorEvent.Zoom -> s.copy(zoom = (s.zoom * e.factor).coerceIn(0.5f, 2.5f))
+    is EditorEvent.Zoom -> {
+        val z = (s.zoom * e.factor).coerceIn(0.5f, 2.5f)
+        // 손가락 사이 지점이 제자리에 남도록 카메라도 함께 옮긴다.
+        // 안 그러면 화면 좌상단을 기준으로 확대돼 엉뚱한 곳이 커진다.
+        s.copy(zoom = z, camera = e.focus - (e.focus - s.camera) * (z / s.zoom))
+    }
 
     // 트레이는 여닫는 것이다 — 같은 버튼으로 닫는다.
     is EditorEvent.OpenPalette -> s.copy(picking = !s.picking)
