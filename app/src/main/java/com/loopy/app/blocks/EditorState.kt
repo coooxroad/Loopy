@@ -107,7 +107,8 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             // 기존 블록과 겹칠 만큼 내려야 잡혀서, 판정이 아래에 있는 것처럼 느껴진다.
             // 잡은 블록 높이만큼 올려두면 "기존 바로 위"에 놓는 자리에서 잡힌다.
             val grabbed = findBlock(s.canvas, d.blockId)
-            val grabbedH = grabbed?.let { meshStep(it) } ?: 0f
+            // 딸려오는 꼬리 전체를 센다. 맨 위 블록만 세면 여러 개를 끌 때 삽입 결과와 어긋난다.
+            val grabbedH = topGrow(tailOf(s.canvas, d.blockId))
             val slots = layoutCanvas(detachTail(s.canvas, d.blockId).first).slots
                 // 모자도 다른 블록과 똑같이 자리를 찾는다. 다만 넣을 수 있는 자리만 후보가 된다.
                 .filter { grabbed == null || canPlaceAt(grabbed, it) }
@@ -179,10 +180,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             params = e.def.defaultParams(),
             meta = Meta(),
         )
+        // picking 은 그대로 둔다. 끌기 중에만 트레이가 접히고, 놓으면 다시 올라온다
+        // (닫는 것은 X 버튼의 몫).
         s.copy(
             canvas = addClump(s.canvas, listOf(block), e.x, e.y),
-            // 트레이는 내려간다 — 놓을 자리가 보여야 한다.
-            picking = false,
             drag = Drag(blockId = block.id, group = setOf(block.id)),
         )
     }

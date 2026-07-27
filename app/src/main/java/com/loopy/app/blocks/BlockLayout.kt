@@ -259,6 +259,14 @@ fun detachTail(canvas: Material, id: String): Pair<Material, List<Material>> {
 }
 
 /** [slot] 이 가리키는 덩어리의 자리에 blocks 를 끼운다. */
+/**
+ * 이 블록들을 줄기 **맨 위**에 끼울 때 아래 것들이 밀려 내려가는 양.
+ *
+ * 덩어리는 그만큼 위로 자라야 기존 블록이 제자리에 남는다. 끌 때의 판정 위치와 실제 삽입이
+ * 이 값을 **함께** 써야 한다 — 따로 재면 여러 개를 끌 때 잡히는 자리와 놓이는 자리가 어긋난다.
+ */
+fun topGrow(blocks: List<Material>): Float = blocks.fold(0f) { acc, b -> acc + meshStep(b) }
+
 fun insertAtSlot(canvas: Material, slot: Slot, blocks: List<Material>): Material {
     val newClumps = canvas.children.map { clump ->
         if (clump.id != slot.clumpId) {
@@ -269,8 +277,7 @@ fun insertAtSlot(canvas: Material, slot: Slot, blocks: List<Material>): Material
             // 블록들이 통째로 한 칸 밀려 내려가 "위에 놓았는데 아래가 움직이는" 꼴이 된다.
             // (C블록 입은 천장이 고정이라 아래로 자라는 게 맞으므로 최상위 줄기일 때만.)
             if (slot.parentId == null && slot.index == 0 && clump.children.isNotEmpty()) {
-                val grow = blocks.fold(0f) { acc, b -> acc + meshStep(b) }
-                inserted.copy(meta = inserted.meta.copy(y = inserted.meta.y - grow))
+                inserted.copy(meta = inserted.meta.copy(y = inserted.meta.y - topGrow(blocks)))
             } else {
                 inserted
             }

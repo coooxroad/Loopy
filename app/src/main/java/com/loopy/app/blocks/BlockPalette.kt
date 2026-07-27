@@ -111,8 +111,10 @@ fun BlockTray(
             Box(
                 Modifier
                     .weight(1f)
-                    .neu(corner = Radius.sm, depth = Depth.SM, pressed = true)
+                    // 검색줄은 평평하게. 뉴모피즘은 바깥 판 한 겹에만 두고, 안쪽 요소는
+                    // 톤 차이로만 구분한다 — 층이 겹치면 지저분해진다.
                     .clip(RoundedCornerShape(Radius.sm))
+                    .background(lerp(p.surface, p.shadowColor, 0.08f))
                     // 위아래로 얇게 — 검색줄이 두꺼우면 블록 자리를 잡아먹는다.
                     .padding(horizontal = Space.md, vertical = Space.xs),
             ) {

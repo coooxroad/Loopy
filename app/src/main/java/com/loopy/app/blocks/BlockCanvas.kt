@@ -236,10 +236,12 @@ fun BlockCanvas(
         val panelH = LocalConfiguration.current.screenHeightDp.dp * 0.58f
         val trayH = panelH
         // 열고 닫힘은 미끄러져 들어오고 나간다(툭 나타나면 어디서 왔는지 읽히지 않는다).
-        val traySlide by animateDpAsState(if (ui.picking) 0.dp else trayH, label = "tray")
+        // 끌고 있는 동안에는 접어 둔다(놓을 자리가 보여야 하므로). 손을 떼면 다시 올라온다.
+        val trayShown = ui.picking && ui.drag == null
+        val traySlide by animateDpAsState(if (trayShown) 0.dp else trayH, label = "tray")
         // + 가 그대로 돌아 x 가 된다 — 같은 버튼이 여닫이라는 뜻이 형태로 이어진다.
         val plusTurn by animateFloatAsState(if (ui.picking) 45f else 0f, label = "plus")
-        val fabLift by animateDpAsState(if (ui.picking) trayH else 0.dp, label = "fab")
+        val fabLift by animateDpAsState(if (trayShown) trayH else 0.dp, label = "fab")
 
         NeuFab(
             onClick = { editor.onEvent(EditorEvent.OpenPalette) },
