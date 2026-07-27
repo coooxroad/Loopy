@@ -106,7 +106,7 @@ fun mouthOf(m: Material): Mouth = Mouth(headerOf(m), innerHeight(m))
 
 /** 블록 한 칸의 높이. C블록은 자식에 따라 커진다. */
 /** 값 블록의 기본 높이. 문장 안에 들어가는 조각이므로 줄 높이보다 낮고 날씬하다. */
-const val VALUE_H = 26f
+const val VALUE_H = 34f
 
 /** 홈에 꽂힌 블록 위아래로 두는 여백. */
 const val SLOT_PAD = 6f
@@ -125,6 +125,18 @@ fun rowHeight(m: Material): Float = maxOf(ROW, tallestInSlot(m) + SLOT_PAD * 2f)
 
 /** C블록 머리(입천장까지)의 높이. */
 fun headerOf(m: Material): Float = rowHeight(m)
+
+/**
+ * 블록 안 **내용 줄**의 높이.
+ *
+ * 블록 높이와 다르다: C블록은 머리만, 값 블록은 자기 몸 전체가 내용 줄이다. 이걸 구분하지
+ * 않으면 34dp 짜리 값 블록 안에 52dp 짜리 줄이 들어가 칩이 블록을 꽉 채운다.
+ */
+fun contentHeight(m: Material): Float = when {
+    isC(m) -> headerOf(m)
+    isValue(m) -> blockHeight(m)
+    else -> rowHeight(m)
+}
 
 fun blockHeight(m: Material): Float = when {
     isC(m) -> headerOf(m) + innerHeight(m) + C_FOOT

@@ -439,12 +439,20 @@ fun BlockFace(
             )
             .then(gestures),
     ) {
+        // 값 블록은 좌우가 뾰족하거나 둥글다. 그 폭만큼 안쪽으로 들여야 내용이 끝에 물리지 않는다.
+        val value = isValue(material)
+        val side = if (value) (blockHeight(material) / 2f + 4f).dp else Space.md
         Row(
-            Modifier.height(rowHeight(material).dp).padding(start = Space.md, end = Space.lg),
+            Modifier
+                .height(contentHeight(material).dp)
+                .padding(start = side, end = if (value) side else Space.lg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LoopyIcon(def.icon, Color.White, size = 15.dp)
-            Spacer(Modifier.width(Space.sm))
+            // 값 블록엔 아이콘을 두지 않는다 — 좁은 몸에 아이콘까지 넣으면 글자가 밀린다.
+            if (!value) {
+                LoopyIcon(def.icon, Color.White, size = 15.dp)
+                Spacer(Modifier.width(Space.sm))
+            }
             BlockSentence(def, material, onSocketBounds)
         }
     }
