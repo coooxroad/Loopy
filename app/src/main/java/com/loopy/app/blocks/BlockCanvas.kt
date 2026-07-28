@@ -530,6 +530,8 @@ private fun NestedBlock(
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
     onPull: (String, String) -> Unit = { _, _ -> },
+    /** 이 블록 자신을 홈에서 빼낸다. 부르는 쪽이 어느 홈인지 알고 있으므로 인자가 없다. */
+    onPullSelf: () -> Unit = {},
 ) {
     val def = defOf(m.typeId)
     val pull by rememberUpdatedState(onPullSelf)
