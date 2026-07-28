@@ -248,7 +248,8 @@ fun BlockCanvas(
                             // 이 제스처는 확대 레이어 **안**에서 온다 → 배율은 이미 빠져 있다.
                             editor.onEvent(
                                 EditorEvent.DragMove(
-                                    amount / density,
+                                    amount,
+                                    DragSpace.WORLD,
                                     density,
                                     Size(screenWpx, screenHpx),
                                     socketBoxes.values.toList(),
@@ -344,7 +345,8 @@ fun BlockCanvas(
                     // 트레이는 확대 레이어 **밖**이다 → 화면 픽셀이므로 배율까지 되돌린다.
                     editor.onEvent(
                         EditorEvent.DragMove(
-                            amount / (density * ui.zoom),
+                            amount,
+                            DragSpace.SCREEN,
                             density,
                             Size(screenWpx, screenHpx),
                             socketBoxes.values.toList(),

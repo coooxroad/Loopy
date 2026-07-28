@@ -50,6 +50,20 @@ data class SocketBox(
     val bottom: Float,
 )
 
+/**
+ * 드래그 이벤트가 어느 좌표계에서 왔는가.
+ *
+ * 확대 레이어 안에서 온 제스처는 이미 배율이 벗겨져 있고, 밖에서 온 것은 화면 픽셀 그대로다.
+ * 부르는 쪽은 "어디서 왔는지"만 말하고, 실제 변환은 배율을 아는 리듀서가 한다.
+ */
+enum class DragSpace {
+    /** 캔버스 위 블록 — 확대 레이어 안. */
+    WORLD,
+
+    /** 트레이 등 레이어 밖 — 화면 픽셀. */
+    SCREEN,
+}
+
 /** 어느 블록의 어느 홈인지. */
 data class SocketRef(val hostId: String, val key: String)
 
@@ -57,14 +71,16 @@ data class SocketRef(val hostId: String, val key: String)
 sealed interface EditorEvent {
     data class DragStart(val blockId: String) : EditorEvent
     data class DragMove(
+        /** 이번에 움직인 양(px). 어느 좌표계인지는 [space] 가 말한다. */
+        val amountPx: Offset,
         /**
-         * 이번에 움직인 양 — **월드 dp**.
+         * 그 픽셀이 어느 좌표계의 것인가.
          *
-         * 어느 좌표계에서 왔는지는 부르는 쪽이 안다: 캔버스 블록의 제스처는 확대 레이어 안에서
-         * 오므로 배율이 이미 빠져 있고, 트레이는 레이어 밖이라 화면 픽셀 그대로다. 그 변환을
-         * 여기서 하려 들면 한쪽을 맞출 때 다른 쪽이 어긋난다.
+         * 배율로 나누는 일을 **여기(리듀서)** 에서 한다. 화면 쪽 람다는 제스처가 시작될 때의
+         * 값을 붙잡고 있어서, 도중에 배율이 바뀌면 옛 값으로 계산해 버린다. 배율은 살아 있는
+         * 상태를 가진 쪽이 다뤄야 한다.
          */
-        val deltaDp: Offset,
+        val space: DragSpace,
         val density: Float,
         val screen: Size,
         /** 화면 좌표(px)로 잰 홈들. 값 블록을 끌 때만 쓰인다. */
@@ -110,8 +126,9 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     }
 
     is EditorEvent.DragMove -> s.drag?.let { d ->
-        // 이동량은 이미 월드 dp 로 넘어온다. 여기서 배율을 또 손대지 않는다.
-        val delta = d.delta + e.deltaDp
+        // 화면 픽셀 → 월드 dp. 배율은 지금 이 순간의 상태에서 가져오므로 낡을 수 없다.
+        val perDp = e.density * if (e.space == DragSpace.SCREEN) s.zoom else 1f
+        val delta = d.delta + Offset(e.amountPx.x / perDp, e.amountPx.y / perDp)
         // 잡은 블록의 "현재 레이아웃상 실제 위치"로 커넥터를 만든다(저장값 X — 프레임마다 조회).
         val g = layoutCanvas(s.canvas).placed.firstOrNull { it.block.id == d.blockId }
         if (g == null) {

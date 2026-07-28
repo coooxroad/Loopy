@@ -29,6 +29,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -323,6 +324,12 @@ private fun BlockChoices(
     val base = LocalDensity.current
     val small = Density(base.density * PREVIEW_SCALE, base.fontScale)
 
+    // pointerInput 은 키가 바뀔 때만 다시 시작한다. 그래서 처음 넘어온 람다를 계속 붙잡는데,
+    // 그 람다 안에는 배율·홈 목록 같은 **그때의 값**이 들어 있다. 늘 최신을 쓰도록 감싼다.
+    val curStart by rememberUpdatedState(onDragStart)
+    val curMove by rememberUpdatedState(onDragMove)
+    val curEnd by rememberUpdatedState(onDragEnd)
+
     CompositionLocalProvider(LocalDensity provides small) {
         Column(
             modifier
@@ -344,11 +351,11 @@ private fun BlockChoices(
                                 onDragStart = { local ->
                                     // 잡은 지점을 **월드 dp** 로 바꿔 넘긴다. 견본 축소(0.8)와
                                     // 화면 밀도를 여기서 한 번에 되돌려야 줌 상태에서도 안 어긋난다.
-                                    onDragStart(def, rootPos + local, local / (PREVIEW_SCALE * base.density))
+                                    curStart(def, rootPos + local, local / (PREVIEW_SCALE * base.density))
                                 },
-                                onDrag = { change, amount -> change.consume(); onDragMove(amount) },
-                                onDragEnd = { onDragEnd() },
-                                onDragCancel = { onDragEnd() },
+                                onDrag = { change, amount -> change.consume(); curMove(amount) },
+                                onDragEnd = { curEnd() },
+                                onDragCancel = { curEnd() },
                             )
                         },
                 )
