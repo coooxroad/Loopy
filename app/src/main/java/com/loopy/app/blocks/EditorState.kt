@@ -249,10 +249,9 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
         if (block == null) {
             s
         } else {
-            s.copy(
-                canvas = addClump(clearSlot(s.canvas, e.hostId, e.key), listOf(block), e.x, e.y),
-                drag = Drag(blockId = block.id, group = allIds(listOf(block))),
-            )
+            // 끌기 상태는 켜지 않는다 — 이 블록을 쥐고 있던 화면 요소가 방금 사라졌으므로
+            // 이어받을 주인이 없다. 캔버스에 내려놓기만 하고, 이동은 평범한 블록으로서 한다.
+            s.copy(canvas = addClump(clearSlot(s.canvas, e.hostId, e.key), listOf(block), e.x, e.y))
         }
     }
 

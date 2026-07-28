@@ -539,10 +539,15 @@ private fun NestedBlock(
         Modifier
             .height(blockHeight(m).dp)
             .blockShape(def.shape, def.color)
-            // 꽂힌 블록도 끌어서 뺄 수 있다. 빼는 순간 평범한 덩어리가 되어
-            // 캔버스의 블록과 똑같은 길을 탄다.
+            // 꽂힌 블록도 끌어서 뺀다. 다만 **빼기까지만** 한다:
+            // 빼는 순간 이 컴포저블은 트리에서 사라지고(홈이 비므로) 제스처의 주인도 함께
+            // 사라져, 이어지는 이동이 오지 않는다. 그대로 끌기 상태를 켜 두면 손을 떼도
+            // 꺼지지 않는다. 그래서 빠져나온 뒤에는 평범한 블록으로 다시 끌게 한다.
             .pointerInput(m.id) {
-                detectDragGestures(onDragStart = { pull() })
+                detectDragGestures(
+                    onDragStart = { pull() },
+                    onDrag = { change, _ -> change.consume() },
+                )
             }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
