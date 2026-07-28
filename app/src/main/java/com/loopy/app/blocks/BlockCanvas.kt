@@ -254,9 +254,9 @@ fun BlockCanvas(
                             if (opens != null) onOpenEditor(opens, pl.block)
                             else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
-                        onSocketBounds = { key, accepts, box ->
-                            socketBoxes["${pl.block.id}/$key"] = SocketBox(
-                                hostId = pl.block.id,
+                        onSocketBounds = { hostId, key, accepts, box ->
+                            socketBoxes["$hostId/$key"] = SocketBox(
+                                hostId = hostId,
                                 key = key,
                                 accepts = accepts,
                                 left = box.left - canvasOrigin.x,
@@ -373,7 +373,7 @@ private fun BlockView(
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
-    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+    onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
     val curStart by rememberUpdatedState(onDragStart)
@@ -423,7 +423,7 @@ fun BlockFace(
     gestures: Modifier = Modifier,
     lifted: Boolean = false,
     /** 홈이 화면에서 차지한 자리를 알린다. 끌어다 꽂을 때 목표로 쓰인다. */
-    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+    onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
     Box(
@@ -465,28 +465,28 @@ fun BlockFace(
  * 뜻이 모양에서 읽히게. 눌러서 꽂을 블록을 고른다.
  */
 @Composable
-private fun SocketHole(text: String, boolean: Boolean) {
+private fun SocketHole(boolean: Boolean) {
+    // 꼭짓점을 **높이의 절반**으로 고정한다. 퍼센트로 자르면 좁은 상자에서 마름모가 된다.
     val shape = if (boolean) {
-        androidx.compose.foundation.shape.CutCornerShape(percent = 50)
+        androidx.compose.foundation.shape.CutCornerShape(HOLE_H.dp / 2)
     } else {
         androidx.compose.foundation.shape.RoundedCornerShape(50)
     }
     Box(
         Modifier
+            .height(HOLE_H.dp)
+            // 빈 자리도 "무언가 들어갈 만한 넓이"로 보여야 한다. 좁으면 흠집처럼 보인다.
+            .widthIn(min = HOLE_MIN_W.dp)
             .clip(shape)
-            .background(Color.Black.copy(alpha = 0.22f))
-            .padding(horizontal = 10.dp, vertical = 3.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text.ifEmpty { "+" },
-            color = Color.White.copy(alpha = 0.85f),
-            fontSize = Type.label,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
-    }
+            .background(Color.Black.copy(alpha = 0.22f)),
+    )
 }
+
+/** 빈 입력 자리의 높이. 값 블록보다 살짝 낮아 "들어갈 자리"로 읽힌다. */
+private const val HOLE_H = 24
+
+/** 빈 입력 자리의 최소 너비. 육각이 마름모로 보이지 않을 만큼. */
+private const val HOLE_MIN_W = 56
 
 /**
  * 홈에 꽂힌 블록.
@@ -497,7 +497,7 @@ private fun SocketHole(text: String, boolean: Boolean) {
 @Composable
 private fun NestedBlock(
     m: Material,
-    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+    onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
 ) {
     val def = defOf(m.typeId)
     Box(
@@ -548,7 +548,7 @@ private val SENTENCE_SLOT = Regex("\\{([A-Za-z_][\\w.]*)\\}")
 private fun BlockSentence(
     def: BlockDef,
     m: Material,
-    onSocketBounds: (String, SlotKind, Rect) -> Unit = { _, _, _ -> },
+    onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
 ) {
     val text = def.template
     var cursor = 0
@@ -566,14 +566,15 @@ private fun BlockSentence(
         val filled = m.slots[key]
         Box(
             Modifier.onGloballyPositioned { c ->
-                if (input != null) onSocketBounds(key, input.accepts, c.boundsInRoot())
+                // 주인은 이 문장을 가진 블록 자신이다. 중첩돼도 자기 id 로 알린다.
+                if (input != null) onSocketBounds(m.id, key, input.accepts, c.boundsInRoot())
             },
         ) {
             when {
                 // 꽂힌 블록이 그림자를 덮는다.
                 filled != null -> NestedBlock(filled, onSocketBounds)
                 // 참/거짓 자리는 타이핑할 게 없으니 빈 구멍으로 둔다.
-                boolean -> SocketHole(text = "", boolean = true)
+                boolean -> SocketHole(boolean = true)
                 // 값 자리의 그림자 — 기본값을 보여주고 바로 고칠 수 있는 칸.
                 else -> SlotChip(slotValue(def, m, key), rounded = true)
             }

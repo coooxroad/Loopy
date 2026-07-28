@@ -135,14 +135,18 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             val socket = if (overTrash || grabbed == null || !isValue(grabbed)) {
                 null
             } else {
+                // 끌고 있는 블록 자신(과 그 안에 꽂힌 것들)의 홈은 목표가 될 수 없다.
+                // 자기 홈은 손끝을 따라다니므로, 빼지 않으면 언제나 그것부터 잡힌다.
+                val mine = allIds(tailOf(s.canvas, d.blockId))
                 e.sockets.firstOrNull { b ->
-                    // 호환은 정의 층의 규칙 하나를 쓴다(불리언은 값 자리에도 들어간다).
-                    val kindOk = accepts(b.accepts, grabbed.kind)
-                    // 홈은 작다. 좌상단이 정확히 안에 들어와야 하면 사실상 못 꽂는다.
-                    // 넉넉한 여유를 두르고, 그 안에 들어오면 잡는다.
-                    val m = SOCKET_REACH * e.density
-                    kindOk && sx >= b.left - m && sx <= b.right + m &&
-                        sy >= b.top - m && sy <= b.bottom + m
+                    b.hostId !in mine &&
+                        // 호환은 정의 층의 규칙 하나를 쓴다(불리언은 값 자리에도 들어간다).
+                        accepts(b.accepts, grabbed.kind) &&
+                        // 홈은 작다. 좌상단이 정확히 안에 들어와야 하면 사실상 못 꽂는다.
+                        sx >= b.left - SOCKET_REACH * e.density &&
+                        sx <= b.right + SOCKET_REACH * e.density &&
+                        sy >= b.top - SOCKET_REACH * e.density &&
+                        sy <= b.bottom + SOCKET_REACH * e.density
                 }?.let { SocketRef(it.hostId, it.key) }
             }
             // 맨 위 자리는 끌고 온 줄기 전체를 위로 올려야 닿으므로 더 멀리서도 잡히게 한다.
