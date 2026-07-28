@@ -263,6 +263,16 @@ fun BlockCanvas(
                             if (opens != null) onOpenEditor(opens, pl.block)
                             else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
+                        onPull = { hostId, key ->
+                            // 뽑히는 자리 = 그 홈이 있던 화면 자리 → 월드 dp. 손끝 아래에서
+                            // 그대로 이어지도록.
+                            val b = socketBoxes["$hostId/$key"]
+                            if (b != null) {
+                                val wx = (b.left - ui.camera.x) / ui.zoom / density
+                                val wy = (b.top - ui.camera.y) / ui.zoom / density
+                                editor.onEvent(EditorEvent.PullFromSlot(hostId, key, wx, wy))
+                            }
+                        },
                         onSocketBounds = { hostId, key, accepts, box ->
                             socketBoxes["$hostId/$key"] = SocketBox(
                                 hostId = hostId,
@@ -392,6 +402,7 @@ private fun BlockView(
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
+    onPull: (String, String) -> Unit = { _, _ -> },
 ) {
     val def = defOf(material.typeId)
     val curStart by rememberUpdatedState(onDragStart)
@@ -406,6 +417,7 @@ private fun BlockView(
         density = density,
         lifted = lifted,
         onSocketBounds = onSocketBounds,
+        onPull = onPull,
         modifier = Modifier
             .offset { IntOffset(px, py) }
             .zIndex(if (lifted) 10f else 0f),
@@ -442,6 +454,7 @@ fun BlockFace(
     lifted: Boolean = false,
     /** 홈이 화면에서 차지한 자리를 알린다. 끌어다 꽂을 때 목표로 쓰인다. */
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
+    onPull: (String, String) -> Unit = { _, _ -> },
 ) {
     val def = defOf(material.typeId)
     Box(
@@ -471,7 +484,7 @@ fun BlockFace(
                 LoopyIcon(def.icon, Color.White, size = 15.dp)
                 Spacer(Modifier.width(Space.sm))
             }
-            BlockSentence(def, material, onSocketBounds)
+            BlockSentence(def, material, onSocketBounds, onPull)
         }
     }
 }
@@ -516,17 +529,24 @@ private const val HOLE_MIN_W = 40
 private fun NestedBlock(
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
+    onPull: (String, String) -> Unit = { _, _ -> },
 ) {
     val def = defOf(m.typeId)
+    val pull by rememberUpdatedState(onPullSelf)
     Box(
         Modifier
             .height(blockHeight(m).dp)
             .blockShape(def.shape, def.color)
+            // 꽂힌 블록도 끌어서 뺄 수 있다. 빼는 순간 평범한 덩어리가 되어
+            // 캔버스의 블록과 똑같은 길을 탄다.
+            .pointerInput(m.id) {
+                detectDragGestures(onDragStart = { pull() })
+            }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            BlockSentence(def, m, onSocketBounds)
+            BlockSentence(def, m, onSocketBounds, onPull)
         }
     }
 }
@@ -567,6 +587,7 @@ private fun BlockSentence(
     def: BlockDef,
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
+    onPull: (String, String) -> Unit = { _, _ -> },
 ) {
     val text = def.template
     var cursor = 0
@@ -590,7 +611,7 @@ private fun BlockSentence(
         ) {
             when {
                 // 꽂힌 블록이 그림자를 덮는다.
-                filled != null -> NestedBlock(filled, onSocketBounds)
+                filled != null -> NestedBlock(filled, onSocketBounds, onPull) { onPull(m.id, key) }
                 // 참/거짓 자리는 타이핑할 게 없으니 빈 구멍으로 둔다.
                 boolean -> SocketHole(boolean = true)
                 // 값 자리의 그림자 — 기본값을 보여주고 바로 고칠 수 있는 칸.

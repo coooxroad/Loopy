@@ -107,6 +107,14 @@ sealed interface EditorEvent {
      */
     data class SpawnDrag(val def: BlockDef, val x: Float, val y: Float) : EditorEvent
 
+    /**
+     * 홈에 꽂힌 블록을 뽑아 끌기 시작했다. [x],[y] 는 뽑힌 자리(월드 dp).
+     *
+     * 뽑는 즉시 평범한 덩어리가 되어 **기존 드래그 경로를 그대로 탄다**. 꽂힌 블록만을 위한
+     * 별도 이동·미리보기 경로를 두지 않는 이유다(두 벌이 되면 반드시 어긋난다).
+     */
+    data class PullFromSlot(val hostId: String, val key: String, val x: Float, val y: Float) : EditorEvent
+
     object Dismiss : EditorEvent
 }
 
@@ -160,7 +168,7 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                 // 끌고 있는 블록 자신(과 그 안에 꽂힌 것들)의 홈은 목표가 될 수 없다.
                 // 자기 홈은 손끝을 따라다니므로, 빼지 않으면 언제나 그것부터 잡힌다.
                 val mine = allIds(tailOf(s.canvas, d.blockId))
-                e.sockets.firstOrNull { b ->
+                e.sockets.filter { b ->
                     b.hostId !in mine &&
                         // 호환은 정의 층의 규칙 하나를 쓴다(불리언은 값 자리에도 들어간다).
                         accepts(b.accepts, grabbed.kind) &&
@@ -169,7 +177,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                         sx <= b.right + SOCKET_REACH * e.density &&
                         sy >= b.top - SOCKET_REACH * e.density &&
                         sy <= b.bottom + SOCKET_REACH * e.density
-                }?.let { SocketRef(it.hostId, it.key) }
+                }
+                    // 중첩되면 홈끼리 겹친다. 가장 **작은**(=가장 안쪽) 것을 고른다.
+                    .minByOrNull { (it.right - it.left) * (it.bottom - it.top) }
+                    ?.let { SocketRef(it.hostId, it.key) }
             }
             // 맨 위 자리는 끌고 온 줄기 전체를 위로 올려야 닿으므로 더 멀리서도 잡히게 한다.
             val target = if (overTrash) null else nearestSlot(slots, cx, cy, radius = SNAP)
@@ -231,6 +242,18 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
             meta = Meta(),
         )
         s.copy(canvas = addChild(s.canvas, e.parentId, branch), editing = null)
+    }
+
+    is EditorEvent.PullFromSlot -> {
+        val block = findBlock(s.canvas, e.hostId)?.slots?.get(e.key)
+        if (block == null) {
+            s
+        } else {
+            s.copy(
+                canvas = addClump(clearSlot(s.canvas, e.hostId, e.key), listOf(block), e.x, e.y),
+                drag = Drag(blockId = block.id, group = allIds(listOf(block))),
+            )
+        }
     }
 
     is EditorEvent.SpawnDrag -> run {
