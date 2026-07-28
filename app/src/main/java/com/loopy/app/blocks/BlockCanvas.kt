@@ -245,7 +245,15 @@ fun BlockCanvas(
                         lifted = inDrag,
                         onDragStart = { editor.onEvent(EditorEvent.DragStart(pl.block.id)) },
                         onDrag = { amount ->
-                            editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx), socketBoxes.values.toList()))
+                            // 이 제스처는 확대 레이어 **안**에서 온다 → 배율은 이미 빠져 있다.
+                            editor.onEvent(
+                                EditorEvent.DragMove(
+                                    amount / density,
+                                    density,
+                                    Size(screenWpx, screenHpx),
+                                    socketBoxes.values.toList(),
+                                ),
+                            )
                         },
                         onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                         onClick = {
@@ -333,7 +341,15 @@ fun BlockCanvas(
                 },
                 // 이후는 캔버스에서 끌 때와 완전히 같은 길을 탄다 — 고스트·스냅·휴지통이 그대로 붙는다.
                 onDragMove = { amount ->
-                    editor.onEvent(EditorEvent.DragMove(amount, density, Size(screenWpx, screenHpx), socketBoxes.values.toList()))
+                    // 트레이는 확대 레이어 **밖**이다 → 화면 픽셀이므로 배율까지 되돌린다.
+                    editor.onEvent(
+                        EditorEvent.DragMove(
+                            amount / (density * ui.zoom),
+                            density,
+                            Size(screenWpx, screenHpx),
+                            socketBoxes.values.toList(),
+                        ),
+                    )
                 },
                 onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
                 panelHeight = panelH,
@@ -486,7 +502,7 @@ private fun SocketHole(boolean: Boolean) {
 private const val HOLE_H = 24
 
 /** 빈 입력 자리의 최소 너비. 육각이 마름모로 보이지 않을 만큼. */
-private const val HOLE_MIN_W = 56
+private const val HOLE_MIN_W = 40
 
 /**
  * 홈에 꽂힌 블록.

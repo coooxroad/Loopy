@@ -57,7 +57,14 @@ data class SocketRef(val hostId: String, val key: String)
 sealed interface EditorEvent {
     data class DragStart(val blockId: String) : EditorEvent
     data class DragMove(
-        val amountPx: Offset,
+        /**
+         * 이번에 움직인 양 — **월드 dp**.
+         *
+         * 어느 좌표계에서 왔는지는 부르는 쪽이 안다: 캔버스 블록의 제스처는 확대 레이어 안에서
+         * 오므로 배율이 이미 빠져 있고, 트레이는 레이어 밖이라 화면 픽셀 그대로다. 그 변환을
+         * 여기서 하려 들면 한쪽을 맞출 때 다른 쪽이 어긋난다.
+         */
+        val deltaDp: Offset,
         val density: Float,
         val screen: Size,
         /** 화면 좌표(px)로 잰 홈들. 값 블록을 끌 때만 쓰인다. */
@@ -103,10 +110,8 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
     }
 
     is EditorEvent.DragMove -> s.drag?.let { d ->
-        // 블록은 확대된 세계 안에 있다. 화면에서 움직인 픽셀을 밀도뿐 아니라 **배율로도**
-        // 나눠야 손끝과 같은 속도로 따라온다(빠뜨리면 확대 시 더 빨리, 축소 시 더 느리게 간다).
-        val scale = e.density * s.zoom
-        val delta = d.delta + Offset(e.amountPx.x / scale, e.amountPx.y / scale)
+        // 이동량은 이미 월드 dp 로 넘어온다. 여기서 배율을 또 손대지 않는다.
+        val delta = d.delta + e.deltaDp
         // 잡은 블록의 "현재 레이아웃상 실제 위치"로 커넥터를 만든다(저장값 X — 프레임마다 조회).
         val g = layoutCanvas(s.canvas).placed.firstOrNull { it.block.id == d.blockId }
         if (g == null) {
