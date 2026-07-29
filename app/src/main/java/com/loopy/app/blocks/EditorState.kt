@@ -44,6 +44,7 @@ data class SocketBox(
     val hostId: String,
     val key: String,
     val accepts: SlotKind,
+    /** 모두 **월드 dp**. 줄기 연결점과 같은 좌표계다. */
     val left: Float,
     val top: Float,
     val right: Float,
@@ -83,7 +84,7 @@ sealed interface EditorEvent {
         val space: DragSpace,
         val density: Float,
         val screen: Size,
-        /** 화면 좌표(px)로 잰 홈들. 값 블록을 끌 때만 쓰인다. */
+        /** 홈들(월드 dp). 값 블록을 끌 때만 쓰인다. */
         val sockets: List<SocketBox> = emptyList(),
     ) : EditorEvent
     object DragEnd : EditorEvent
@@ -172,11 +173,10 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                     b.hostId !in mine &&
                         // 호환은 정의 층의 규칙 하나를 쓴다(불리언은 값 자리에도 들어간다).
                         accepts(b.accepts, grabbed.kind) &&
-                        // 홈은 작다. 좌상단이 정확히 안에 들어와야 하면 사실상 못 꽂는다.
-                        sx >= b.left - SOCKET_REACH * e.density &&
-                        sx <= b.right + SOCKET_REACH * e.density &&
-                        sy >= b.top - SOCKET_REACH * e.density &&
-                        sy <= b.bottom + SOCKET_REACH * e.density
+                        // 홈도 줄기 연결점과 같은 **월드 dp** 다. 화면 픽셀로 바꿔 비교하던
+                        // 것을 없앴다 — 좌표계가 하나면 어긋날 곳이 없다.
+                        cx >= b.left - SOCKET_REACH && cx <= b.right + SOCKET_REACH &&
+                        cy >= b.top - SOCKET_REACH && cy <= b.bottom + SOCKET_REACH
                 }
                     // 중첩되면 홈끼리 겹친다. 가장 **작은**(=가장 안쪽) 것을 고른다.
                     .minByOrNull { (it.right - it.left) * (it.bottom - it.top) }

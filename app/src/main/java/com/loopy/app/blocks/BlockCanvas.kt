@@ -186,8 +186,9 @@ fun BlockCanvas(
                 val box = socketBoxes["${curSocket.hostId}/${curSocket.key}"]
                 val db = findBlock(ui.canvas, curDrag)
                 if (box != null && db != null) {
-                    val gx = (box.left - ui.camera.x) / ui.zoom
-                    val gy = (box.top - ui.camera.y) / ui.zoom
+                    // 홈도 이제 월드 dp 다 — 블록을 놓는 방식과 완전히 같다.
+                    val gx = box.left * density
+                    val gy = box.top * density
                     Box(
                         Modifier
                             .offset { IntOffset(gx.roundToInt(), gy.roundToInt()) }
@@ -263,25 +264,28 @@ fun BlockCanvas(
                             if (opens != null) onOpenEditor(opens, pl.block)
                             else editor.onEvent(EditorEvent.OpenSheet(pl.block))
                         },
-                        onPull = { hostId, key ->
-                            // 뽑히는 자리 = 그 홈이 있던 화면 자리 → 월드 dp. 손끝 아래에서
-                            // 그대로 이어지도록.
+                        onPull = { hostId, key, moved ->
+                            // 홈 좌표는 이미 월드 dp 다. 끈 거리(dp)만 더하면 손을 뗀 자리에 놓인다.
                             val b = socketBoxes["$hostId/$key"]
                             if (b != null) {
-                                val wx = (b.left - ui.camera.x) / ui.zoom / density
-                                val wy = (b.top - ui.camera.y) / ui.zoom / density
-                                editor.onEvent(EditorEvent.PullFromSlot(hostId, key, wx, wy))
+                                editor.onEvent(
+                                    EditorEvent.PullFromSlot(
+                                        hostId, key,
+                                        b.left + moved.x / ui.zoom,
+                                        b.top + moved.y / ui.zoom,
+                                    ),
+                                )
                             }
                         },
-                        onSocketBounds = { hostId, key, accepts, box ->
+                        onSocketBounds = { hostId, key, accepts, x, y, w, h ->
                             socketBoxes["$hostId/$key"] = SocketBox(
                                 hostId = hostId,
                                 key = key,
                                 accepts = accepts,
-                                left = box.left - canvasOrigin.x,
-                                top = box.top - canvasOrigin.y,
-                                right = box.right - canvasOrigin.x,
-                                bottom = box.bottom - canvasOrigin.y,
+                                left = x,
+                                top = y,
+                                right = x + w,
+                                bottom = y + h,
                             )
                         },
                     )
@@ -401,10 +405,16 @@ private fun BlockView(
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onClick: () -> Unit,
-    onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
-    onPull: (String, String) -> Unit = { _, _ -> },
+    /** 홈의 자리를 **월드 dp** 로 알린다: hostId, key, 받는 모양, x, y, 폭, 높이. */
+    onSocketBounds: (String, String, SlotKind, Float, Float, Float, Float) -> Unit =
+        { _, _, _, _, _, _, _ -> },
+    onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
+    // 자기 경계를 함께 재 둔다. 홈 위치를 이 블록 기준의 **차이**로 계산하면, Compose 가 준
+    // 좌표가 확대 변환을 포함하든 아니든 상관없어진다(차이에서 상쇄된다). 픽셀↔dp 배율도
+    // 이미 아는 dp 높이로 스스로 보정한다 — 가정이 필요 없다.
+    var selfBox by remember(material.id) { mutableStateOf<Rect?>(null) }
     val curStart by rememberUpdatedState(onDragStart)
     val curDrag by rememberUpdatedState(onDrag)
     val curEnd by rememberUpdatedState(onDragEnd)
@@ -416,11 +426,25 @@ private fun BlockView(
         material = material,
         density = density,
         lifted = lifted,
-        onSocketBounds = onSocketBounds,
+        onSocketBounds = { hostId, key, accepts, r ->
+            val b = selfBox
+            val dpH = blockHeight(material)
+            if (b != null && b.height > 0f && dpH > 0f) {
+                val perDp = b.height / dpH
+                onSocketBounds(
+                    hostId, key, accepts,
+                    xDp + (r.left - b.left) / perDp,
+                    yDp + (r.top - b.top) / perDp,
+                    r.width / perDp,
+                    r.height / perDp,
+                )
+            }
+        },
         onPull = onPull,
         modifier = Modifier
             .offset { IntOffset(px, py) }
-            .zIndex(if (lifted) 10f else 0f),
+            .zIndex(if (lifted) 10f else 0f)
+            .onGloballyPositioned { selfBox = it.boundsInRoot() },
         gestures = Modifier
             .pointerInput(material.id) {
                 detectTapGestures(onTap = { curClick() })
@@ -454,7 +478,7 @@ fun BlockFace(
     lifted: Boolean = false,
     /** 홈이 화면에서 차지한 자리를 알린다. 끌어다 꽂을 때 목표로 쓰인다. */
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
-    onPull: (String, String) -> Unit = { _, _ -> },
+    onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
 ) {
     val def = defOf(material.typeId)
     Box(
@@ -529,24 +553,29 @@ private const val HOLE_MIN_W = 40
 private fun NestedBlock(
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
-    onPull: (String, String) -> Unit = { _, _ -> },
+    onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
     /** 이 블록 자신을 홈에서 빼낸다. 부르는 쪽이 어느 홈인지 알고 있으므로 인자가 없다. */
-    onPullSelf: () -> Unit = {},
+    onPullSelf: (Offset) -> Unit = {},
 ) {
     val def = defOf(m.typeId)
     val pull by rememberUpdatedState(onPullSelf)
+    val density = LocalDensity.current.density
+    // 끄는 동안에는 **아직 홈에 있다**. 그래야 이 컴포저블이 살아 있어 손끝을 계속 따라온다.
+    // 홈을 곧바로 비우면 컴포저블이 사라져 제스처가 끊긴다. 손을 뗄 때 비로소 캔버스로 나온다.
+    var shift by remember(m.id) { mutableStateOf(Offset.Zero) }
     Box(
         Modifier
+            .offset { IntOffset(shift.x.roundToInt(), shift.y.roundToInt()) }
             .height(blockHeight(m).dp)
             .blockShape(def.shape, def.color)
-            // 꽂힌 블록도 끌어서 뺀다. 다만 **빼기까지만** 한다:
-            // 빼는 순간 이 컴포저블은 트리에서 사라지고(홈이 비므로) 제스처의 주인도 함께
-            // 사라져, 이어지는 이동이 오지 않는다. 그대로 끌기 상태를 켜 두면 손을 떼도
-            // 꺼지지 않는다. 그래서 빠져나온 뒤에는 평범한 블록으로 다시 끌게 한다.
             .pointerInput(m.id) {
                 detectDragGestures(
-                    onDragStart = { pull() },
-                    onDrag = { change, _ -> change.consume() },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        shift += amount
+                    },
+                    onDragEnd = { pull(shift / density); shift = Offset.Zero },
+                    onDragCancel = { shift = Offset.Zero },
                 )
             }
             .padding(horizontal = 10.dp),
@@ -594,7 +623,7 @@ private fun BlockSentence(
     def: BlockDef,
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
-    onPull: (String, String) -> Unit = { _, _ -> },
+    onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
 ) {
     val text = def.template
     var cursor = 0
@@ -618,7 +647,7 @@ private fun BlockSentence(
         ) {
             when {
                 // 꽂힌 블록이 그림자를 덮는다.
-                filled != null -> NestedBlock(filled, onSocketBounds, onPull) { onPull(m.id, key) }
+                filled != null -> NestedBlock(filled, onSocketBounds, onPull) { d -> onPull(m.id, key, d) }
                 // 참/거짓 자리는 타이핑할 게 없으니 빈 구멍으로 둔다.
                 boolean -> SocketHole(boolean = true)
                 // 값 자리의 그림자 — 기본값을 보여주고 바로 고칠 수 있는 칸.
