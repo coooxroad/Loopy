@@ -205,7 +205,12 @@ fun BlockCanvas(
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        val start = Offset(down.position.x / density, down.position.y / density)
+                        // 이 제스처는 확대 레이어 **바깥**에 있다 → 들어오는 좌표는 화면 기준이다.
+                        // 카메라와 배율을 되돌려야 블록이 놓인 월드 좌표와 맞물린다.
+                        val start = Offset(
+                            (down.position.x - ui.camera.x) / ui.zoom / density,
+                            (down.position.y - ui.camera.y) / ui.zoom / density,
+                        )
                         val hit = hitAt(start)
 
                         if (hit != null) {
@@ -224,7 +229,7 @@ fun BlockCanvas(
                                 editor.onEvent(
                                     EditorEvent.DragMove(
                                         change.positionChange(),
-                                        DragSpace.WORLD,
+                                        DragSpace.SCREEN,
                                         density,
                                         Size(screenWpx, screenHpx),
                                         socketBoxes.values.toList(),
@@ -314,7 +319,9 @@ fun BlockCanvas(
                         density = density,
                         lifted = inDrag,
                         onWidth = { id, w -> blockW[id] = w },
-                        ghostId = if (curSocket != null) curDrag else null,
+                        // 고스트는 **홈에 얹힌 복제본**에만 건다. 손끝을 따라다니는 원본까지
+                        // 같이 지우면(id 가 같으므로) 내용이 빈 껍데기가 되어 폭이 무너진다.
+                        ghostId = if (curSocket != null && pl.block.id != curDrag) curDrag else null,
                         onSocketBounds = { hostId, key, accepts, x, y, w, h ->
                             // 끄는 동안에는 홈 위치를 갱신하지 않는다. 미리보기로 상대 블록이
                             // 넓어지면 홈도 함께 움직이는데, 그걸 판정에 쓰면
