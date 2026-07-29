@@ -4,9 +4,9 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -37,6 +37,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -165,12 +166,7 @@ fun BlockCanvas(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { centroid, pan, gestureZoom, _ ->
-                        editor.onEvent(EditorEvent.Zoom(gestureZoom, centroid))
-                        editor.onEvent(EditorEvent.Pan(pan))
-                    }
-                },
+                ,
         ) {
             drawGrid(p.shadowColor.copy(alpha = 0.10f), ui.camera.x, ui.camera.y, ui.zoom)
         }
@@ -203,46 +199,67 @@ fun BlockCanvas(
         Box(
             Modifier
                 .fillMaxSize()
+                // 제스처는 판 하나가 갖는다. 누른 자리에 블록이 있으면 블록을, 빈 곳이면
+                // 판을 움직인다(한 손가락 이동, 두 손가락 확대). 한 곳에서 갈라야 블록용
+                // 제스처가 팬·줌을 통째로 삼키는 일이 생기지 않는다.
                 .pointerInput(Unit) {
-                    detectTapGestures { p ->
-                        val world = Offset(p.x / density, p.y / density)
-                        hitAt(world)?.first?.let { m ->
-                            val opens = defOf(m.typeId).opensEditor
-                            if (opens != null) onOpenEditor(opens, m)
-                            else editor.onEvent(EditorEvent.OpenSheet(m))
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val start = Offset(down.position.x / density, down.position.y / density)
+                        val hit = hitAt(start)
+
+                        if (hit != null) {
+                            val (grabbed, sock) = hit
+                            // 홈에서 잡았으면 먼저 뽑는다 — 뽑혀도 제스처의 주인(판)은 그대로다.
+                            if (sock != null) {
+                                editor.onEvent(
+                                    EditorEvent.PullFromSlot(sock.hostId, sock.key, start.x, start.y),
+                                )
+                            }
+                            editor.onEvent(EditorEvent.DragStart(grabbed.id))
+                            var moved = false
+                            drag(down.id) { change ->
+                                change.consume()
+                                moved = true
+                                editor.onEvent(
+                                    EditorEvent.DragMove(
+                                        change.positionChange(),
+                                        DragSpace.WORLD,
+                                        density,
+                                        Size(screenWpx, screenHpx),
+                                        socketBoxes.values.toList(),
+                                    ),
+                                )
+                            }
+                            editor.onEvent(EditorEvent.DragEnd)
+                            // 움직이지 않았으면 탭이다 — 전용 편집기나 파라미터 시트를 연다.
+                            if (!moved) {
+                                val opens = defOf(grabbed.typeId).opensEditor
+                                if (opens != null) onOpenEditor(opens, grabbed)
+                                else editor.onEvent(EditorEvent.OpenSheet(grabbed))
+                            }
+                        } else {
+                            // 빈 곳: 판을 움직인다. 손가락 수로 이동과 확대를 가른다.
+                            var lastGap = 0f
+                            while (true) {
+                                val ev = awaitPointerEvent()
+                                val live = ev.changes.filter { it.pressed }
+                                if (live.isEmpty()) break
+                                if (live.size >= 2) {
+                                    val gap = (live[0].position - live[1].position).getDistance()
+                                    if (lastGap > 0f && gap > 0f) {
+                                        val mid = (live[0].position + live[1].position) / 2f
+                                        editor.onEvent(EditorEvent.Zoom(gap / lastGap, mid))
+                                    }
+                                    lastGap = gap
+                                } else {
+                                    lastGap = 0f
+                                    editor.onEvent(EditorEvent.Pan(live[0].positionChange()))
+                                }
+                                live.forEach { it.consume() }
+                            }
                         }
                     }
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { p ->
-                            val world = Offset(p.x / density, p.y / density)
-                            val hit = hitAt(world)
-                            if (hit != null) {
-                                val (m, sock) = hit
-                                // 홈에서 잡았으면 먼저 뽑아낸다 — 뽑는 순간 평범한 덩어리가 되고,
-                                // 제스처의 주인(판)은 그대로이므로 끌기가 이어진다.
-                                if (sock != null) {
-                                    editor.onEvent(EditorEvent.PullFromSlot(sock.hostId, sock.key, world.x, world.y))
-                                }
-                                editor.onEvent(EditorEvent.DragStart(m.id))
-                            }
-                        },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            editor.onEvent(
-                                EditorEvent.DragMove(
-                                    amount,
-                                    DragSpace.WORLD,
-                                    density,
-                                    Size(screenWpx, screenHpx),
-                                    socketBoxes.values.toList(),
-                                ),
-                            )
-                        },
-                        onDragEnd = { editor.onEvent(EditorEvent.DragEnd) },
-                        onDragCancel = { editor.onEvent(EditorEvent.DragEnd) },
-                    )
                 }
                 .graphicsLayer(
                     scaleX = ui.zoom,
@@ -299,15 +316,20 @@ fun BlockCanvas(
                         onWidth = { id, w -> blockW[id] = w },
                         ghostId = if (curSocket != null) curDrag else null,
                         onSocketBounds = { hostId, key, accepts, x, y, w, h ->
-                            socketBoxes["$hostId/$key"] = SocketBox(
-                                hostId = hostId,
-                                key = key,
-                                accepts = accepts,
-                                left = x,
-                                top = y,
-                                right = x + w,
-                                bottom = y + h,
-                            )
+                            // 끄는 동안에는 홈 위치를 갱신하지 않는다. 미리보기로 상대 블록이
+                            // 넓어지면 홈도 함께 움직이는데, 그걸 판정에 쓰면
+                            // "잡힘 → 넓어짐 → 벗어남 → 좁아짐 → 잡힘"이 반복돼 고스트가 점멸한다.
+                            if (ui.drag == null) {
+                                socketBoxes["$hostId/$key"] = SocketBox(
+                                    hostId = hostId,
+                                    key = key,
+                                    accepts = accepts,
+                                    left = x,
+                                    top = y,
+                                    right = x + w,
+                                    bottom = y + h,
+                                )
+                            }
                         },
                     )
                 }
