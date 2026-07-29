@@ -468,6 +468,8 @@ fun BlockFace(
     /** 홈이 화면에서 차지한 자리를 알린다. 끌어다 꽂을 때 목표로 쓰인다. */
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
     onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
+    /** 미리보기로 얹힌 블록의 id. 그 블록만 반투명하게 그린다. */
+    ghostId: String? = null,
 ) {
     val def = defOf(material.typeId)
     Box(
@@ -615,6 +617,8 @@ private fun BlockSentence(
     m: Material,
     onSocketBounds: (String, String, SlotKind, Rect) -> Unit = { _, _, _, _ -> },
     onPull: (String, String, Offset) -> Unit = { _, _, _ -> },
+    /** 미리보기로 얹힌 블록의 id. 그 블록만 반투명하게 그린다. */
+    ghostId: String? = null,
 ) {
     val text = def.template
     var cursor = 0
