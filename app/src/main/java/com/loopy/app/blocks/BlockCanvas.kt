@@ -174,7 +174,7 @@ fun BlockCanvas(
         // 어느 블록을 잡았는가 — **판이 좌표로 찾는다**. 블록마다 제스처를 달면, 그 블록이
         // 화면에서 사라지는 순간(홈에서 빠질 때 등) 제스처의 주인도 함께 사라져 끌기가 끊긴다.
         // 스크래치·Blockly 도 작업공간이 포인터를 갖고 좌표로 대상을 찾는다.
-        fun hitAt(world: Offset): Pair<Material, SocketRef?>? {
+        fun hitAtWorld(world: Offset): Pair<Material, SocketRef?>? {
             // 1) 홈에 꽂힌 블록이 먼저다(위에 얹혀 있으므로). 겹치면 가장 안쪽.
             socketBoxes.values
                 .filter { b ->
@@ -195,6 +195,25 @@ fun BlockCanvas(
             }?.let { it.block to null }
         }
 
+        // 제스처 람다는 pointerInput 이 다시 시작될 때까지 **처음 것을 붙잡는다**. 그 안에
+        // 배치·카메라·배율·홈목록을 그대로 캡처하면 첫 화면 기준으로 굳어, 나중에 놓은 블록은
+        // 아예 없는 것이 된다. 항상 최신을 보도록 감싼다.
+        val hitScreen by rememberUpdatedState<(Offset) -> Pair<Material, SocketRef?>?>({ p ->
+            hitAtWorld(
+                Offset(
+                    (p.x - ui.camera.x) / ui.zoom / density,
+                    (p.y - ui.camera.y) / ui.zoom / density,
+                ),
+            )
+        })
+
+        val curSockets by rememberUpdatedState(socketBoxes.values.toList())
+
+        /** 화면 좌표 → 월드 dp. 카메라·배율이 바뀌어도 늘 지금 값을 쓴다. */
+        val toWorld by rememberUpdatedState<(Offset) -> Offset>({ p ->
+            Offset((p.x - ui.camera.x) / ui.zoom / density, (p.y - ui.camera.y) / ui.zoom / density)
+        })
+
         // 월드: 줌/이동을 통째로 건다. 블록은 전부 월드 좌표(dp×density).
         Box(
             Modifier
@@ -205,20 +224,16 @@ fun BlockCanvas(
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        // 이 제스처는 확대 레이어 **바깥**에 있다 → 들어오는 좌표는 화면 기준이다.
-                        // 카메라와 배율을 되돌려야 블록이 놓인 월드 좌표와 맞물린다.
-                        val start = Offset(
-                            (down.position.x - ui.camera.x) / ui.zoom / density,
-                            (down.position.y - ui.camera.y) / ui.zoom / density,
-                        )
-                        val hit = hitAt(start)
+                        // 좌표 환산과 대상 찾기는 감싼 쪽에 맡긴다(항상 최신 상태를 본다).
+                        val hit = hitScreen(down.position)
 
                         if (hit != null) {
                             val (grabbed, sock) = hit
                             // 홈에서 잡았으면 먼저 뽑는다 — 뽑혀도 제스처의 주인(판)은 그대로다.
                             if (sock != null) {
+                                val w = toWorld(down.position)
                                 editor.onEvent(
-                                    EditorEvent.PullFromSlot(sock.hostId, sock.key, start.x, start.y),
+                                    EditorEvent.PullFromSlot(sock.hostId, sock.key, w.x, w.y),
                                 )
                             }
                             editor.onEvent(EditorEvent.DragStart(grabbed.id))
@@ -232,7 +247,7 @@ fun BlockCanvas(
                                         DragSpace.SCREEN,
                                         density,
                                         Size(screenWpx, screenHpx),
-                                        socketBoxes.values.toList(),
+                                        curSockets,
                                     ),
                                 )
                             }
