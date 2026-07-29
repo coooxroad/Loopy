@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -474,6 +475,8 @@ fun BlockFace(
     val def = defOf(material.typeId)
     Box(
         modifier
+            // 부모(캔버스) 폭에 갇히면 중첩이 깊어질수록 더 못 커진다. 블록은 내용만큼 커야 한다.
+            .wrapContentSize(align = Alignment.TopStart, unbounded = true)
             .height(blockHeight(material).dp)
             // 문장 블록만 최소 너비를 갖는다. 값 블록에 같은 최소를 주면 홈 안에서 어색하게
             // 늘어나고, 홈 밖과 안의 크기가 달라 보인다.
@@ -490,18 +493,22 @@ fun BlockFace(
         // 값 블록은 좌우가 뾰족하거나 둥글다. 그 폭만큼 안쪽으로 들여야 내용이 끝에 물리지 않는다.
         val value = isValue(material)
         val side = if (value) (blockHeight(material) / 2f + 4f).dp else Space.md
-        Row(
-            Modifier
-                .height(contentHeight(material).dp)
-                .padding(start = side, end = if (value) side else Space.lg),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // 값 블록엔 아이콘을 두지 않는다 — 좁은 몸에 아이콘까지 넣으면 글자가 밀린다.
-            if (!value) {
-                LoopyIcon(def.icon, Color.White, size = 15.dp)
-                Spacer(Modifier.width(Space.sm))
+        // 고스트는 **형체만** 보여준다. 안의 글자와 홈까지 그리면 진짜 블록과 구별이 안 되고
+        // 화면이 어지럽다. 크기·색·모양만 반투명으로 남긴다.
+        if (material.id != ghostId) {
+            Row(
+                Modifier
+                    .height(contentHeight(material).dp)
+                    .padding(start = side, end = if (value) side else Space.lg),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 값 블록엔 아이콘을 두지 않는다 — 좁은 몸에 아이콘까지 넣으면 글자가 밀린다.
+                if (!value) {
+                    LoopyIcon(def.icon, Color.White, size = 15.dp)
+                    Spacer(Modifier.width(Space.sm))
+                }
+                BlockSentence(def, material, onSocketBounds, onPull, ghostId)
             }
-            BlockSentence(def, material, onSocketBounds, onPull, ghostId)
         }
     }
 }

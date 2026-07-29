@@ -175,8 +175,8 @@ fun reduce(s: EditorUi, e: EditorEvent): EditorUi = when (e) {
                         accepts(b.accepts, grabbed.kind) &&
                         // 홈도 줄기 연결점과 같은 **월드 dp** 다. 화면 픽셀로 바꿔 비교하던
                         // 것을 없앴다 — 좌표계가 하나면 어긋날 곳이 없다.
-                        cx >= b.left - SOCKET_REACH && cx <= b.right + SOCKET_REACH &&
-                        cy >= b.top - SOCKET_REACH && cy <= b.bottom + SOCKET_REACH
+                        cx >= b.left - REACH_X && cx <= b.right + REACH_X &&
+                        cy >= b.top - REACH_Y && cy <= b.bottom + REACH_Y
                 }
                     // 중첩되면 홈끼리 겹친다. 가장 **작은**(=가장 안쪽) 것을 고른다.
                     .minByOrNull { (it.right - it.left) * (it.bottom - it.top) }
@@ -313,5 +313,11 @@ class EditorState(initial: Material, private val onPersist: (Material) -> Unit) 
 /** 연결점에 붙는 거리(dp). 손끝은 정확하지 않으므로 기본값보다 넉넉히 둔다. */
 private const val SNAP = 34f
 
-/** 홈에 꽂힐 때 인정하는 여유(dp). 홈 자체가 작으므로 둘레를 넉넉히 넓힌다. */
-private const val SOCKET_REACH = 28f
+/**
+ * 홈에 꽂힐 때 인정하는 여유(dp).
+ *
+ * 가로세로를 다르게 둔다. 홈은 옆으로 길고 위아래로 얇으며, **위아래로는 다른 줄의 홈이
+ * 바로 붙어 있다**. 세로 여유를 크게 잡으면 이웃 홈끼리 판정이 겹쳐 고스트가 왔다 갔다 한다.
+ */
+private const val REACH_X = 28f
+private const val REACH_Y = 8f
